@@ -1,0 +1,45 @@
+/* Tambahan style untuk blocked.html — dipakai bersama takeover.css */
+.cg-alih-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+.cg-alih-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  background: var(--cg-surface);
+  border: 1px solid rgba(148,163,184,0.15);
+  border-radius: 12px;
+  text-decoration: none;
+  color: var(--cg-text);
+  transition: all 0.15s ease;
+}
+.cg-alih-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--cg-cn-gold);
+  background: var(--cg-surface-2);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.cg-alih-icon {
+  font-size: 28px;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  background: rgba(255,222,0,0.10);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.cg-alih-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+.cg-alih-meta {
+  font-size: 11px;
+  color: var(--cg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}

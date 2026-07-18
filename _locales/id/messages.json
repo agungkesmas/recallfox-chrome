@@ -1,0 +1,172 @@
+{
+  "extName": {
+    "message": "RecallFox — Prompt & Context Vault"
+  },
+  "extDesc": {
+    "message": "Simpan prompt & konteks dengan satu klik. Inject ke AI tool barat, China, dan lokal."
+  },
+
+  "vaultTitle": {
+    "message": "RecallFox Vault"
+  },
+  "searchPlaceholder": {
+    "message": "Cari prompt, konteks, snapshot..."
+  },
+  "tabAll": { "message": "Semua" },
+  "tabPrompts": { "message": "Prompts" },
+  "tabContext": { "message": "Konteks" },
+  "tabSnapshots": { "message": "Snapshot" },
+  "tabLinks": { "message": "Link" },
+  "tabBundles": { "message": "Bundle" },
+
+  "addItem": { "message": "Tambah" },
+  "settings": { "message": "Pengaturan" },
+
+  "emptyVault": {
+    "message": "Vault kosong. Pilih teks di halaman mana saja lalu klik kanan → \"Simpan ke RecallFox\", atau tekan tombol + di atas."
+  },
+
+  "useCountTimes": {
+    "message": "×"
+  },
+  "favorite": { "message": "Favorit" },
+  "edit": { "message": "Edit" },
+  "delete": { "message": "Hapus" },
+  "inject": { "message": "Sisipkan ke chat" },
+  "copy": { "message": "Salin" },
+  "save": { "message": "Simpan" },
+  "cancel": { "message": "Batal" },
+
+  "fieldTitle": { "message": "Judul" },
+  "fieldBody": { "message": "Isi" },
+  "fieldTags": { "message": "Tag" },
+  "fieldVariables": { "message": "Variabel" },
+  "fieldCategory": { "message": "Kategori" },
+  "fieldType": { "message": "Tipe" },
+  "typePrompt": { "message": "Prompt" },
+  "typeContext": { "message": "Konteks" },
+  "typeSnapshot": { "message": "Snapshot" },
+  "typeLink": { "message": "Link" },
+  "typeBundle": { "message": "Bundle" },
+
+  "ctxMenuSave": {
+    "message": "Simpan ke RecallFox"
+  },
+  "ctxMenuSaveAsPrompt": {
+    "message": "Simpan sebagai Prompt"
+  },
+  "ctxMenuSaveAsContext": {
+    "message": "Simpan sebagai Konteks"
+  },
+  "ctxMenuSavePage": {
+    "message": "Simpan Halaman Ini"
+  },
+  "ctxMenuSaveLink": {
+    "message": "Simpan Link Ini"
+  },
+  "ctxMenuSnapshot": {
+    "message": "Ambil Snapshot Percakapan"
+  },
+
+  "ctxMenuCaptureScreenshot": { "message": "Tangkap Screenshot" },
+  "ctxMenuCaptureVisible":   { "message": "Bagian Terlihat" },
+  "ctxMenuCaptureEntire":    { "message": "Seluruh Halaman" },
+  "ctxMenuCaptureSelection": { "message": "Seleksi…" },
+
+  "cmdCapturePage":      { "message": "Tangkap halaman (popout ala FireShot)" },
+  "cmdCaptureVisible":   { "message": "Tangkap bagian terlihat" },
+  "cmdCaptureEntire":    { "message": "Tangkap seluruh halaman" },
+  "cmdCaptureSelection": { "message": "Tangkap seleksi" },
+  "cmdClearCache":       { "message": "Bersihkan cache (data browser)" },
+  "cmdVolumeUp":         { "message": "Naikkan volume (+1 dB)" },
+  "cmdVolumeDown":       { "message": "Turunkan volume (-1 dB)" },
+  "cmdVolumeReset":      { "message": "Reset volume ke 0 dB (100%)" },
+
+  "ctxMenuClearCache":   { "message": "Bersihkan Cache" },
+
+  "screenshotSavedToast":      { "message": "Screenshot tersimpan ke vault" },
+  "screenshotErrCannotCapture":{ "message": "Tidak bisa menangkap halaman ini (dilindungi browser)." },
+  "screenshotErrTooLarge":     { "message": "Halaman terlalu besar untuk ditangkap dalam satu gambar." },
+
+  "toastSaved": { "message": "Tersimpan ke vault" },
+  "toastTagPrompt": { "message": "Kasih nama & tag?" },
+  "toastCopied": { "message": "Tersalin ke clipboard" },
+  "toastInjected": { "message": "Disisipkan ke chat" },
+  "toastInjectFailed": { "message": "Gagal menyisipkan, disalin ke clipboard sebagai fallback" },
+  "toastExported": { "message": "Backup diekspor" },
+  "toastImported": { "message": "Backup diimpor" },
+  "toastDeleted": { "message": "Item dihapus" },
+  "toastLinkOpened": { "message": "Link dibuka di tab baru" },
+  "toastLinksOpened": { "message": "link dibuka di tab baru" },
+
+  "snapshotTitle": { "message": "Snapshot Percakapan" },
+  "snapshotSource": { "message": "Sumber" },
+  "snapshotAutoSummary": { "message": "Ringkasan otomatis" },
+  "snapshotNote": { "message": "Catatan (opsional)" },
+  "snapshotSaveBtn": { "message": "Simpan Snapshot" },
+
+  "settingsTitle": { "message": "Pengaturan RecallFox" },
+  "settingsGeneral": { "message": "Umum" },
+  "settingsSync": { "message": "Sinkronisasi" },
+  "settingsBackup": { "message": "Backup Lokal" },
+  "settingsStats": { "message": "Statistik" },
+  "settingsShortcuts": { "message": "Pintasan Keyboard" },
+  "settingsAbout": { "message": "Tentang" },
+
+  "settingsSyncEnable": { "message": "Aktifkan Firefox Sync (multi-device)" },
+  "settingsSyncStatus": { "message": "Status sinkronisasi" },
+  "settingsSyncLastSync": { "message": "Sinkron terakhir" },
+  "settingsSyncNow": { "message": "Sinkron sekarang" },
+
+  "settingsBackupExport": { "message": "Export Backup" },
+  "settingsBackupExportEnc": { "message": "Export Backup Terenkripsi" },
+  "settingsBackupImport": { "message": "Import Backup" },
+  "settingsBackupPassphrase": { "message": "Passphrase" },
+  "settingsBackupNote": { "message": "Backup lokal berguna kalau Firefox Sync mati atau untuk pindah device." },
+
+  "statsTotalItems": { "message": "Total item" },
+  "statsPrompts": { "message": "Prompt" },
+  "statsContext": { "message": "Konteks" },
+  "statsSnapshots": { "message": "Snapshot" },
+  "statsLinks": { "message": "Link" },
+  "statsBundles": { "message": "Bundle" },
+  "statsTotalUses": { "message": "Total dipakai" },
+  "statsFavorites": { "message": "Favorit" },
+  "statsTopUsed": { "message": "Paling sering dipakai" },
+  "statsTopTags": { "message": "Tag paling aktif" },
+
+  "shortcutOpenVault": { "message": "Buka vault" },
+  "shortcutSaveSelection": { "message": "Simpan teks terseleksi" },
+  "shortcutSnapshot": { "message": "Ambil snapshot percakapan" },
+  "shortcutSidebar": { "message": "Buka sidebar" },
+
+  "useModePopup": { "message": "Mode tampilan" },
+  "useModePopupOpt": { "message": "Popup toolbar" },
+  "useModeSidebarOpt": { "message": "Sidebar (tetap kelihatan)" },
+
+  "injectAppendMode": { "message": "Mode injeksi" },
+  "injectAppendOpt": { "message": "Tambahkan di akhir" },
+  "injectPrependOpt": { "message": "Tambahkan di awal" },
+  "injectReplaceOpt": { "message": "Ganti seluruh teks (hati-hati)" },
+
+  "snapshotFloatingBtn": { "message": "Tampilkan tombol mengambang di halaman AI" },
+  "snapshotFloatingBtnDesc": { "message": "Tombol kecil di pojok untuk snapshot cepat" },
+
+  "confirmDelete": { "message": "Yakin hapus item ini?" },
+  "confirmReplaceText": { "message": "Teks yang sudah ada akan diganti. Lanjut?" },
+
+  "errPassphraseWrong": { "message": "Passphrase salah atau file rusak." },
+  "errInvalidBackup": { "message": "File backup tidak valid." },
+  "errNoSelection": { "message": "Tidak ada teks terseleksi." },
+  "errNoConversation": { "message": "Tidak ada percakapan terdeteksi di halaman ini." },
+  "errNotAIDomain": { "message": "Halaman ini bukan AI tool yang didukung." },
+
+  "langId": { "message": "Bahasa Indonesia" },
+  "langEn": { "message": "English" },
+  "language": { "message": "Bahasa" },
+
+  "contentGuardName": { "message": "Filter Konten Positif" },
+  "contentGuardDesc": {
+    "message": "Blokir berita negatif Indonesia & arahkan paksa ke konten positif Tiongkok di YouTube / X."
+  }
+}

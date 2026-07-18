@@ -1,0 +1,172 @@
+{
+  "extName": {
+    "message": "RecallFox — Prompt & Context Vault"
+  },
+  "extDesc": {
+    "message": "Save prompts & context with one click. Inject into Western, Chinese, and local AI tools."
+  },
+
+  "vaultTitle": {
+    "message": "RecallFox Vault"
+  },
+  "searchPlaceholder": {
+    "message": "Search prompts, context, snapshots..."
+  },
+  "tabAll": { "message": "All" },
+  "tabPrompts": { "message": "Prompts" },
+  "tabContext": { "message": "Context" },
+  "tabSnapshots": { "message": "Snapshots" },
+  "tabLinks": { "message": "Links" },
+  "tabBundles": { "message": "Bundles" },
+
+  "addItem": { "message": "Add" },
+  "settings": { "message": "Settings" },
+
+  "emptyVault": {
+    "message": "Vault is empty. Select text on any page, right-click → \"Save to RecallFox\", or press + above."
+  },
+
+  "useCountTimes": {
+    "message": "×"
+  },
+  "favorite": { "message": "Favorite" },
+  "edit": { "message": "Edit" },
+  "delete": { "message": "Delete" },
+  "inject": { "message": "Inject into chat" },
+  "copy": { "message": "Copy" },
+  "save": { "message": "Save" },
+  "cancel": { "message": "Cancel" },
+
+  "fieldTitle": { "message": "Title" },
+  "fieldBody": { "message": "Body" },
+  "fieldTags": { "message": "Tags" },
+  "fieldVariables": { "message": "Variables" },
+  "fieldCategory": { "message": "Category" },
+  "fieldType": { "message": "Type" },
+  "typePrompt": { "message": "Prompt" },
+  "typeContext": { "message": "Context" },
+  "typeSnapshot": { "message": "Snapshot" },
+  "typeLink": { "message": "Link" },
+  "typeBundle": { "message": "Bundle" },
+
+  "ctxMenuSave": {
+    "message": "Save to RecallFox"
+  },
+  "ctxMenuSaveAsPrompt": {
+    "message": "Save as Prompt"
+  },
+  "ctxMenuSaveAsContext": {
+    "message": "Save as Context"
+  },
+  "ctxMenuSavePage": {
+    "message": "Save This Page"
+  },
+  "ctxMenuSaveLink": {
+    "message": "Save This Link"
+  },
+  "ctxMenuSnapshot": {
+    "message": "Snapshot Conversation"
+  },
+
+  "ctxMenuCaptureScreenshot": { "message": "Capture Screenshot" },
+  "ctxMenuCaptureVisible":   { "message": "Visible Part" },
+  "ctxMenuCaptureEntire":    { "message": "Entire Page" },
+  "ctxMenuCaptureSelection": { "message": "Selection…" },
+
+  "cmdCapturePage":      { "message": "Capture page (FireShot-style popout)" },
+  "cmdCaptureVisible":   { "message": "Capture visible part" },
+  "cmdCaptureEntire":    { "message": "Capture entire page" },
+  "cmdCaptureSelection": { "message": "Capture selection" },
+  "cmdClearCache":       { "message": "Clear cache (browser data)" },
+  "cmdVolumeUp":         { "message": "Volume up (+1 dB)" },
+  "cmdVolumeDown":       { "message": "Volume down (-1 dB)" },
+  "cmdVolumeReset":      { "message": "Reset volume to 0 dB (100%)" },
+
+  "ctxMenuClearCache":   { "message": "Clear Cache" },
+
+  "screenshotSavedToast":      { "message": "Screenshot saved to vault" },
+  "screenshotErrCannotCapture":{ "message": "Cannot capture this page (browser-protected)." },
+  "screenshotErrTooLarge":     { "message": "Page is too large to capture in one image." },
+
+  "toastSaved": { "message": "Saved to vault" },
+  "toastTagPrompt": { "message": "Add name & tag?" },
+  "toastCopied": { "message": "Copied to clipboard" },
+  "toastInjected": { "message": "Injected into chat" },
+  "toastInjectFailed": { "message": "Injection failed, copied to clipboard as fallback" },
+  "toastExported": { "message": "Backup exported" },
+  "toastImported": { "message": "Backup imported" },
+  "toastDeleted": { "message": "Item deleted" },
+  "toastLinkOpened": { "message": "Link opened in new tab" },
+  "toastLinksOpened": { "message": "links opened in new tabs" },
+
+  "snapshotTitle": { "message": "Conversation Snapshot" },
+  "snapshotSource": { "message": "Source" },
+  "snapshotAutoSummary": { "message": "Auto summary" },
+  "snapshotNote": { "message": "Note (optional)" },
+  "snapshotSaveBtn": { "message": "Save Snapshot" },
+
+  "settingsTitle": { "message": "RecallFox Settings" },
+  "settingsGeneral": { "message": "General" },
+  "settingsSync": { "message": "Sync" },
+  "settingsBackup": { "message": "Local Backup" },
+  "settingsStats": { "message": "Statistics" },
+  "settingsShortcuts": { "message": "Keyboard Shortcuts" },
+  "settingsAbout": { "message": "About" },
+
+  "settingsSyncEnable": { "message": "Enable Firefox Sync (multi-device)" },
+  "settingsSyncStatus": { "message": "Sync status" },
+  "settingsSyncLastSync": { "message": "Last sync" },
+  "settingsSyncNow": { "message": "Sync now" },
+
+  "settingsBackupExport": { "message": "Export Backup" },
+  "settingsBackupExportEnc": { "message": "Export Encrypted Backup" },
+  "settingsBackupImport": { "message": "Import Backup" },
+  "settingsBackupPassphrase": { "message": "Passphrase" },
+  "settingsBackupNote": { "message": "Local backup is useful when Firefox Sync is off or for moving between devices." },
+
+  "statsTotalItems": { "message": "Total items" },
+  "statsPrompts": { "message": "Prompts" },
+  "statsContext": { "message": "Context" },
+  "statsSnapshots": { "message": "Snapshots" },
+  "statsLinks": { "message": "Links" },
+  "statsBundles": { "message": "Bundles" },
+  "statsTotalUses": { "message": "Total uses" },
+  "statsFavorites": { "message": "Favorites" },
+  "statsTopUsed": { "message": "Most used" },
+  "statsTopTags": { "message": "Most active tags" },
+
+  "shortcutOpenVault": { "message": "Open vault" },
+  "shortcutSaveSelection": { "message": "Save selection" },
+  "shortcutSnapshot": { "message": "Snapshot conversation" },
+  "shortcutSidebar": { "message": "Open sidebar" },
+
+  "useModePopup": { "message": "Display mode" },
+  "useModePopupOpt": { "message": "Toolbar popup" },
+  "useModeSidebarOpt": { "message": "Sidebar (persistent)" },
+
+  "injectAppendMode": { "message": "Injection mode" },
+  "injectAppendOpt": { "message": "Append to existing text" },
+  "injectPrependOpt": { "message": "Prepend before existing text" },
+  "injectReplaceOpt": { "message": "Replace all text (dangerous)" },
+
+  "snapshotFloatingBtn": { "message": "Show floating button on AI pages" },
+  "snapshotFloatingBtnDesc": { "message": "Small corner button for quick snapshot" },
+
+  "confirmDelete": { "message": "Delete this item?" },
+  "confirmReplaceText": { "message": "Existing text will be replaced. Continue?" },
+
+  "errPassphraseWrong": { "message": "Wrong passphrase or corrupted file." },
+  "errInvalidBackup": { "message": "Invalid backup file." },
+  "errNoSelection": { "message": "No text selected." },
+  "errNoConversation": { "message": "No conversation detected on this page." },
+  "errNotAIDomain": { "message": "This page is not a supported AI tool." },
+
+  "langId": { "message": "Bahasa Indonesia" },
+  "langEn": { "message": "English" },
+  "language": { "message": "Language" },
+
+  "contentGuardName": { "message": "Positive Content Filter" },
+  "contentGuardDesc": {
+    "message": "Block Indonesian negative news & forcefully redirect to positive China content on YouTube / X."
+  }
+}

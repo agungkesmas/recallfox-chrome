@@ -1,0 +1,246 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "short_name": "RecallFox",
+  "version": "3.7.2",
+  "description": "__MSG_extDesc__",
+  "author": "agungkesmas",
+  "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
+  "default_locale": "id",
+  "minimum_chrome_version": "114",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "clipboardWrite",
+    "downloads",
+    "unlimitedStorage",
+    "browsingData",
+    "notifications",
+    "geolocation",
+    "alarms",
+    "sidePanel"
+  ],
+  "options_ui": {
+    "page": "settings/settings.html",
+    "open_in_tab": true
+  },
+  "host_permissions": [
+    "<all_urls>",
+    "https://api.aladhan.com/*",
+    "https://nominatim.openstreetmap.org/*",
+    "https://chat.z.ai/*",
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*",
+    "https://chat.deepseek.com/*",
+    "https://tongyi.aliyun.com/*",
+    "https://chat.qwen.ai/*",
+    "https://kimi.moonshot.cn/*",
+    "https://kimi.com/*",
+    "https://api.groq.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.x.ai/*",
+    "https://api.z.ai/*",
+    "https://api.openai.com/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    },
+    "default_title": "RecallFox",
+    "default_popup": "popup/popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidebar/sidebar.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.z.ai/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://chat.qwen.ai/*",
+        "https://kimi.moonshot.cn/*",
+        "https://kimi.com/*"
+      ],
+      "js": [
+        "content/browser-polyfill-cs.js",
+        "content/ai-resolvers.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/browser-polyfill-cs.js",
+        "content/overlay.js",
+        "content/selection-ai.js"
+      ],
+      "css": [
+        "content/overlay.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "content/volume-hook.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "content/browser-polyfill-cs.js",
+        "content/volume-shared.js",
+        "content/volume-cs.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://*.youtube-nocookie.com/*",
+        "https://*.youtubekids.com/*",
+        "https://*.x.com/*",
+        "https://*.twitter.com/*"
+      ],
+      "js": [
+        "content/browser-polyfill-cs.js",
+        "content/contentguard-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/browser-polyfill-cs.js",
+        "content/elementblocker-cs.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/capture.css",
+        "content/overlay.css",
+        "contentguard/takeover.html",
+        "contentguard/takeover.css",
+        "contentguard/takeover.js",
+        "contentguard/blocked.html",
+        "contentguard/blocked.css",
+        "contentguard/blocked.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "commands": {
+    "toggle-side-panel": {
+      "suggested_key": {
+        "default": "Alt+Shift+4",
+        "mac": "Alt+Shift+4"
+      },
+      "description": "Buka/tutup sidebar RecallFox"
+    },
+    "capture-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+5",
+        "mac": "Alt+Shift+5"
+      },
+      "description": "__MSG_cmdCapturePage__"
+    },
+    "capture-area": {
+      "suggested_key": {
+        "default": "Alt+Shift+6",
+        "mac": "Alt+Shift+6"
+      },
+      "description": "Tangkap area terpilih (seret kotak)"
+    },
+    "capture-visible": {
+      "suggested_key": {
+        "default": "Alt+Shift+7",
+        "mac": "Alt+Shift+7"
+      },
+      "description": "Tangkap bagian terlihat (viewport saja)"
+    },
+    "clear-cache": {
+      "suggested_key": {
+        "default": "Alt+Shift+C",
+        "mac": "Alt+Shift+C"
+      },
+      "description": "__MSG_cmdClearCache__"
+    },
+    "volume-up": {
+      "suggested_key": {
+        "default": "Alt+Shift+Up",
+        "mac": "Alt+Shift+Up"
+      },
+      "description": "__MSG_cmdVolumeUp__"
+    },
+    "volume-down": {
+      "suggested_key": {
+        "default": "Alt+Shift+Down",
+        "mac": "Alt+Shift+Down"
+      },
+      "description": "__MSG_cmdVolumeDown__"
+    },
+    "volume-reset": {
+      "suggested_key": {
+        "default": "Alt+Shift+0",
+        "mac": "Alt+Shift+0"
+      },
+      "description": "__MSG_cmdVolumeReset__"
+    },
+    "ask-ai": {
+      "description": "Tanya Si Pandai AI tentang teks terseleksi"
+    }
+  }
+}

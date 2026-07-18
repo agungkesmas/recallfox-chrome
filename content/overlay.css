@@ -1,0 +1,734 @@
+/* content/overlay.css — Floating screenshot FAB + capture modal
+   RecallFox v3.2.0 — task-based, industry-standard screenshot UX
+   Design: purple gradient FAB, white cards, soft shadows
+   Inspired by: Linear, Notion, Vercel modal patterns */
+
+/* ==================== Floating dock (FAB + hint label) ==================== */
+
+.recallfox-dock {
+  position: fixed;
+  right: 26px;
+  top: 140px;
+  z-index: 2147483646;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+.recallfox-dock-hint {
+  font-size: 12px;
+  font-weight: 650;
+  color: #635b77;
+  background: #ffffff;
+  border: 1px solid #e7e2f5;
+  padding: 8px 10px;
+  border-radius: 9px;
+  box-shadow: 0 4px 12px rgba(48, 37, 80, 0.08);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 200ms ease;
+}
+.recallfox-dock-hint b {
+  color: #c4b5fd;
+  font-weight: 700;
+  margin: 0 2px;
+}
+.recallfox-dock-dragging .recallfox-dock-hint {
+  opacity: 0;
+}
+
+/* The FAB itself */
+.recallfox-fab {
+  border: 0;
+  color: #ffffff;
+  background: linear-gradient(140deg, #6d3df5 0%, #8a54ff 100%);
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  box-shadow: 0 12px 24px rgba(92, 50, 207, 0.35), 0 4px 8px rgba(0, 0, 0, 0.1);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  touch-action: none; /* critical: lets pointer events flow during drag */
+  position: relative;
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.recallfox-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(92, 50, 207, 0.45), 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+.recallfox-fab:active {
+  transform: translateY(0) scale(0.97);
+}
+.recallfox-fab:focus-visible {
+  outline: none;
+  box-shadow: 0 12px 24px rgba(92, 50, 207, 0.35), 0 0 0 3px rgba(109, 61, 245, 0.4);
+}
+.recallfox-fab svg {
+  width: 26px;
+  height: 26px;
+  color: #ffffff;
+}
+
+/* Dragging state */
+.recallfox-dock-dragging .recallfox-fab {
+  cursor: grabbing;
+  transform: scale(1.05);
+  box-shadow: 0 18px 36px rgba(92, 50, 207, 0.5), 0 8px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Busy state (capture in progress) */
+.recallfox-fab-busy {
+  cursor: wait !important;
+  pointer-events: none;
+}
+
+.recallfox-fab-spinner {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border: 2.5px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: recallfox-fab-spin 800ms linear infinite;
+}
+@keyframes recallfox-fab-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Pulse on first inject */
+.recallfox-fab-pulse {
+  animation: recallfox-fab-pulse-anim 1.5s ease-out;
+}
+@keyframes recallfox-fab-pulse-anim {
+  0%   { box-shadow: 0 0 0 0 rgba(109, 61, 245, 0.6), 0 12px 24px rgba(92, 50, 207, 0.35); }
+  70%  { box-shadow: 0 0 0 18px rgba(109, 61, 245, 0), 0 12px 24px rgba(92, 50, 207, 0.35); }
+  100% { box-shadow: 0 12px 24px rgba(92, 50, 207, 0.35), 0 4px 8px rgba(0, 0, 0, 0.1); }
+}
+
+/* ==================== Mini info popup (with reset button) ==================== */
+
+.recallfox-mini-info {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #e7e2f5;
+  border-radius: 12px;
+  padding: 12px 14px;
+  width: 220px;
+  box-shadow: 0 12px 30px rgba(40, 32, 61, 0.12);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  color: #655f72;
+  line-height: 1.5;
+  z-index: 2147483647;
+  animation: recallfox-mini-pop 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes recallfox-mini-pop {
+  from { opacity: 0; transform: scale(0.95) translateY(-4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.recallfox-mini-info b {
+  color: #27222f;
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.recallfox-mini-reset {
+  font: inherit;
+  color: #6139d2;
+  border: 0;
+  background: none;
+  font-weight: 700;
+  padding: 6px 0 0;
+  cursor: pointer;
+  text-decoration: none;
+}
+.recallfox-mini-reset:hover {
+  text-decoration: underline;
+}
+
+/* ==================== Mode picker dialog ==================== */
+
+.rf-capture-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(24, 19, 39, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  z-index: 2147483647;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  padding: 20px;
+  animation: rf-cap-fade 200ms ease;
+}
+@keyframes rf-cap-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* The dialog itself */
+.rf-cap-dialog {
+  width: min(610px, 100%);
+  background: #ffffff;
+  border-radius: 20px;
+  box-shadow: 0 28px 80px rgba(22, 11, 59, 0.33), 0 8px 20px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  animation: rf-cap-pop 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  color: #16151d;
+}
+@keyframes rf-cap-pop {
+  from { opacity: 0; transform: scale(0.96) translateY(10px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.rf-cap-dialog-head {
+  padding: 22px 24px 17px;
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  border-bottom: 1px solid #e8e6ef;
+}
+.rf-cap-dialog-head h2 {
+  font-size: 19px;
+  letter-spacing: -0.02em;
+  margin: 0 0 5px;
+  font-weight: 700;
+  color: #16151d;
+}
+.rf-cap-dialog-head p {
+  margin: 0;
+  color: #6e6b7b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.rf-cap-dialog-close {
+  margin-left: auto;
+  border: 0;
+  background: #f3f1f8;
+  color: #514b60;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+  flex-shrink: 0;
+}
+.rf-cap-dialog-close:hover {
+  background: #e7e2f5;
+  color: #27222f;
+}
+
+/* Choices list */
+.rf-cap-choices {
+  padding: 16px;
+}
+
+.rf-cap-choice {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 14px;
+  border: 1px solid #e8e6ef;
+  border-radius: 13px;
+  background: #ffffff;
+  padding: 15px;
+  margin: 9px 0;
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
+  transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.rf-cap-choice:hover,
+.rf-cap-choice:focus {
+  border-color: #a88dff;
+  background: #faf8ff;
+  outline: 3px solid #e9e2ff;
+  outline-offset: -3px;
+}
+.rf-cap-choice:active {
+  transform: scale(0.99);
+}
+.rf-cap-choice-recommended {
+  border-color: #b49fff;
+  background: #fbfaff;
+}
+
+.rf-cap-choice-ic {
+  height: 42px;
+  width: 42px;
+  border-radius: 11px;
+  background: #f0ebff;
+  color: #6238dc;
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+.rf-cap-choice-ic svg {
+  width: 22px;
+  height: 22px;
+}
+
+.rf-cap-choice-text {
+  flex: 1;
+  min-width: 0;
+}
+.rf-cap-choice-text strong {
+  font-size: 14.5px;
+  font-weight: 700;
+  display: block;
+  margin-bottom: 3px;
+  color: #16151d;
+}
+.rf-cap-choice-text span {
+  font-size: 12.5px;
+  color: #6e6b7b;
+  line-height: 1.4;
+  display: block;
+}
+
+/* "Disarankan" tag */
+.rf-cap-choice-tag {
+  background: #ebe5ff;
+  color: #5934c6;
+  font-weight: 700;
+  border-radius: 99px;
+  padding: 5px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Keyboard shortcut hint */
+.rf-cap-choice-key {
+  color: #7d778a;
+  border: 1px solid #e2dfe9;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font: 11px ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: #fafafa;
+}
+
+/* Footer */
+.rf-cap-dialog-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 24px 20px;
+  color: #777283;
+  font-size: 12px;
+  gap: 12px;
+}
+.rf-cap-settings-link {
+  border: 0;
+  background: transparent;
+  color: #6039d1;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 150ms ease;
+  flex-shrink: 0;
+}
+.rf-cap-settings-link:hover {
+  background: #f3f1f8;
+  text-decoration: underline;
+}
+
+/* ==================== Capture toast (bottom-center pill) ==================== */
+
+.recallfox-capture-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translate(-50%, 20px);
+  background: #1f1b2a;
+  color: #ffffff;
+  padding: 12px 16px;
+  border-radius: 11px;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 12px 28px rgba(18, 10, 44, 0.2), 0 4px 8px rgba(0, 0, 0, 0.1);
+  z-index: 2147483646;
+  opacity: 0;
+  transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+  max-width: 90vw;
+  text-align: center;
+  line-height: 1.4;
+}
+.recallfox-capture-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ==================== Error toast (top-center) ==================== */
+
+.recallfox-overlay-error {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translate(-50%, -120%);
+  background: linear-gradient(135deg, #1c1917 0%, #292524 100%);
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 2147483646;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+.recallfox-overlay-error.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ==================== Preview modal (after capture) ==================== */
+
+.rf-capture-modal {
+  background: #ffffff;
+  border-radius: 14px;
+  width: 100%;
+  max-width: 720px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35), 0 6px 16px rgba(0, 0, 0, 0.15);
+  color: #1c1917;
+  animation: rf-cap-pop 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.rf-capture-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e7e5e4;
+  background: linear-gradient(135deg, #eef2ff 0%, #fdf4ff 100%);
+}
+.rf-capture-modal-header h3 {
+  flex: 1;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1c1917;
+}
+.rf-capture-modal-icon {
+  font-size: 18px;
+}
+.rf-capture-modal-close {
+  border: 0;
+  background: rgba(255, 255, 255, 0.6);
+  color: #57534e;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.rf-capture-modal-close:hover {
+  background: #ffffff;
+  color: #1c1917;
+}
+
+.rf-capture-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.rf-capture-modal-preview {
+  background: #f5f5f4;
+  border: 1px solid #e7e5e4;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  max-height: 60vh;
+  overflow-y: auto;
+  text-align: center;
+}
+.rf-capture-modal-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.rf-capture-modal-info {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #57534e;
+  padding: 8px 0;
+}
+
+.rf-capture-modal-footer {
+  padding: 14px 20px;
+  border-top: 1px solid #e7e5e4;
+  background: #fafaf9;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+}
+.rf-capture-modal-actions-primary,
+.rf-capture-modal-actions-secondary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Buttons */
+.rf-cap-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 9px 14px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.rf-cap-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+.rf-cap-btn-primary {
+  background: #4f46e5;
+  color: #ffffff;
+}
+.rf-cap-btn-primary:hover {
+  background: #4338ca;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
+}
+.rf-cap-btn-ghost {
+  background: #ffffff;
+  color: #1c1917;
+  border-color: #d6d3d1;
+}
+.rf-cap-btn-ghost:hover {
+  background: #f5f5f4;
+  border-color: #a8a29e;
+}
+
+.rf-cap-mini-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: recallfox-fab-spin 800ms linear infinite;
+}
+
+.rf-capture-modal-status {
+  padding: 10px 20px;
+  background: #f5f5f4;
+  font-size: 12px;
+  color: #57534e;
+  border-top: 1px solid #e7e5e4;
+}
+.rf-capture-modal-status-error {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
+/* ==================== Dynamic page error modal ==================== */
+
+.rf-capture-modal-error .rf-cap-error-message {
+  font-size: 14px;
+  color: #1c1917;
+  line-height: 1.6;
+  padding: 6px 0;
+}
+.rf-cap-error-divider {
+  height: 1px;
+  background: #e7e5e4;
+  margin: 14px 0;
+}
+.rf-cap-error-suggestion strong {
+  display: block;
+  font-size: 13px;
+  color: #1c1917;
+  margin-bottom: 10px;
+}
+.rf-cap-alt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rf-cap-alt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  background: #fafaf9;
+  border: 1px solid #e7e5e4;
+  border-radius: 10px;
+}
+.rf-cap-alt-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  line-height: 1.4;
+}
+.rf-cap-alt-title {
+  font-weight: 600;
+  font-size: 12.5px;
+  margin-bottom: 2px;
+  color: #1c1917;
+}
+.rf-cap-alt-desc {
+  font-size: 11.5px;
+  color: #57534e;
+  line-height: 1.5;
+}
+.rf-cap-alt-desc kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  background: #ffffff;
+  border: 1px solid #d6d3d1;
+  border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px;
+  color: #1c1917;
+}
+
+/* ==================== Responsive ==================== */
+
+@media (max-width: 700px) {
+  .recallfox-dock {
+    right: 16px;
+    top: auto;
+    bottom: 24px;
+  }
+  .recallfox-dock-hint {
+    display: none;
+  }
+  .rf-cap-dialog {
+    border-radius: 14px;
+  }
+  .rf-cap-choice-key {
+    display: none;
+  }
+  .rf-cap-dialog-foot {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
+
+/* ==================== Dark mode (page-side, follows system) ==================== */
+
+@media (prefers-color-scheme: dark) {
+  .recallfox-dock-hint {
+    background: #1c1b19;
+    color: #c9c5c1;
+    border-color: #2e2b28;
+  }
+  .recallfox-mini-info {
+    background: #1c1b19;
+    border-color: #2e2b28;
+    color: #c9c5c1;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+  }
+  .recallfox-mini-info b {
+    color: #f5f4f2;
+  }
+
+  .rf-cap-dialog {
+    background: #1c1b19;
+    color: #f5f4f2;
+  }
+  .rf-cap-dialog-head {
+    border-bottom-color: #2e2b28;
+  }
+  .rf-cap-dialog-head h2 {
+    color: #f5f4f2;
+  }
+  .rf-cap-dialog-head p {
+    color: #8a8580;
+  }
+  .rf-cap-dialog-close {
+    background: #242220;
+    color: #c9c5c1;
+  }
+  .rf-cap-dialog-close:hover {
+    background: #2b2926;
+    color: #f5f4f2;
+  }
+
+  .rf-cap-choice {
+    background: #1c1b19;
+    border-color: #2e2b28;
+  }
+  .rf-cap-choice:hover,
+  .rf-cap-choice:focus {
+    background: rgba(129, 140, 248, 0.1);
+    border-color: #818cf8;
+    outline-color: rgba(129, 140, 248, 0.25);
+  }
+  .rf-cap-choice-recommended {
+    background: rgba(129, 140, 248, 0.08);
+    border-color: rgba(129, 140, 248, 0.4);
+  }
+  .rf-cap-choice-ic {
+    background: rgba(129, 140, 248, 0.15);
+    color: #a5b0ff;
+  }
+  .rf-cap-choice-text strong {
+    color: #f5f4f2;
+  }
+  .rf-cap-choice-text span {
+    color: #8a8580;
+  }
+  .rf-cap-choice-tag {
+    background: rgba(129, 140, 248, 0.2);
+    color: #a5b0ff;
+  }
+  .rf-cap-choice-key {
+    background: #242220;
+    border-color: #3d3935;
+    color: #8a8580;
+  }
+  .rf-cap-dialog-foot {
+    color: #8a8580;
+  }
+  .rf-cap-settings-link {
+    color: #a5b0ff;
+  }
+  .rf-cap-settings-link:hover {
+    background: #242220;
+  }
+}

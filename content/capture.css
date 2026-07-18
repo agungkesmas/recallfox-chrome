@@ -1,0 +1,110 @@
+/* content/capture.css — Styles for the on-page screenshot capture UI
+   (selection overlay + progress banner). Loaded only when a screenshot
+   is in progress, on any http(s) page. NOT scoped to AI domains. */
+
+/* ===== Progress banner (top-center pill) ===== */
+.recallfox-capture-banner {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translate(-50%, -120%);
+  background: linear-gradient(135deg, #1c1917 0%, #292524 100%);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.2);
+  z-index: 2147483646;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms cubic-bezier(0.16,1,0.3,1),
+              transform 220ms cubic-bezier(0.16,1,0.3,1);
+  border: 1px solid rgba(255,255,255,0.08);
+  white-space: nowrap;
+}
+.recallfox-capture-banner.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ===== Selection overlay (FireShot-style crosshair drag) ===== */
+.recallfox-sel-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  cursor: crosshair;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  /* Overlay itself is transparent — dimming is done by 4 mask divs
+     positioned AROUND the selection, so the selected area stays clear. */
+}
+
+.recallfox-sel-border {
+  position: fixed;
+  border: 2px solid #4f46e5;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.8) inset,
+              0 0 0 9999px rgba(0,0,0,0);
+  pointer-events: none;
+  z-index: 2147483647;
+  background: transparent;
+}
+
+.recallfox-sel-hint {
+  position: fixed;
+  background: #1c1917;
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  pointer-events: none;
+  z-index: 2147483647;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.recallfox-sel-tip {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(28, 25, 23, 0.92);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  pointer-events: none;
+  z-index: 2147483647;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ===== Capture toast (bottom-right pill, shown after screenshot saved) ===== */
+.recallfox-capture-toast {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  background: linear-gradient(135deg, #1c1917 0%, #292524 100%);
+  color: #fff;
+  padding: 12px 18px;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.2);
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  z-index: 2147483646;
+  opacity: 0;
+  transform: translateY(20px) scale(0.95);
+  transition: opacity 220ms cubic-bezier(0.16,1,0.3,1),
+              transform 220ms cubic-bezier(0.16,1,0.3,1);
+  pointer-events: none;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.recallfox-capture-toast.show {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}

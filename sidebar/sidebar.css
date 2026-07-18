@@ -1,0 +1,46 @@
+/* ============================================================
+   sidebar.css — Sidebar-specific overrides
+   Sidebar uses popup.css as base + this file for full-viewport mode
+   ============================================================ */
+
+/* Sidebar body uses full viewport — drop the framed look */
+body.rf-sidebar-body{
+  background:var(--bg);
+  overflow:hidden;
+}
+
+body.rf-sidebar-body .popup{
+  width:100% !important;
+  height:100vh !important;
+  max-width:none !important;
+  border:none !important;
+  border-radius:0 !important;
+  box-shadow:none !important;
+}
+
+/* Modals should be relative to the sidebar viewport, not full screen */
+body.rf-sidebar-body .modal-overlay{
+  position:absolute;
+}
+
+/* Restore banner positioned within sidebar */
+body.rf-sidebar-body .restore-banner{
+  position:absolute;
+}
+
+/* Slightly larger touch targets in sidebar (more breathing room) */
+body.rf-sidebar-body .tile{
+  padding:12px 2px;
+}
+body.rf-sidebar-body .item{
+  padding:10px 10px;
+}
+body.rf-sidebar-body .tabbtn{
+  padding:8px 4px 5px;
+}
+
+/* No width-sm class needed in sidebar (always full width) */
+body.rf-sidebar-body .popup.w-sm .strip-cell.fast,
+body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
+  display:flex;
+}

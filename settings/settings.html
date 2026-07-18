@@ -1,0 +1,1509 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>RecallFox Settings</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <div class="rf-settings-wrap">
+    <header class="rf-settings-header">
+      <h1>⚙ RecallFox Settings</h1>
+      <p>Atur penyimpanan, sinkronisasi, backup, dan tampilan.</p>
+    </header>
+
+    <!-- General -->
+    <section class="rf-section">
+      <h2>Umum</h2>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tema tampilan</div>
+          <div class="rf-row-desc">Terang, gelap, atau ikuti sistem</div>
+        </div>
+        <select id="rf-set-theme">
+          <option value="auto">Otomatis (ikuti sistem)</option>
+          <option value="light">Terang</option>
+          <option value="dark">Gelap</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Bahasa</div>
+          <div class="rf-row-desc">Tampilan antarmuka</div>
+        </div>
+        <select id="rf-set-locale">
+          <option value="auto">Otomatis (ikuti browser)</option>
+          <option value="id">Bahasa Indonesia</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Mode tampilan default</div>
+          <div class="rf-row-desc">Pilih tampilan utama saat klik ikon toolbar</div>
+        </div>
+        <select id="rf-set-display">
+          <option value="popup">Popup toolbar (kecil, sementara)</option>
+          <option value="sidebar">Sidebar (tetap kelihatan)</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Mode injeksi teks</div>
+          <div class="rf-row-desc">Cara menyisipkan prompt ke textarea AI</div>
+        </div>
+        <select id="rf-set-inject">
+          <option value="append">Tambahkan di akhir (aman)</option>
+          <option value="prepend">Tambahkan di awal</option>
+          <option value="replace">Ganti seluruh teks (hati-hati)</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tombol mengambang di halaman AI</div>
+          <div class="rf-row-desc">Tombol kecil 📸 di pojok untuk snapshot percakapan AI</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-floating" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tombol overlay screenshot di semua halaman</div>
+          <div class="rf-row-desc">Tombol bulat ungu di pojok kanan atas untuk tangkap halaman (FireShot-style)</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-overlay" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Prayer Times (Salah Time, Muhammadiyah method) -->
+    <section class="rf-section">
+      <h2>🕌 Waktu Shalat (Metode Muhammadiyah)</h2>
+      <p class="rf-section-desc">
+        Tampilkan jadwal shalat harian di tab <b>🕌</b> popup/sidebar.
+        Menggunakan metode <b>Muhammadiyah</b> (Subuh -18°, Isya -18°, per Munas Tarjih 2020)
+        via Aladhan API dengan method=3 + methodSettings=18,18,0.
+        <br><small style="color:#9ca3af;">Terinspirasi dari <a href="https://github.com/najmulhuda/salah_time" target="_blank">salah_time by Najmul Huda Wahid</a>.</small>
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aktifkan fitur Waktu Shalat</div>
+          <div class="rf-row-desc">Tampilkan tab 🕌 di popup dan sidebar</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-prayer-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Latitude</div>
+          <div class="rf-row-desc">Koordinat lintang lokasi</div>
+        </div>
+        <input type="number" id="rf-set-prayer-lat" step="0.0001" placeholder="-6.2088" style="width:140px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Longitude</div>
+          <div class="rf-row-desc">Koordinat bujur lokasi</div>
+        </div>
+        <input type="number" id="rf-set-prayer-lng" step="0.0001" placeholder="106.8456" style="width:140px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Nama lokasi</div>
+          <div class="rf-row-desc">Label untuk display (mis. "Jakarta, Indonesia")</div>
+        </div>
+        <input type="text" id="rf-set-prayer-loc" placeholder="Jakarta, Indonesia" style="flex:1;max-width:300px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Mazhab perhitungan Asr</div>
+          <div class="rf-row-desc">Syafi'i (default Indonesia/Muhammadiyah) atau Hanafi</div>
+        </div>
+        <select id="rf-set-prayer-asr">
+          <option value="0">Syafi'i (Indonesia)</option>
+          <option value="1">Hanafi</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Format jam</div>
+          <div class="rf-row-desc">Tampilan jam di widget</div>
+        </div>
+        <select id="rf-set-prayer-format">
+          <option value="24h">24-jam (14:30)</option>
+          <option value="12h">12-jam (02:30 PM)</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Reset cache</div>
+          <div class="rf-row-desc">Paksa fetch ulang dari Aladhan API (cache harian di-clear)</div>
+        </div>
+        <button id="rf-set-prayer-reset" class="rf-btn rf-btn-secondary">🔄 Reset Cache</button>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Notifikasi pengingat shalat</div>
+          <div class="rf-row-desc">Tampilkan notifikasi browser beberapa menit sebelum masuk waktu shalat (berjalan walau popup ditutup)</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-prayer-reminder" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Notifikasi ... menit sebelum</div>
+          <div class="rf-row-desc">Berapa menit sebelum masuk waktu shalat notif dikirim</div>
+        </div>
+        <select id="rf-set-prayer-reminder-min">
+          <option value="5">5 menit</option>
+          <option value="10">10 menit</option>
+          <option value="15">15 menit</option>
+          <option value="30">30 menit</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tampilkan shalat sunnah</div>
+          <div class="rf-row-desc">Ishraq, Dhuha, Awwabin, Tahajud, Witir (dihitung dari data Aladhan)</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-prayer-sunnah" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tampilkan indikator waktu terlewat</div>
+          <div class="rf-row-desc">Tampilkan "+Nm sejak {shalat terakhir}" di countdown box</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-prayer-elapsed" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Badge countdown di toolbar icon</div>
+          <div class="rf-row-desc">Tampilkan countdown singkat (mis. "15m", "2j", "NOW") di ikon RecallFox toolbar. Selalu kelihatan walau popup ditutup. Hover icon untuk info lengkap.</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-prayer-badge" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- Habit Tracker Settings -->
+    <section class="rf-section">
+      <h2>📖 Habit Tracker (Ngaji + Olahraga)</h2>
+      <p class="rf-section-desc">
+        Pengingat ngaji Quran harian + movement reminder untuk verifikator &amp; coder yang duduk berjam-jam.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">📖 Aktifkan pengingat Ngaji</div>
+          <div class="rf-row-desc">Notifikasi harian untuk ngaji Quran + tracker streak</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-quran-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Target halaman per hari</div>
+          <div class="rf-row-desc">Berapa halaman Quran per hari (1-10)</div>
+        </div>
+        <input type="number" id="rf-set-quran-target" min="1" max="10" step="1" value="1" style="width:80px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Waktu pengingat ngaji</div>
+          <div class="rf-row-desc">Notifikasi dikirim pada jam ini kalau belum ngaji</div>
+        </div>
+        <input type="time" id="rf-set-quran-time" value="07:00" style="width:100px;" />
+      </div>
+
+      <!-- v0.8.41: Hari ngaji -->
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">📅 Hari ngaji</div>
+          <div class="rf-row-desc">Pilih hari untuk pengingat ngaji. Hari yang tidak dicentang = tidak ada reminder ngaji.</div>
+        </div>
+        <div id="rf-set-quran-days" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="0" class="rf-quran-day"> Min
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="1" class="rf-quran-day"> Sen
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="2" class="rf-quran-day"> Sel
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="3" class="rf-quran-day"> Rab
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="4" class="rf-quran-day"> Kam
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="5" class="rf-quran-day"> Jum
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="6" class="rf-quran-day"> Sab
+          </label>
+        </div>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">🏃 Aktifkan movement reminder</div>
+          <div class="rf-row-desc">Notifikasi "berdiri & gerak" tiap X menit duduk</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-exercise-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- v0.8.41: Hari treadmill -->
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">📅 Hari olahraga (treadmill)</div>
+          <div class="rf-row-desc">Pilih hari untuk reminder olahraga. Hari yang tidak dicentang = tidak ada reminder (hari istirahat).</div>
+        </div>
+        <div id="rf-set-exercise-days" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="0" class="rf-exercise-day"> Min
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="1" class="rf-exercise-day"> Sen
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="2" class="rf-exercise-day"> Sel
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="3" class="rf-exercise-day"> Rab
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="4" class="rf-exercise-day"> Kam
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="5" class="rf-exercise-day"> Jum
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;background:var(--surface);padding:6px 10px;border-radius:6px;border:1px solid var(--border);">
+            <input type="checkbox" value="6" class="rf-exercise-day"> Sab
+          </label>
+        </div>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Waktu pengingat treadmill</div>
+          <div class="rf-row-desc">v0.8.42: Waktu spesifik (HH:MM) untuk reminder treadmill. Kosongkan untuk pakai mode interval di bawah.</div>
+        </div>
+        <input type="time" id="rf-set-exercise-time" value="18:30" style="width:100px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Interval movement reminder (cadangan)</div>
+          <div class="rf-row-desc">Setiap berapa menit notifikasi muncul. Hanya aktif kalau "waktu pengingat treadmill" kosong.</div>
+        </div>
+        <select id="rf-set-exercise-interval">
+          <option value="15">15 menit</option>
+          <option value="30">30 menit</option>
+          <option value="45">45 menit — default</option>
+          <option value="60">60 menit (1 jam)</option>
+          <option value="90">90 menit (1.5 jam)</option>
+        </select>
+      </div>
+    </section>
+
+    <!-- v0.8.42: Element Blocker -->
+    <section class="rf-section">
+      <h2>🚫 Element Blocker (Iklan & Popup)</h2>
+      <p class="rf-section-desc">
+        Blokir iklan, popup, banner, dan script tracker di situs tertentu.
+        Preset sudah tersedia untuk situs streaming populer.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aktifkan Element Blocker</div>
+          <div class="rf-row-desc">Master switch untuk semua rules di bawah</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-eb-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Daftar Rules</div>
+          <div class="rf-row-desc">Preset + custom rules untuk blokir iklan. Centang untuk aktifkan.</div>
+        </div>
+        <div id="rf-eb-rules-list" style="margin-top:8px;">
+          <!-- diisi oleh settings.js -->
+        </div>
+      </div>
+
+      <!-- v0.9.0: Tambah Domain Custom -->
+      <div class="rf-row rf-row-stacked" style="background:rgba(59,130,246,0.06);border-left:3px solid #3b82f6;padding:12px 14px;border-radius:6px;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">➕ Tambah Situs Baru</div>
+          <div class="rf-row-desc">
+            Mau block iklan di situs lain? Ketik domain + pilih preset. Atau klik kanan di elemen iklan mana saja → "🚫 Block Element Ini".
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;">
+          <div style="flex:1;min-width:180px;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Domain situs:</label>
+            <input type="text" id="rf-set-eb-new-domain" placeholder="contoh.com (tanpa https://)"
+              style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />
+          </div>
+          <div style="flex:1;min-width:180px;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Preset:</label>
+            <select id="rf-set-eb-new-preset" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;">
+              <option value="generic">🧹 Generic Ad Blocker (banner, popup, adsbygoogle)</option>
+              <option value="streaming">🎬 Streaming Site (popup, banner, judol, download palsu)</option>
+              <option value="custom">⚙️ Custom Selectors (saya tulis sendiri)</option>
+            </select>
+          </div>
+          <button id="rf-set-eb-add-rule" class="rf-btn rf-btn-secondary" style="padding:6px 14px;white-space:nowrap;">➕ Tambah</button>
+        </div>
+        <div id="rf-set-eb-custom-selectors-wrap" style="display:none;margin-top:8px;">
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">CSS Selectors (dipisah koma):</label>
+          <textarea id="rf-set-eb-custom-selectors" rows="3"
+            style="width:100%;font-family:monospace;font-size:11px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);resize:vertical;"
+            placeholder=".ad-banner, #popup, .video-ads, [class*='sponsor']"></textarea>
+        </div>
+      </div>
+
+      <div class="rf-row rf-row-stacked" style="background:rgba(245,158,11,0.06);border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;">
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;">
+          <strong>ℹ️ Cara kerja:</strong> Saat Anda buka situs yang ada di daftar, ekstensi otomatis:
+          <ul style="margin:6px 0 0 18px;padding:0;line-height:1.6;">
+            <li>Hide elemen iklan (popup, banner, tombol download palsu)</li>
+            <li>Remove iframe & script dari domain tracker</li>
+            <li>Block <code>window.open</code> untuk cegah popup tab baru</li>
+          </ul>
+          Refresh tab (Ctrl+Shift+R) setelah mengubah settings.
+        </div>
+      </div>
+    </section>
+
+    <!-- v0.8.44: Auto Tab Discard -->
+    <section class="rf-section">
+      <h2>💤 Auto Tab Discard (Hemat Memory)</h2>
+      <p class="rf-section-desc">
+        Otomatis discard tab yang tidak aktif untuk hemat memory RAM.
+        Tab yang di-discard tetap di tab bar — tinggal klik untuk reload.
+        Terinspirasi dari addon "Auto Tab Discard" oleh rNeomy.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aktifkan Auto Discard</div>
+          <div class="rf-row-desc">Default ON. Matikan kalau mau pakai browser normal tanpa discard.</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-ad-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Interval discard (menit)</div>
+          <div class="rf-row-desc">Berapa menit tab tidak dilihat sebelum di-discard. Default: 30 menit.</div>
+        </div>
+        <select id="rf-set-ad-interval">
+          <option value="5">5 menit</option>
+          <option value="10">10 menit</option>
+          <option value="15">15 menit</option>
+          <option value="30">30 menit — default</option>
+          <option value="60">60 menit (1 jam)</option>
+          <option value="120">120 menit (2 jam)</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Minimal jumlah tab</div>
+          <div class="rf-row-desc">Jangan discard kalau total tab kurang dari ini. Default: 5 tab.</div>
+        </div>
+        <select id="rf-set-ad-min-tabs">
+          <option value="1">1 tab (selalu discard)</option>
+          <option value="3">3 tab</option>
+          <option value="5">5 tab — default</option>
+          <option value="10">10 tab</option>
+          <option value="20">20 tab</option>
+        </select>
+      </div>
+
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Exclude rules</div>
+          <div class="rf-row-desc">Jangan discard tab yang memenuhi kriteria berikut:</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+            <input type="checkbox" id="rf-set-ad-exclude-pinned"> Tab yang di-pin (pinned)
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+            <input type="checkbox" id="rf-set-ad-exclude-active"> Tab yang sedang aktif
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+            <input type="checkbox" id="rf-set-ad-exclude-media"> Tab yang playing audio/video
+          </label>
+        </div>
+      </div>
+
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Domain yang di-exclude</div>
+          <div class="rf-row-desc">Satu domain per baris. Tab dengan domain ini tidak akan di-discard. Mis: youtube.com, gmail.com, docs.google.com</div>
+        </div>
+        <textarea id="rf-set-ad-excluded-domains" rows="4"
+          style="width:100%;font-family:monospace;font-size:11px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);resize:vertical;"
+          placeholder="youtube.com&#10;gmail.com&#10;docs.google.com"></textarea>
+      </div>
+
+      <div class="rf-row rf-row-stacked" style="background:rgba(34,197,94,0.06);border-left:3px solid #16a34a;padding:10px 14px;border-radius:6px;">
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;">
+          <strong style="color:#16a34a;">✓ Cara kerja:</strong> Setiap 30 detik, ekstensi cek tab yang sudah idle lebih dari interval.
+          Tab yang memenuhi kriteria akan di-discard (unload dari memory).
+          Tab tetap di tab bar — tinggal klik untuk reload.
+          <br /><br />
+          <strong>ℹ️ Catatan:</strong> Tab yang di-discard:
+          <ul style="margin:4px 0 0 18px;padding:0;line-height:1.6;">
+            <li>Tidak konsumsi RAM (JavaScript & DOM unloaded)</li>
+            <li>Tetap tampil di tab bar (favicon + title tetap)</li>
+            <li>Klik tab → reload otomatis (scroll position & form input di-restore native Firefox)</li>
+            <li>Aman — kalau ekstensi di-uninstall, tab tetap bisa di-restore</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tes sekarang</div>
+          <div class="rf-row-desc">
+            <b>Discard Now</b> = cek tab yang idle sudah cukup lama (sesuai interval).<br>
+            <b>Force Discard ALL</b> = discard SEMUA tab non-aktif langsung (abaikan idle time). Untuk test cepat.
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="rf-set-ad-discard-now" class="rf-btn rf-btn-secondary" style="background:#3b82f6;color:#fff;border-color:#3b82f6;padding:8px 16px;">🗑️ Discard Now</button>
+          <button id="rf-set-ad-force-discard" class="rf-btn rf-btn-secondary" style="background:#dc2626;color:#fff;border-color:#dc2626;padding:8px 16px;font-weight:700;">💥 Force Discard ALL</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Persistence -->
+    <section class="rf-section">
+      <h2>💾 Persistensi &amp; Startup</h2>
+      <p class="rf-section-desc">
+        Atur perilaku RecallFox saat Firefox dibuka/ditutup. Data vault (prompt, catatan, screenshot, jadwal shalat) tetap aman di <code>storage.local</code> — tidak hilang walau add-on uninstalled sekalipun.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Auto-open sidebar saat Firefox mulai</div>
+          <div class="rf-row-desc">Buka sidebar RecallFox otomatis tiap kali Firefox dijalankan</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-sidebar-auto" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Ingat tab terakhir yang dipakai</div>
+          <div class="rf-row-desc">Saat buka popup/sidebar, otomatis tampilkan tab yang terakhir Anda klik (prompt/notes/prayer/dll)</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-remember-tab" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tampilkan welcome modal lagi</div>
+          <div class="rf-row-desc">Buka kembali panduan welcome + tips install permanen</div>
+        </div>
+        <button id="rf-set-show-welcome" class="rf-btn rf-btn-secondary">🦊 Tampilkan Welcome</button>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">💾 Auto-backup interval</div>
+          <div class="rf-row-desc">
+            Otomatis simpan settings + vault + catatan ke <code>~/Downloads/RecallFox/auto-backup.json</code>.<br>
+            File backup tetap ada walau Firefox quit / addon uninstalled.
+          </div>
+        </div>
+        <select id="rf-set-backup-interval">
+          <option value="1">Setiap 1 jam (24x sehari)</option>
+          <option value="6">Setiap 6 jam (4x sehari) — default</option>
+          <option value="12">Setiap 12 jam (2x sehari)</option>
+          <option value="24">Setiap 24 jam (1x sehari)</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Backup manual sekarang</div>
+          <div class="rf-row-desc">Simpan ke <code>~/Downloads/RecallFox/manual-backup-YYYYMMDDHHMMSS.json</code> (dibedakan dari auto-backup, tidak ditimpa)</div>
+        </div>
+        <button id="rf-set-backup-now" class="rf-btn rf-btn-secondary">💾 Backup Sekarang</button>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Restore dari file backup</div>
+          <div class="rf-row-desc">Pilih file backup (.json) untuk restore settings + vault + catatan</div>
+        </div>
+        <button id="rf-set-restore-pick" class="rf-btn rf-btn-secondary">📂 Restore dari File</button>
+        <input type="file" id="rf-set-restore-input" accept=".json,application/json" style="display:none;" />
+      </div>
+
+      <div class="rf-row" id="rf-set-last-backup-row" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Backup terakhir</div>
+          <div class="rf-row-desc" id="rf-set-last-backup">—</div>
+        </div>
+        <div></div>
+      </div>
+    </section>
+
+    <!-- Clear Cache (clearcache-style browsingData cleaner) -->
+    <section class="rf-section">
+      <h2>🧹 Clear Cache (Pembersihan Data Browser)</h2>
+      <p class="rf-section-desc">
+        Bersihkan data browsing (cache, cookies, history, localStorage, dll) dengan satu klik.
+        Klik tombol ikon <b>trash</b> di header popup/sidebar, atau klik kanan halaman → "Clear Cache",
+        atau tekan <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>.
+        <br><small style="color:#9ca3af;">Terinspirasi dari <a href="https://github.com/TenSoja/clear-cache" target="_blank">clear-cache by TenSoja</a> (MIT).</small>
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tipe data yang dibersihkan</div>
+          <div class="rf-row-desc">Pilih satu atau lebih</div>
+        </div>
+        <div class="rf-checkbox-group" id="rf-set-cc-types">
+          <label class="rf-checkbox"><input type="checkbox" value="cache" /> Cache</label>
+          <label class="rf-checkbox"><input type="checkbox" value="cookies" /> Cookies</label>
+          <label class="rf-checkbox"><input type="checkbox" value="history" /> History</label>
+          <label class="rf-checkbox"><input type="checkbox" value="localStorage" /> Local Storage</label>
+          <label class="rf-checkbox"><input type="checkbox" value="indexedDB" /> IndexedDB</label>
+          <label class="rf-checkbox"><input type="checkbox" value="serviceWorkers" /> Service Workers</label>
+          <label class="rf-checkbox"><input type="checkbox" value="downloads" /> Downloads</label>
+          <label class="rf-checkbox"><input type="checkbox" value="formData" /> Form Data</label>
+          <label class="rf-checkbox"><input type="checkbox" value="passwords" /> Passwords</label>
+        </div>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Periode waktu</div>
+          <div class="rf-row-desc">Hapus data dari sekian waktu terakhir</div>
+        </div>
+        <select id="rf-set-cc-period">
+          <option value="all">Semua waktu</option>
+          <option value="1week">1 minggu terakhir</option>
+          <option value="24hours">24 jam terakhir</option>
+          <option value="1hour">1 jam terakhir</option>
+          <option value="15min">15 menit terakhir</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Hanya untuk tab aktif (per-site)</div>
+          <div class="rf-row-desc">Bersihkan cookies/localStorage/etc hanya untuk situs tab aktif. Catatan: cache/history/downloads TIDAK support per-site — akan dilewati.</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cc-tabonly" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Auto-reload tab aktif setelah clear</div>
+          <div class="rf-row-desc">Refresh tab aktif supaya efek clear langsung kelihatan</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cc-reload" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tampilkan notifikasi</div>
+          <div class="rf-row-desc">Notifikasi browser setelah clear selesai</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cc-notify" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Clear sekarang</div>
+          <div class="rf-row-desc">Jalankan pembersihan dengan setting di atas</div>
+        </div>
+        <button id="rf-set-cc-now" class="rf-btn rf-btn-primary">🧹 Clear Sekarang</button>
+      </div>
+    </section>
+
+    <!-- Screenshot (FireShot-style capture) -->
+    <section class="rf-section">
+      <h2>🖼️ Screenshot (Tangkapan Layar)</h2>
+      <p class="rf-section-desc">
+        Tangkap halaman web ke vault sebagai gambar. Tiga mode mirip FireShot:
+        <b>Bagian Terlihat</b> (Alt+Shift+5), <b>Seluruh Halaman</b> (Alt+Shift+6, scroll-stitch otomatis),
+        <b>Seleksi Area</b> (Alt+Shift+7, seret kotak di halaman).
+        Gambar penuh disimpan di <code>storage.local</code> (terpisah dari vault JSON agar sync tetap ringan);
+        vault hanya menyimpan thumbnail + metadata.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Format gambar default</div>
+          <div class="rf-row-desc">PNG (lossless, besar) atau JPEG (kecil, ada kompresi)</div>
+        </div>
+        <select id="rf-set-shot-format">
+          <option value="png">PNG (lossless)</option>
+          <option value="jpeg">JPEG (lebih kecil)</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Kualitas JPEG</div>
+          <div class="rf-row-desc">Hanya berlaku kalau format = JPEG (50–100)</div>
+        </div>
+        <input type="number" id="rf-set-shot-quality" min="50" max="100" step="5" value="90" style="width:80px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Mode default saat klik tombol Screenshot</div>
+          <div class="rf-row-desc">Mode yang dipakai kalau klik tombol tanpa pilih mode</div>
+        </div>
+        <select id="rf-set-shot-default-mode">
+          <option value="visible">Bagian Terlihat</option>
+          <option value="entire">Seluruh Halaman</option>
+          <option value="selection">Seleksi Area</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Tinggi maks halaman penuh (px)</div>
+          <div class="rf-row-desc">Cap pengaman untuk scroll-stitch (2048–32768)</div>
+        </div>
+        <input type="number" id="rf-set-shot-max-height" min="2048" max="32768" step="1024" value="16384" style="width:120px;" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Ikutkan gambar penuh di Firefox Sync</div>
+          <div class="rf-row-desc">Mati secara default — gambar penuh bisa besar (puluhan KB s/d MB). Thumbnail tetap disinkronkan.</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-shot-sync-full" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- AI Assistant -->
+    <section class="rf-section">
+      <h2>🤖 AI Assistant (Resepsionis)</h2>
+      <p class="rf-section-desc">
+        Asisten AI built-in yang paham semua fitur RecallFox. Tanya apa saja langsung di sidebar → tab <b>Asisten</b>.
+        Default: <b>Groq</b> (gratis, cepat). Fallback otomatis ke <b>Gemini free tier</b> kalau Groq down.
+        API key disimpan lokal.
+      </p>
+
+      <h3 style="margin:16px 0 8px;font-size:13px;color:#1c1917;">Provider Utama</h3>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Provider</div>
+          <div class="rf-row-desc">Layanan AI utama</div>
+        </div>
+        <select id="rf-set-assistant-provider">
+          <option value="groq">Groq (free, fast, recommended)</option>
+          <option value="gemini">Google Gemini (free tier)</option>
+          <option value="xai">xAI Grok</option>
+          <option value="zai">z.ai (GLM-4.6)</option>
+          <option value="openai">OpenAI</option>
+          <option value="custom">Custom (OpenAI-compatible)</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">API Key</div>
+          <div class="rf-row-desc">Dari dashboard provider pilihan Anda</div>
+        </div>
+        <input type="password" id="rf-set-assistant-apikey" placeholder="gsk_..." autocomplete="off" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Model</div>
+          <div class="rf-row-desc" id="rf-assistant-model-hint">Default: llama-3.3-70b-versatile</div>
+        </div>
+        <input type="text" id="rf-set-assistant-model" placeholder="llama-3.3-70b-versatile" />
+      </div>
+
+      <div class="rf-row" id="rf-row-assistant-baseurl" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Base URL</div>
+          <div class="rf-row-desc">Endpoint OpenAI-compatible (tanpa /chat/completions)</div>
+        </div>
+        <input type="text" id="rf-set-assistant-baseurl" placeholder="https://your-endpoint.com/v1" />
+      </div>
+
+      <h3 style="margin:20px 0 8px;font-size:13px;color:#1c1917;">🔄 Fallback (Otomatis)</h3>
+      <p style="font-size:12px;color:#6b7280;margin:0 0 12px;">
+        Dipakai kalau provider utama gagal (network error, 5xx, rate limit, auth error).
+        Contoh: Groq down → otomatis pakai Gemini.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aktifkan fallback</div>
+          <div class="rf-row-desc">Otomatis coba provider lain kalau utama gagal</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-assistant-fallback-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Provider Fallback</div>
+          <div class="rf-row-desc">Disarankan: Gemini free tier (gratis)</div>
+        </div>
+        <select id="rf-set-assistant-fallback-provider">
+          <option value="gemini">Google Gemini (free tier)</option>
+          <option value="groq">Groq</option>
+          <option value="xai">xAI Grok</option>
+          <option value="zai">z.ai (GLM-4.6)</option>
+          <option value="openai">OpenAI</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Fallback API Key</div>
+          <div class="rf-row-desc">Key untuk provider fallback</div>
+        </div>
+        <input type="password" id="rf-set-assistant-fallback-apikey" placeholder="AIza..." autocomplete="off" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Fallback Model</div>
+          <div class="rf-row-desc" id="rf-assistant-fallback-model-hint">Default: gemini-2.0-flash</div>
+        </div>
+        <input type="text" id="rf-set-assistant-fallback-model" placeholder="gemini-2.0-flash" />
+      </div>
+
+      <div class="rf-row" id="rf-row-assistant-fallback-baseurl" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Fallback Base URL</div>
+          <div class="rf-row-desc">Untuk provider Custom</div>
+        </div>
+        <input type="text" id="rf-set-assistant-fallback-baseurl" placeholder="https://your-endpoint.com/v1" />
+      </div>
+
+      <details class="rf-instructions">
+        <summary>📋 Cara dapat API Key (klik untuk lihat)</summary>
+
+        <h4 style="margin:8px 0 4px;color:#1c1917;">Groq (recommended, free, fast) — sudah pre-configured</h4>
+        <p style="font-size:12px;color:#57534e;margin:0 0 8px;">
+          API key Groq sudah diisi sebagai default (lihat field <b>API Key</b>). Groq hosting model Llama 3.3 70B gratis dengan rate limit generous.
+        </p>
+        <ol>
+          <li>Buka <a href="https://console.groq.com/keys" target="_blank">https://console.groq.com/keys</a> & login (gratis).</li>
+          <li>Klik <b>Create API Key</b>, salin key (format <code>gsk_...</code>).</li>
+          <li>(Opsional) Ganti key default di atas dengan key Anda sendiri untuk privasi.</li>
+          <li>Model gratis populer: <code>llama-3.3-70b-versatile</code>, <code>llama-3.1-8b-instant</code>, <code>mixtral-8x7b-32768</code>.</li>
+        </ol>
+
+        <h4 style="margin:12px 0 4px;color:#1c1917;">Google Gemini (free tier) — untuk fallback</h4>
+        <ol>
+          <li>Buka <a href="https://aistudio.google.com/app/apikey" target="_blank">https://aistudio.google.com/app/apikey</a> & login dengan Google.</li>
+          <li>Klik <b>Create API Key</b>, pilih project (atau buat baru).</li>
+          <li>Salin key (format <code>AIza...</code>).</li>
+          <li>Paste ke field <b>Fallback API Key</b> di atas.</li>
+          <li>Model gratis: <code>gemini-2.0-flash</code> (default), <code>gemini-1.5-flash</code>, <code>gemini-1.5-flash-8b</code>.</li>
+          <li>Rate limit free tier: 15 RPM, 1500 RPD — cukup untuk asisten pribadi.</li>
+        </ol>
+
+        <h4 style="margin:12px 0 4px;color:#1c1917;">xAI Grok</h4>
+        <ol>
+          <li>Buka <a href="https://console.x.ai" target="_blank">https://console.x.ai</a> & login.</li>
+          <li>Buat API key (format <code>xai-...</code>).</li>
+          <li>Paste ke field <b>API Key</b>. Model: <code>grok-3</code>, <code>grok-3-mini</code>, <code>grok-2</code>.</li>
+        </ol>
+
+        <h4 style="margin:12px 0 4px;color:#1c1917;">z.ai (GLM-4.6)</h4>
+        <ol>
+          <li>Buka <a href="https://z.ai/manage/apikey" target="_blank">https://z.ai/manage/apikey</a> & login.</li>
+          <li>Create API Key. Model: <code>glm-4.6</code>.</li>
+        </ol>
+
+        <h4 style="margin:12px 0 4px;color:#1c1917;">OpenAI</h4>
+        <ol>
+          <li>Buka <a href="https://platform.openai.com/api-keys" target="_blank">https://platform.openai.com/api-keys</a>.</li>
+          <li>Create new secret key (format <code>sk-...</code>). Model: <code>gpt-4o-mini</code>.</li>
+        </ol>
+
+        <h4 style="margin:12px 0 4px;color:#1c1917;">Custom (OpenAI-compatible)</h4>
+        <p style="font-size:12px;color:#6b7280;">
+          Untuk endpoint self-hosted atau provider lain (Ollama, LM Studio, Together, Anyscale, dll).
+          Isi Base URL + API key + model name.
+        </p>
+
+        <p style="font-size:12px;color:#6b7280;margin-top:12px;padding:8px;background:#fef3c7;border-radius:6px;border-left:3px solid #f59e0b;">
+          ⚠️ <b>Keamanan API key</b>: API key disimpan lokal di <code>browser.storage.local</code>.
+          Key Groq default di kode ini adalah key pribadi developer — <b>segera ganti dengan key Anda sendiri</b> di Settings untuk keamanan.
+          Jangan share file zip addon ini karena berisi key Groq.
+        </p>
+      </details>
+    </section>
+
+    <!-- Toppings Manager -->
+    <section class="rf-section">
+      <h2>⚙️ Toppings (Orchestrator)</h2>
+      <p class="rf-section-desc">
+        Toppings adalah behavior modifier yang nempel di prompt saat diinject ke AI — seperti "topping" pada makanan.
+        Pilih toppings di editor prompt, dan saat Anda klik "Sisipkan", toppings otomatis di-append ke body prompt.
+        Bisa multiple, stacking. <b>Auto-aktif</b> saat inject (bisa di-toggle per item).
+      </p>
+      <div id="rf-toppings-list-display">
+        <!-- diisi oleh settings.js -->
+      </div>
+      <p style="font-size:11px;color:#9ca3af;margin-top:12px;">
+        💡 12 built-in toppings tersedia. Custom toppings (bikin sendiri) ada di roadmap.
+        Toppings disimpan per-item — edit item mana saja untuk menambah/menghapus toppings.
+      </p>
+    </section>
+
+    <!-- Help & Documentation -->
+    <section class="rf-section">
+      <h2>📚 Bantuan & Dokumentasi</h2>
+      <p class="rf-section-desc">
+        Penjelasan singkat setiap fitur RecallFox. Klik tab di bawah untuk lihat detail.
+      </p>
+
+      <details class="rf-instructions" open>
+        <summary>🦊 Apa itu RecallFox?</summary>
+        <p style="padding:8px 16px;font-size:13px;color:#57534e;line-height:1.6;">
+          RecallFox adalah addon Firefox untuk menyimpan prompt & konteks AI dengan satu klik.
+          Local-first (data di device Anda), sync opsional via Firefox Sync, backup terenkripsi.
+          Mendukung 21+ AI tool: z.ai, ChatGPT, Claude, Gemini, DeepSeek, Qwen, Kimi, dan lainnya.
+        </p>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>💾 Vault (Penyimpanan)</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li><b>Buka vault</b>: klik ikon RecallFox di toolbar (popup) </li>
+          <li><b>5 tab</b>: Semua / Prompt / Konteks / Snapshot / Link / Bundle + tombol Asisten di header.</li>
+          <li><b>Search</b>: ketik di search bar, atau tekan <code>/</code> untuk fokus cepat.</li>
+          <li><b>Klik item</b> = inject ke AI textarea. <b>Klik ganda</b> = edit.</li>
+          <li><b>Counter</b> di tiap tab menunjukkan jumlah item.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>✍️ Simpan Prompt / Konteks</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Blok teks di halaman web mana saja.</li>
+          <li>Klik kanan → <b>"Simpan sebagai Prompt"</b> atau <b>"Simpan sebagai Konteks"</b>.</li>
+          
+          <li>Toast konfirmasi muncul di pojok kanan bawah.</li>
+          <li>Item otomatis tersimpan ke vault dengan URL sumber & timestamp.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>🔗 Simpan Halaman / Link</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li><b>Halaman yang sedang dibuka</b>: klik kanan di mana saja → <b>"Simpan Halaman Ini"</b>.</li>
+          <li><b>Link di halaman</b>: klik kanan pada link → <b>"Simpan Link Ini"</b>.</li>
+          <li>Item tersimpan sebagai tipe <b>Link</b> dengan URL + judul otomatis.</li>
+          <li>Klik item Link di vault = buka di tab baru.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>📸 Snapshot Percakapan AI</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Saat di halaman AI (z.ai, ChatGPT, dll), klik kanan → <b>"Ambil Snapshot Percakapan"</b>.</li>
+          <li>Atau tekan <code>Ctrl+Shift+3</code>.</li>
+          <li>Atau klik tombol mengambang 📸 di pojok kanan bawah halaman AI.</li>
+          <li>Modal muncul dengan ringkasan otomatis. Edit judul + tag, lalu simpan.</li>
+          <li>Snapshot menyimpan 50 pesan terakhir (teks saja, maks 10KB).</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>📦 Bundle (Project Session)</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Bundle = gabungan beberapa item (prompt + link + konteks) jadi satu paket.</li>
+          <li>Klik bundle = <b>buka semua link di tab baru</b> + <b>inject prompt ke AI textarea</b>.</li>
+          <li>Cocok untuk project session: GitHub repo + Supabase + Vercel + prompt checklist.</li>
+          <li>Untuk saat ini, bundle dibuat via edit manual item atau import dari backup. UI builder visual ada di roadmap.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>⚙️ Variabel di Prompt</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Tulis <code>{{nama_variabel}}</code> di body prompt.</li>
+          <li>Saat diinject, modal muncul untuk isi nilai variabel.</li>
+          <li>Contoh: <code>Review kode {{bahasa}} untuk project {{project}}</code></li>
+          <li>Editor vault otomatis detect variabel & tampilkan sebagai chips.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>🍕 Toppings (Orchestrator)</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Buka editor item (klik ganda item atau tombol Edit).</li>
+          <li>Di field <b>Toppings</b>, klik <b>"+ Pilih topping"</b>.</li>
+          <li>Pilih satu atau beberapa topping dari popover (12 built-in tersedia: Research Mode, Step-by-step, Deep Think, Brainstorm, Critic Mode, Simplifier, Translator, Code Reviewer, Checklist Maker, Iterative Improver, Expert Persona, Output Format).</li>
+          <li>Toppings yang dipilih muncul sebagai chips — klik × untuk hapus.</li>
+          <li>Save item. Saat Anda klik "Sisipkan", toppings otomatis di-append ke body prompt.</li>
+          <li>Item dengan toppings aktif menampilkan badge <code>⚙ topping-id</code> di kartu item.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>📎 Inject dengan Lampiran Link</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Klik tombol <b>📎</b> di samping tombol "Sisipkan" pada item prompt/konteks/snapshot.</li>
+          <li>Modal muncul: pilih link mana yang mau dilampirkan (bisa multiple).</li>
+          <li>Pilih posisi (atas/bawah prompt) dan edit teks pengantar.</li>
+          <li>Preview live teks final sebelum diinject.</li>
+          <li>Format output: <code>- [Title](URL)</code> (markdown link, otomatis di-render AI).</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>⚡ Quick Switch AI</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Klik tombol <b>⚡ AI</b> di header vault.</li>
+          <li>Dropdown muncul dengan 21 AI tool dalam 3 grup: Lokal / Barat / China.</li>
+          <li>Klik <b>Open</b> untuk buka AI tool di tab baru.</li>
+          <li>AI tool yang sedang aktif ditandai badge <b>"⚡ aktif"</b>.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>🌙 Dark / Light Mode</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Klik tombol <b>☀️/🌙</b> di header vault untuk toggle cepat.</li>
+          <li>Atau atur permanen di Settings → "Tema tampilan" (Auto / Terang / Gelap).</li>
+          <li>Default: <b>Auto</b> — ikuti system preference OS Anda.</li>
+        </ol>
+      </details>
+
+      <details class="rf-instructions">
+        <summary>🔐 Backup & Sync</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li><b>Backup lokal</b>: Settings → "Backup Lokal" → Export (plain JSON atau terenkripsi .rfvault).</li>
+          <li>Enkripsi pakai AES-GCM 256 + PBKDF2 (100k iter) via Web Crypto API native.</li>
+          <li><b>Firefox Sync</b>: Settings → "Sinkronisasi" → aktifkan untuk sync antar device Firefox account.</li>
+          <li>Sync di-chunk 90KB per key (limit Firefox Sync 100KB/key).</li>
+          <li>Konflik resolve: item-level last-write-wins by <code>updatedAt</code>.</li>
+        </ol>
+      </details>
+      <details class="rf-instructions">
+        <summary>🤖 AI Assistant</summary>
+        <ol style="margin:0;padding:0 16px 16px 32px;font-size:12px;line-height:1.6;color:#57534e;">
+          <li>Setup API key di section <b>AI Assistant</b> di atas.</li>
+          <li>Buka sidebar → tab <b>Asisten</b>.</li>
+          <li>Tanya apa saja tentang cara pakai RecallFox — asisten paham semua fitur.</li>
+          <li>Contoh: "gimana cara simpan link?", "apa itu bundle?", "shortcut untuk snapshot?"</li>
+          <li>Riwayat chat disimpan lokal, bisa di-clear kapan saja.</li>
+        </ol>
+      </details>
+    </section>
+
+    <!-- Sync -->
+    <section class="rf-section">
+      <h2>Sinkronisasi (Firefox Sync)</h2>
+      <p class="rf-section-desc">
+        Sync vault antar device yang login ke Firefox account yang sama.
+        Data dienkripsi oleh Firefox sebelum dikirim.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aktifkan Firefox Sync</div>
+          <div class="rf-row-desc">Multi-device, otomatis</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-sync" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Sinkron terakhir</div>
+          <div class="rf-row-desc" id="rf-set-lastsync">Belum pernah</div>
+        </div>
+        <button id="rf-set-sync-now" class="rf-btn rf-btn-secondary">Sinkron sekarang</button>
+      </div>
+    </section>
+
+    <!-- Backup -->
+    <section class="rf-section">
+      <h2>Backup Lokal</h2>
+      <p class="rf-section-desc">
+        Export vault ke file di disk. Berguna kalau Sync mati atau untuk pindah device manual.
+        Backup terenkripsi pakai AES-GCM 256-bit + PBKDF2 (100k iter).
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Export backup (plain JSON)</div>
+          <div class="rf-row-desc">Tanpa enkripsi, langsung bisa dibaca</div>
+        </div>
+        <button id="rf-set-export-plain" class="rf-btn rf-btn-secondary">Export</button>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Export backup terenkripsi</div>
+          <div class="rf-row-desc">Disarankan untuk data sensitif</div>
+        </div>
+        <button id="rf-set-export-enc" class="rf-btn rf-btn-secondary">Export Terenkripsi</button>
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Import backup</div>
+          <div class="rf-row-desc">Restore dari file .json atau .rfvault</div>
+        </div>
+        <button id="rf-set-import" class="rf-btn rf-btn-secondary">Pilih file…</button>
+        <input type="file" id="rf-set-import-file" accept=".json,.rfvault,application/json" style="display:none" />
+      </div>
+
+      <div class="rf-row rf-row-import-opts" id="rf-import-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Passphrase (untuk file terenkripsi)</div>
+          <div class="rf-row-desc">Kosongkan jika file plain JSON</div>
+        </div>
+        <input type="password" id="rf-set-passphrase" placeholder="passphrase" />
+      </div>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Backup terakhir</div>
+          <div class="rf-row-desc" id="rf-set-lastbackup">Belum pernah</div>
+        </div>
+        <div></div>
+      </div>
+    </section>
+
+    <!-- Statistics -->
+    <section class="rf-section">
+      <h2>Statistik Penggunaan</h2>
+      <div class="rf-stats-grid" id="rf-stats-grid">
+    <!-- filled by JS -->
+  </div>
+      <div class="rf-stats-list" id="rf-stats-top"></div>
+      <div class="rf-stats-tags" id="rf-stats-tags"></div>
+    </section>
+    <!-- Supported domains -->
+    <section class="rf-section">
+      <h2>🚀 AI Tool di Quick Switch</h2>
+      <p class="rf-section-desc">
+        Daftar AI yang tersedia di tombol <b>Quick Switch</b> (pojok kanan atas vault).
+        Yang didukung <b>inject otomatis</b> ada tanda ✅, sisanya bisa dibuka di tab baru saja (tanpa inject).
+      </p>
+      <div class="rf-domains-grid" id="rf-ai-tools-grid">
+        <!-- diisi oleh settings.js -->
+      </div>
+    </section>
+
+    <!-- Content Guardian -->
+    <section class="rf-section">
+      <h2>🛡️ Filter Konten Positif (Content Guardian)</h2>
+      <p class="rf-section-desc">
+        Blokir konten berita negatif Indonesia & arahkan paksa ke konten positif
+        dari Tiongkok (kehidupan, teknologi, kereta cepat, mobil listrik, dll.) saat
+        Anda membuka YouTube / X (Twitter).
+      </p>
+
+      <!-- Master switch -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aktifkan Content Guardian</div>
+          <div class="rf-row-desc">Master switch untuk semua fitur filter konten</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Block Indonesian news -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Blokir situs berita Indonesia</div>
+          <div class="rf-row-desc">
+            Saat Anda membuka detik.com, kompas.com, tribunnews.com, dll. —
+            redirect ke halaman alternatif konten positif Tiongkok
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-block-idnews" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Force redirect YouTube/X -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Redirect paksa YouTube &amp; X ke konten positif Tiongkok</div>
+          <div class="rf-row-desc">
+            Saat buka home YouTube / X — tampilkan halaman kurasi konten
+            positif Tiongkok sebagai pengganti feed default
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-force-redirect" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Filter feed -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Filter feed YouTube &amp; X dari konten negatif</div>
+          <div class="rf-row-desc">
+            Sembunyikan video / tweet yang mengandung kata kunci negatif
+            (korupsi, bencana, skandal, kekerasan, dll.) dari feed yang tampil
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-filter-feeds" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Block YouTube channels -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Blokir channel YouTube berita Indonesia</div>
+          <div class="rf-row-desc">
+            Sembunyikan otomatis video dari METRO TV, Kompas, iNews, tvOne, CNN
+            Indonesia, Tribun, dll. (50+ channel berita Indonesia)
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-block-yt" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Block X accounts -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Blokir akun X (Twitter) berita Indonesia</div>
+          <div class="rf-row-desc">
+            Sembunyikan otomatis tweet dari @detikcom, @kompascom, @tribunnews,
+            @MetroTV, @tvOneNews, dll.
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-block-x" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Strict mode -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Mode paksa (bypass butuh 2× klik)</div>
+          <div class="rf-row-desc">
+            Tombol "Lewati" pada halaman takeover/blocked harus diklik 2× dalam
+            3 detik untuk konfirmasi — mencegah klik tidak sengaja
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-strict" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Notif -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Notifikasi saat redirect</div>
+          <div class="rf-row-desc">Tampilkan notifikasi browser saat konten diblokir/redirect</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-notify" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Debug mode -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">🔍 Mode Debug</div>
+          <div class="rf-row-desc">
+            Aktifkan logging ke console (F12). Setelah aktif, Alt+Klik pada badge merah
+            "X konten negatif disembunyikan" untuk membuka overlay debug yang menampilkan
+            statistik scan &amp; elemen yang di-hidden. Berguna kalau masih ada konten
+            negatif yang tembus.
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-debug" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Nuclear mode -->
+      <div class="rf-row" style="background:rgba(220,38,38,0.08);border-left:3px solid #dc2626;padding-left:14px;border-radius:6px;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">☢️ Nuclear Mode — Blokir SEMUA Politik Indonesia</div>
+          <div class="rf-row-desc">
+            <strong style="color:#dc2626;">Paling agresif.</strong> Blokir semua video/tweet
+            yang menyebut <em>politisi</em> (Prabowo, Jokowi, Anies, Gibran, Bahlil, dll.),
+            <em>partai</em> (PDIP, Golkar, Gerindra, PKB, dll.), atau
+            <em>lembaga politik</em> (DPR, Polri, Kejaksaan, KPU, dll.). Daftar 330+ keyword
+            + 170+ channel/akun. <strong>Diuji di 240 judul nyata → 100% tertangkap.</strong>
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-nuclear" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- v0.8.24 Search Query Blocker -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">🔍 Block Pencarian Politik</div>
+          <div class="rf-row-desc">
+            Saat Anda search "jokowi", "korupsi", "febri", "pilpres", "jampidsus", dll.
+            di YouTube/X — otomatis di-redirect ke search "kehidupan di tiongkok vlog".
+            Cegah Anda nge-search politik saat ingin browsing santai.
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-block-search" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- v0.8.24 Scan Description -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">📋 Scan Deskripsi Video</div>
+          <div class="rf-row-desc">
+            Scan juga description/preview text video (bukan hanya judul). Tangkap video
+            yang judulnya aman tapi deskripsinya menyebut politisi/korupsi.
+          </div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-cg-scan-desc" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <!-- Kata kunci negatif (textarea) -->
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Kata kunci negatif (dipisah koma)</div>
+          <div class="rf-row-desc">
+            Daftar kata yang dianggap negatif. Video/tweet yang judulnya
+            mengandung kata ini akan disembunyikan dari feed.
+          </div>
+        </div>
+        <textarea id="rf-set-cg-keywords" rows="4"
+          style="width:100%;font-family:inherit;font-size:12px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);resize:vertical;"
+          placeholder="gempa, banjir, korupsi, skandal, tewas, ..."></textarea>
+      </div>
+
+      <!-- Domain berita yang diblokir (textarea) -->
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Domain berita yang diblokir (dipisah baris baru)</div>
+          <div class="rf-row-desc">
+            Satu domain per baris. Subdomain juga akan diblokir otomatis
+            (mis. "detik.com" akan memblokir "news.detik.com" juga).
+          </div>
+        </div>
+        <textarea id="rf-set-cg-domains" rows="6"
+          style="width:100%;font-family:monospace;font-size:11px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);resize:vertical;"
+          placeholder="detik.com&#10;kompas.com&#10;tribunnews.com&#10;..."></textarea>
+      </div>
+
+      <!-- ===== User Blocklist (dynamic) ===== -->
+      <div class="rf-row rf-row-stacked" style="background:rgba(220,38,38,0.05);border-left:3px solid #dc2626;padding:14px 16px;border-radius:6px;margin-top:14px;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">🚫 Blocklist Saya (Konten yang Saya Blokir)</div>
+          <div class="rf-row-desc">
+            Daftar konten yang Anda blokir via klik kanan → "🚫 Blokir Konten Ini"
+            di YouTube / X. Konten baru yang cocok akan otomatis disembunyikan.
+            <br /><br />
+            <strong>Cara pakai:</strong>
+            <ol style="margin:6px 0 0 18px;padding:0;line-height:1.6;">
+              <li>Buka YouTube atau X</li>
+              <li>Arahkan kursor ke video/tweet yang ingin diblokir</li>
+              <li>Klik kanan → <strong>🚫 Blokir Konten Ini</strong></li>
+              <li>Pilih: Blokir judul / Blokir judul persis / Blokir channel / Blokir teks terseleksi</li>
+            </ol>
+            Atau alternatif: blok teks tertentu di halaman mana saja → klik kanan →
+            <strong>🚫 Blokir Konten Ini → Blokir teks terseleksi</strong>.
+          </div>
+        </div>
+
+        <!-- Tambah manual -->
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:flex-end;">
+          <div style="flex:1;min-width:180px;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Tipe blok:</label>
+            <select id="rf-set-cg-bl-type" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;">
+              <option value="keyword">Kata kunci (judul ATAU channel mengandung)</option>
+              <option value="title">Judul mengandung (title)</option>
+              <option value="exact_title">Judul persis sama (exact)</option>
+              <option value="channel">Channel/akun mengandung</option>
+            </select>
+          </div>
+          <div style="flex:2;min-width:220px;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Nilai:</label>
+            <input type="text" id="rf-set-cg-bl-value" placeholder="mis. &quot;jokowi&quot; atau &quot;METRO TV&quot;"
+              style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />
+          </div>
+          <button id="rf-set-cg-bl-add" class="rf-btn rf-btn-secondary" style="padding:6px 14px;">+ Tambah</button>
+        </div>
+
+        <!-- List blocklist -->
+        <div id="rf-cg-bl-list" style="margin-top:14px;max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--surface);">
+          <!-- diisi oleh settings.js -->
+        </div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;flex-wrap:wrap;gap:8px;">
+          <span id="rf-cg-bl-count" style="font-size:11px;color:var(--text-muted);">0 entri</span>
+          <button id="rf-set-cg-bl-clear" class="rf-btn rf-btn-secondary" style="padding:4px 10px;font-size:11px;">🗑️ Kosongkan Semua</button>
+        </div>
+      </div>
+
+      <!-- Tombol aksi -->
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Aksi cepat</div>
+          <div class="rf-row-desc">Tes halaman takeover / reset ke default / force re-scan / force enable all</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button id="rf-set-cg-force-enable" class="rf-btn rf-btn-secondary" style="background:#dc2626;color:#fff;border-color:#dc2626;font-weight:700;padding:10px 16px;">🚨 FORCE ENABLE ALL — Nyalakan Semua</button>
+          <button id="rf-set-cg-force-rescan" class="rf-btn rf-btn-secondary" style="background:#dc2626;color:#fff;border-color:#dc2626;">🔄 Force Re-scan Semua Tab</button>
+          <button id="rf-set-cg-test-takeover-yt" class="rf-btn rf-btn-secondary">📺 Tes Takeover YouTube</button>
+          <button id="rf-set-cg-test-takeover-x" class="rf-btn rf-btn-secondary">🐦 Tes Takeover X</button>
+          <button id="rf-set-cg-test-blocked" class="rf-btn rf-btn-secondary">🚫 Tes Halaman Blocked</button>
+          <button id="rf-set-cg-reset" class="rf-btn rf-btn-secondary">↺ Reset ke Default</button>
+        </div>
+      </div>
+
+      <!-- v0.8.26: Status indikator -->
+      <div class="rf-row rf-row-stacked" style="background:rgba(34,197,94,0.08);border-left:3px solid #16a34a;padding:10px 14px;border-radius:6px;">
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;">
+          <strong style="color:#16a34a;">✓ Auto-save aktif.</strong> Setiap toggle langsung tersimpan
+          saat diubah (tidak perlu tombol save). Toast "✓ Tersimpan" akan muncul di pojok kanan bawah.
+          <br />
+          <strong style="color:#16a34a;">v0.8.26:</strong> Setelah ubah toggle, ekstensi otomatis
+          kirim pesan ke SEMUA tab YouTube/X yang terbuka untuk re-scan langsung. Juga ada
+          auto-polling setiap 3 detik sebagai jaring pengaman.
+          <br />
+          <strong style="color:#dc2626;">⚠️ Penting:</strong> Setelah install/update versi baru,
+          <strong>refresh tab YouTube/X</strong> (Ctrl+Shift+R) supaya content script ke-load
+          ulang dengan settings terbaru. Atau klik tombol "🔄 Force Re-scan Semua Tab" di atas.
+        </div>
+      </div>
+
+      <div class="rf-row rf-row-stacked" style="background:rgba(245,158,11,0.06);border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;">
+        <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;">
+          <strong>ℹ️ Catatan:</strong> Anda tetap bisa melewati pengalihan (tombol "Lewati" di
+          pojok halaman takeover/blocked). Setelah lewati, halaman tersebut tidak akan
+          di-redirect ulang selama 60 detik. Semua pengaturan disimpan lokal di browser Anda.
+        </div>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section class="rf-section">
+      <h2>Tentang</h2>
+      <p class="rf-section-desc">
+        RecallFox v0.1.0 — Firefox addon untuk simpan prompt & konteks AI.
+        Local-first, enkripsi opsional, sync opsional. 100% offline-capable.
+      </p>
+      <p class="rf-section-desc">
+        Tidak ada data yang dikirim ke server pihak ketiga.
+        Firefox Sync (jika diaktifkan) dienkripsi end-to-end oleh Firefox sendiri.
+      </p>
+    </section>
+  </div>
+
+  <!-- Toast -->
+  <div id="rf-toast" class="rf-toast"></div>
+
+  <script src="../lib/browser-polyfill.js"></script>
+  <script type="module" src="settings.js"></script>
+</body>
+</html>
