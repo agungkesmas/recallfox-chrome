@@ -1233,7 +1233,12 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
 //   capture-area     → Alt+Shift+6  → drag-to-select area capture
 //   capture-visible  → Alt+Shift+7  → current viewport only
 
-browser.commands.onCommand.addListener(async (cmd) => {
+// ===== Command handler — shared antara browser.commands.onCommand dan RF_COMMAND_FALLBACK =====
+// Chrome MV3: 4 commands punya suggested_key (capture-page, clear-cache, volume-up, volume-down).
+// 4 commands lainnya (capture-area, capture-visible, volume-reset, ask-ai) tidak punya suggested_key.
+// Content script overlay.js punya keydown listener fallback (Alt+Shift+6/7/0) yang kirim
+// message RF_COMMAND_FALLBACK → handler ini → logic yang sama dengan onCommand.
+async function handleCommand(cmd) {
   if (cmd === 'capture-page' || cmd === 'capture-area' || cmd === 'capture-visible') {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
@@ -1307,6 +1312,11 @@ browser.commands.onCommand.addListener(async (cmd) => {
     }
     return;
   }
+}
+
+// Register Chrome commands listener (4 commands dengan suggested_key)
+browser.commands.onCommand.addListener(async (cmd) => {
+  await handleCommand(cmd);
 });
 
 // ===== Message router =====
@@ -1315,6 +1325,13 @@ let syncTimer = null;
 
 browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+  // Chrome MV3: Fallback keyboard shortcuts dari content script (commands tanpa suggested_key).
+  // Content script overlay.js kirim Alt+Shift+6/7/0 → route ke handleCommand.
+  if (msg.type === 'RF_COMMAND_FALLBACK') {
+    console.log('[RecallFox] Fallback command from content script:', msg.command);
+    await handleCommand(msg.command);
+    return;
+  }
   if (msg.type === 'TAPE_SAVE_TO_VAULT') {
     // v3.14.0: RecallTape — simpan tape ke vault sebagai tipe Prompt
     try {

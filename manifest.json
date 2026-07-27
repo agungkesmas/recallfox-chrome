@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.20.0",
+  "version": "3.20.1",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
@@ -222,20 +222,6 @@
       },
       "description": "__MSG_cmdCapturePage__"
     },
-    "capture-area": {
-      "suggested_key": {
-        "default": "Alt+Shift+6",
-        "mac": "Alt+Shift+6"
-      },
-      "description": "Tangkap area terpilih (seret kotak)"
-    },
-    "capture-visible": {
-      "suggested_key": {
-        "default": "Alt+Shift+7",
-        "mac": "Alt+Shift+7"
-      },
-      "description": "Tangkap bagian terlihat (viewport saja)"
-    },
     "clear-cache": {
       "suggested_key": {
         "default": "Alt+Shift+C",
@@ -257,15 +243,17 @@
       },
       "description": "__MSG_cmdVolumeDown__"
     },
+    "capture-area": {
+      "description": "Tangkap area terpilih (seret kotak) — set shortcut manual di chrome://extensions/shortcuts"
+    },
+    "capture-visible": {
+      "description": "Tangkap bagian terlihat (viewport saja) — set shortcut manual di chrome://extensions/shortcuts"
+    },
     "volume-reset": {
-      "suggested_key": {
-        "default": "Alt+Shift+0",
-        "mac": "Alt+Shift+0"
-      },
-      "description": "__MSG_cmdVolumeReset__"
+      "description": "__MSG_cmdVolumeReset__ — set shortcut manual di chrome://extensions/shortcuts"
     },
     "ask-ai": {
-      "description": "Tanya Si Pandai AI tentang teks terseleksi"
+      "description": "Tanya Si Pandai AI tentang teks terseleksi — set shortcut manual di chrome://extensions/shortcuts"
     }
   }
 }
