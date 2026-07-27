@@ -21,17 +21,25 @@
       </div>
     </div>
     <div class="hd-actions">
+      <button class="iconbtn" id="tapeBtn" title="RecallTape — Kalkulator pita (CalcTape-style)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/></svg>
+      </button>
       <button class="iconbtn" id="aiBtn" title="Buka / pindah AI tool"></button>
       <button class="iconbtn" id="themeBtn" title="Ganti tema"></button>
       <button class="iconbtn" id="settingsBtn" title="Pengaturan"></button>
+      <!-- v3.11.7-fix2 (Sesi 7, Issue #5): Tombol Stop Adzan global — muncul hanya saat adzan aktif -->
+      <button class="iconbtn" id="adzanStopBtn" title="Stop adzan" style="display:none;background:linear-gradient(135deg,#10b981,#059669);color:#fff">⏹</button>
     </div>
   </div>
 
-  <!-- Command bar -->
+  <!-- v3.19.5: Command bar (search) — tambah ke sidebar supaya user bisa cari item vault -->
   <div class="cmd" id="cmdWrap">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
-    <input id="search" type="text" placeholder="Cari item atau ketik perintah…" autocomplete="off" spellcheck="false">
-    <span class="hint"><kbd>/</kbd><kbd>⌘K</kbd></span>
+    <input id="search" type="search" placeholder="Cari item atau ketik perintah…" autocomplete="off" spellcheck="false" enterkeyhint="search">
+    <button class="cmd-clear" id="searchClear" type="button" title="Hapus teks pencarian" aria-label="Hapus teks pencarian" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <span class="hint"><kbd>/</kbd></span>
   </div>
 
   <!-- Status strip -->
@@ -52,37 +60,91 @@
           <button class="habit" id="habitQuran">📖 Ngaji <span>0 juz</span></button>
           <button class="habit" id="habitGym">🏃 Olahraga</button>
         </div>
+        <!-- v3.11.5 (Issue 2): Pintasan web ngaji & olahraga -->
+        <div class="shortcuts-row" id="quranShortcutsRow"></div>
+        <div class="shortcuts-row" id="exerciseShortcutsRow"></div>
         <div class="fast-note" id="fastNote">🌙 Memuat jadwal puasa…</div>
       </div>
     </div>
   </div>
 
-  <!-- Hero task bar — 6 trigger spesifik -->
-  <div class="tiles">
-    <button class="tile" id="qaPrompt" title="Simpan prompt baru"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/></svg>Prompt</button>
-    <button class="tile" id="qaKonteks" title="Simpan konteks baru"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>Konteks</button>
-    <button class="tile" id="qaLink" title="Simpan link tab aktif"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Link</button>
-    <button class="tile" id="qaBundle" title="Gabungkan item jadi bundle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>Bundle</button>
-    <button class="tile" id="qaSnap" title="Snapshot percakapan AI"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.5-.7L4 20l1-4.1A8.4 8.4 0 1 1 21 11.5z"/><path d="M8.5 10.5h7M8.5 13.5h4"/></svg>Snapshot</button>
-    <button class="tile" id="qaShot" title="Tangkap halaman"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="12" cy="12" r="3.2"/><path d="M7 3v2M17 21v-2"/></svg>Shot</button>
-  </div>
+  <!-- v3.12.3 (Issue #2): Quick actions grid — customizable via JS.
+       Container kosong, diisi dinamis oleh renderTiles() di popup.js.
+       Default: 6 tombol (Prompt/Konteks/Link/Bundle/Snapshot/Shot).
+       User bisa add/remove via tombol "+" dan "×". Max 6, 2 cols, auto-fit row. -->
+  <div class="tiles" id="tilesContainer"></div>
 
   <!-- View: Beranda (Vault) -->
   <div class="view" id="vaultView">
-    <div class="vault-hd">
+        <div class="vault-hd">
       <span class="t">Vault</span><span class="meta" id="vaultMeta"></span>
-      <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Baru</button>
+      <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-text"> Baru</span></button>
+        </div>
+        <div class="vault-actions">
+      <button class="addbtn" id="batchModeBtn" title="Mode batch" style="display:none">☑️<span class="btn-text"> Batch</span></button>
+      <button class="addbtn" id="aiGroupBtn" title="Auto Group AI">🪄<span class="btn-text"> Auto</span></button>
+      <button class="addbtn" id="addGroupBtn" title="Buat Folder/Grup Baru">📁+<span class="btn-text"> Grup</span></button>
+      <select id="vaultSortSelect" title="Urutkan" style="font-size:11px;padding:4px 8px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;outline:none">
+        <option value="recent">Terbaru</option>
+        <option value="name">Nama A-Z</option>
+        <option value="oldest">Terlama</option>
+        <option value="uses">Paling dipakai</option>
+        <option value="fav">Favorit dulu</option>
+      </select>
+      <button class="addbtn" id="collapseAllBtn" title="Collapse/Expand semua folder" style="padding:4px 8px">📂</button>
+      <button class="addbtn" id="tagFilterBtn" title="Filter by tag" style="padding:4px 8px">🏷️</button>
+      <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-text"> Baru</span></button>
+        </div>
+    <div id="vaultBreadcrumb" style="padding:0 13px;font-size:11px;color:var(--muted);display:none"></div>
+    <div id="tagFilterBar" style="padding:0 13px;font-size:11px;display:none;gap:4px;flex-wrap:wrap"></div>
+    <!-- v3.11.14: Batch bar dengan tombol generik — tampil/sembunyi sesuai chip aktif via updateVaultBatchBarButtons() -->
+    <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
+      <span id="vaultBatchCount">0 dipilih</span>
+      <button class="btn btn-p" id="vaultBatchCopy" title="Copy screenshot + keterangan" style="padding:4px 8px;font-size:11px">📋 Copy + Keterangan</button>
+      <button class="btn btn-g" id="vaultBatchCopyImg" title="Copy gambar saja" style="padding:4px 8px;font-size:11px">🖼️ Copy Gambar Saja</button>
+      <button class="btn btn-g" id="vaultBatchCopyMeta" title="Copy teks metadata saja (URL, judul, waktu) — paste ke WA/Gemini/AI" style="display:none;padding:4px 8px;font-size:11px">📝 Copy Teks Saja</button>
+      <button class="btn btn-p" id="vaultBatchCopyText" title="Copy teks item (prompt/konteks/link/snapshot)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Teks</button>
+      <button class="btn btn-p" id="vaultBatchCopyBundle" title="Copy bundle (gabungan semua anggota)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Bundle</button>
+      <button class="btn btn-g" id="vaultBatchUnarchive" title="Keluarkan item dari arsip" style="display:none;padding:4px 8px;font-size:11px">📦 Unarsip</button>
+      <button class="btn btn-d" id="vaultBatchDelete" title="Hapus item terpilih dari vault" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
     <div class="chips" id="chips"></div>
+    <!-- v3.17.7: Unparenting drop zone — muncul saat drag item dari folder. Posisi: antara chips dan list. -->
+    <div id="vaultRootDropzone" class="vault-root-dropzone" style="display:none">
+      📥 Lepaskan di sini untuk mengeluarkan dari Folder
+    </div>
     <div class="list" id="list"></div>
     <div class="cmdres" id="cmdres"></div>
   </div>
 
   <!-- View: Catatan (first-class) -->
   <div class="view hide" id="notesView">
-    <div class="notes-bar">
-      <span class="t">Catatan</span><span class="notes-hintbar">auto-save · lokal saja</span>
-      <button class="addbtn" id="noteAddBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Catatan Baru</button>
+    <!-- v3.11.2 (Issue dari Google Doc): Revert ke 1-row notes-bar dengan flex-wrap.
+         Versi V3.11.1 pakai 2-row vertical yang ternyata bikin wrap logic rusak
+         ("kotak ijo, logika wrap nya kyknya ga jalan lagi, makanya tabrakan").
+         Sekarang: title + meta + 2 action buttons dalam 1 baris flex-wrap.
+         Saat sidebar sempit, action buttons wrap ke baris berikutnya. -->
+    <div class="notes-bar notes-bar-flat">
+      <span class="notes-bar-t">📝 Catatan</span>
+      <span class="notes-bar-meta" id="notesCountMeta">0</span>
+      <span class="notes-bar-spacer"></span>
+      <button class="notes-action-btn" id="noteAddBtn" title="Tambah catatan baru">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span class="lbl">Catatan Baru</span>
+      </button>
+      <button class="notes-action-btn notes-action-secondary" id="noteBatchBtn" title="Mode batch: pilih multiple note untuk hapus/arsip sekaligus">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="3 14 7 18 11 14"/><polyline points="14 14 18 18 22 14"/></svg>
+        <span class="lbl">Batch</span>
+      </button>
+    </div>
+    <!-- v3.9.0 (Issue 7): Batch action bar (hidden by default, shown when batch mode active) -->
+    <!-- v3.11.14: Tambah flex-wrap supaya tombol tidak ketutupan di sidebar sempit -->
+    <div id="notesBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
+      <span id="notesBatchCount">0 dipilih</span>
+      <button class="btn btn-g" id="notesBatchArchive" style="padding:4px 8px;font-size:11px">📦 Arsipkan</button>
+      <button class="btn btn-d" id="notesBatchDelete" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      <button class="btn btn-g" id="notesBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
     <div class="notes-list" id="notesList"></div>
   </div>
@@ -90,7 +152,10 @@
   <!-- View: Alat -->
   <div class="view hide" id="toolsView">
     <div class="tools">
-      <div class="sec-label" style="padding-top:0">Semua alat — satu tempat, tidak menyesaki layar utama</div>
+      <div class="tools-header">
+        <span class="tools-h-t">🛠 Semua Alat</span>
+        <span class="tools-h-meta">11 alat tersedia</span>
+      </div>
       <div class="toolgrid" id="toolgrid"></div>
       <div class="hintbox">💡 Catatan naik kelas jadi tab sendiri (sering dipakai). Alat lain cukup 2 klik dari sini.</div>
     </div>
@@ -247,7 +312,8 @@
 
 <input type="file" id="screenshotFileInput" accept="image/*" style="display:none" />
 
-<script src="../lib/browser-polyfill.js"></script>
+<!-- Chrome MV3: Load polyfill SEBELUM module scripts supaya browser.* tersedia -->
+<script src="../lib/browser-polyfill.min.js"></script>
 <script type="module" src="sidebar.js"></script>
 </body>
 </html>

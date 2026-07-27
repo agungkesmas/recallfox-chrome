@@ -217,6 +217,71 @@
           <span class="rf-slider"></span>
         </label>
       </div>
+
+      <!-- v3.11.7-fix (Issue #6): Adzan Sound -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">🔔 Adzan Sound</div>
+          <div class="rf-row-desc">Mainkan suara adzan otomatis saat masuk waktu sholat (5 waktu wajib). Adzan bunyi di sidebar/popup RecallFox yang aktif. Ada tombol Stop kalau lagi tidak mau diganggu.</div>
+        </div>
+        <label class="rf-switch">
+          <input type="checkbox" id="rf-set-prayer-adzan-enabled" />
+          <span class="rf-slider"></span>
+        </label>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Volume Adzan</div>
+          <div class="rf-row-desc">Atur volume suara adzan (0.0 - 1.0). Default 0.7.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="rf-set-prayer-adzan-volume" min="0" max="1" step="0.1" value="0.7" style="width:140px" />
+          <span id="rf-adzan-vol-label" style="font-size:11px;min-width:30px">0.7</span>
+        </div>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-sound-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Pilih Suara Adzan</div>
+          <div class="rf-row-desc">Default: adzan standar (~2 menit). Short: adzan pendek (~30 detik). Custom: pakai URL file mp3/ogg Anda sendiri.</div>
+        </div>
+        <select id="rf-set-prayer-adzan-sound" style="width:160px">
+          <option value="default">Default (standar)</option>
+          <option value="short">Short (pendek)</option>
+          <option value="custom">Custom URL</option>
+        </select>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-custom-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Custom Adzan URL</div>
+          <div class="rf-row-desc">URL lengkap file adzan (mp3/ogg/wav). Contoh: https://example.com/adzan.mp3. Pastikan URL public accessible (CORS allowed).</div>
+        </div>
+        <input type="url" id="rf-set-prayer-adzan-custom-url" placeholder="https://example.com/adzan.mp3" style="flex:1;max-width:400px" />
+      </div>
+
+      <div class="rf-row" id="rf-adzan-prayers-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Waktu Sholat yang Bunyi Adzan</div>
+          <div class="rf-row-desc">Centang waktu sholat yang ingin bunyi adzan. Default: semua 5 waktu.</div>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:12px">
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Fajr" checked> Subuh</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Dhuhr" checked> Dzuhur</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Asr" checked> Ashar</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Maghrib" checked> Magrib</label>
+          <label><input type="checkbox" class="rf-adzan-prayer" value="Isha" checked> Isya</label>
+        </div>
+      </div>
+
+      <div class="rf-row" id="rf-adzan-test-opts" style="display:none;">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Test Adzan</div>
+          <div class="rf-row-desc">Klik untuk test mainkan adzan sekarang. Popup/sidebar RecallFox harus aktif (buka sidebar dulu).</div>
+        </div>
+        <button id="rf-set-prayer-adzan-test" class="rf-btn rf-btn-secondary">🔔 Test Adzan</button>
+      </div>
     </section>
 
     <!-- Habit Tracker Settings -->
@@ -346,6 +411,27 @@
           <option value="60">60 menit (1 jam)</option>
           <option value="90">90 menit (1.5 jam)</option>
         </select>
+      </div>
+
+      <!-- v3.11.6 (Issue 2 dari Google Doc): Editor pintasan web ngaji & olahraga -->
+      <!-- User: "tombolnya sudah keluar disini tapi kamu patenkan, baiknya ada seting
+           supaya bisa diganti linknya" -->
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">📖 Pintasan web Ngaji</div>
+          <div class="rf-row-desc">Tombol pintasan yang muncul di sidebar (strip-detail) untuk buka web ngaji favorit. Maksimal 6 pintasan.</div>
+        </div>
+        <div id="rf-set-quran-shortcuts" style="margin-top:8px;display:flex;flex-direction:column;gap:6px;"></div>
+        <button type="button" id="rf-set-quran-shortcut-add" style="margin-top:8px;align-self:flex-start;padding:6px 12px;font-size:12px;font-weight:600;background:var(--primary-soft);color:var(--primary);border:none;border-radius:6px;cursor:pointer;">➕ Tambah pintasan ngaji</button>
+      </div>
+
+      <div class="rf-row rf-row-stacked">
+        <div class="rf-row-label">
+          <div class="rf-row-title">🏃 Pintasan web Olahraga</div>
+          <div class="rf-row-desc">Tombol pintasan yang muncul di sidebar (strip-detail) untuk buka web olahraga favorit. Maksimal 6 pintasan.</div>
+        </div>
+        <div id="rf-set-exercise-shortcuts" style="margin-top:8px;display:flex;flex-direction:column;gap:6px;"></div>
+        <button type="button" id="rf-set-exercise-shortcut-add" style="margin-top:8px;align-self:flex-start;padding:6px 12px;font-size:12px;font-weight:600;background:var(--primary-soft);color:var(--primary);border:none;border-radius:6px;cursor:pointer;">➕ Tambah pintasan olahraga</button>
       </div>
     </section>
 
@@ -549,6 +635,28 @@
         </label>
       </div>
 
+      <!-- v3.9.0 (Issue 5): Sidebar auto-close after N minutes idle -->
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Auto-close sidebar setelah idle</div>
+          <div class="rf-row-desc">
+            Sidebar otomatis tertutup setelah N menit tidak ada aktivitas (mouse/keyboard).
+            0 = nonaktif (sidebar tetap terbuka sampai ditutup manual). Tetap bisa dibuka kembali
+            kapan saja via Alt+Shift+4 atau ikon RecallFox.
+          </div>
+        </div>
+        <select id="rf-set-sidebar-autoclose" class="rf-input" style="width:auto;min-width:140px;">
+          <option value="0">Nonaktif</option>
+          <option value="1">1 menit</option>
+          <option value="2">2 menit</option>
+          <option value="5">5 menit</option>
+          <option value="10">10 menit</option>
+          <option value="15">15 menit</option>
+          <option value="30">30 menit</option>
+          <option value="60">1 jam</option>
+        </select>
+      </div>
+
       <div class="rf-row">
         <div class="rf-row-label">
           <div class="rf-row-title">Ingat tab terakhir yang dipakai</div>
@@ -707,21 +815,21 @@
 
       <div class="rf-row">
         <div class="rf-row-label">
-          <div class="rf-row-title">Format gambar default</div>
-          <div class="rf-row-desc">PNG (lossless, besar) atau JPEG (kecil, ada kompresi)</div>
+          <div class="rf-row-title">Tingkat kompresi gambar</div>
+          <div class="rf-row-desc">
+            v3.11.7-fix (Issue #1): Tentukan ukuran & kualitas screenshot. Default <b>Tinggi (JPEG q60)</b> supaya upload ke Google Drive berhasil di bawah limit Apps Script (~10MB).
+            <br><b>Lossless (PNG)</b>: kualitas maksimal, ukuran besar (puluhan MB) — upload GDrive kemungkinan gagal.
+            <br><b>Sedikit (JPEG q90)</b>: nyaris tanpa kompresi, 1–3 MB.
+            <br><b>Sedang (JPEG q75)</b>: balance, 500 KB – 1.5 MB.
+            <br><b>Tinggi (JPEG q60)</b>: paling kecil, 200 KB – 800 KB — <b>recommended</b> untuk GDrive sync.
+          </div>
         </div>
-        <select id="rf-set-shot-format">
-          <option value="png">PNG (lossless)</option>
-          <option value="jpeg">JPEG (lebih kecil)</option>
+        <select id="rf-set-shot-compression">
+          <option value="high">Tinggi (JPEG q60) — recommended untuk GDrive</option>
+          <option value="medium">Sedang (JPEG q75)</option>
+          <option value="low">Sedikit (JPEG q90)</option>
+          <option value="lossless">Lossless (PNG) — besar, GDrive bisa gagal</option>
         </select>
-      </div>
-
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Kualitas JPEG</div>
-          <div class="rf-row-desc">Hanya berlaku kalau format = JPEG (50–100)</div>
-        </div>
-        <input type="number" id="rf-set-shot-quality" min="50" max="100" step="5" value="90" style="width:80px;" />
       </div>
 
       <div class="rf-row">
@@ -1498,12 +1606,50 @@
         Firefox Sync (jika diaktifkan) dienkripsi end-to-end oleh Firefox sendiri.
       </p>
     </section>
+
+    <!-- v3.11.7-fix (Issue #5): Multi-PC Sync DIPINDAH ke sidebar (RecallFox Vault)
+         untuk menyatukan pengaturan sync dalam satu tempat — minim klik.
+         Lihat: buka sidebar RecallFox → Alat → Sync Cloud (GDrive + Multi-PC). -->
+    <section class="rf-section">
+      <h2>🔄 Sync Cloud (GDrive + Multi-PC)</h2>
+      <p class="rf-section-desc">
+        Pengaturan sync Cloud telah <b>disatukan di sidebar RecallFox</b> (bukan di halaman ini)
+        supaya semua operasi sync — Test Koneksi, Push, Pull, Sync, Full Backup, Kelola Profile —
+        bisa dilakukan dari satu tempat dengan minimal klik.
+      </p>
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Buka Sync Cloud di Sidebar</div>
+          <div class="rf-row-desc">
+            Klik tombol di kanan untuk membuka sidebar RecallFox lalu pilih tab <b>Alat</b> → <b>Sync Cloud</b>.
+            Di sana Anda bisa: konfigurasi URL+Token, kelola profile multi-PC, push/pull/sync, full backup,
+            dan atur auto-sync.
+          </div>
+        </div>
+        <button id="rf-open-sidebar-sync" class="rf-btn rf-btn-primary">🦊 Buka Sidebar</button>
+      </div>
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Apa beda GDrive Sync vs Multi-PC Sync?</div>
+          <div class="rf-row-desc">
+            <b>GDrive Sync (one-way)</b>: Setiap kali Anda tambah/edit/hapus item vault, perubahan
+            langsung dikirim ke Spreadsheet (debounced 2 detik). Cocok untuk backup real-time.<br>
+            <b>Multi-PC Sync (bidirectional)</b>: Sinkronisasi penuh antar device — termasuk vault,
+            catatan, settings, habits, customizations. Pakai sheet "SyncState" terpisah. Cocok untuk
+            punya data sama di beberapa PC.<br>
+            Keduanya pakai URL Apps Script + Token yang sama. Bisa dipakai bersamaan.
+          </div>
+        </div>
+        <div></div>
+      </div>
+    </section>
   </div>
 
   <!-- Toast -->
   <div id="rf-toast" class="rf-toast"></div>
 
-  <script src="../lib/browser-polyfill.js"></script>
-  <script type="module" src="settings.js"></script>
+  <!-- Chrome MV3: Load polyfill SEBELUM module scripts supaya browser.* tersedia -->
+<script src="../lib/browser-polyfill.min.js"></script>
+<script type="module" src="settings.js"></script>
 </body>
 </html>

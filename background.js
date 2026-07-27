@@ -1,22 +1,22 @@
 // background.js — Service worker / background script
-// RecallFox v3.7.2 (Chrome MV3)
+// RecallFox v0.2.0
 // Tanggung jawab:
 //   1. Context menu (save selection as prompt / context / snapshot + screenshot)
 //   2. Commands (keyboard shortcuts) — incl. screenshot capture
 //   3. Screenshot capture pipeline (visible / entire / selection)
 //   4. Sync trigger (debounced)
 //   5. Sync listener (merge changes from other devices)
-//   6. Side panel toggle (Chrome sidePanel API)
 
-// ===== Chrome/Firefox compatibility polyfill =====
-// Firefox pakai browser.*, Chrome pakai chrome.*
-// chrome.* callbacks → promises (Chrome MV3 sudah promise-based sebagian besar)
-// Untuk API yang masih callback di Chrome (chrome.contextMenus, chrome.tabs.onUpdated),
-// kita wrap manual. Sebagian besar API sudah promise-based di MV3.
-if (typeof browser === 'undefined' && typeof chrome !== 'undefined') {
-  globalThis.browser = chrome;
-  // chrome.runtime, chrome.storage, chrome.tabs, dll sudah promise-based di MV3
-  // tapi beberapa API legacy masih callback — tambah polyfill jika perlu
+// Chrome MV3: Import webextension-polyfill supaya browser.* API jalan di Chrome.
+// Polyfill wrap chrome.* → browser.* dengan Promise support.
+// Di Firefox, browser.* sudah native → polyfill no-op.
+import './lib/browser-polyfill.min.js';
+// Chrome MV3: Cross-browser sidebar abstraction (Firefox sidebarAction vs Chrome sidePanel).
+import { openSidebar, closeSidebar, isSidebarOpen, toggleSidebar, setupSidebarBehavior } from './lib/sidebar-compat.js';
+
+// v3.11.11 (Issue #1): Helper escape HTML untuk COPY_SCREENSHOTS_BATCH
+function escHtml(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 import {
@@ -53,6 +53,8 @@ import {
   DEFAULT_CHINA_X_SEARCHES
 } from './lib/contentguard.js';
 import { DEFAULT_ELEMENT_BLOCKER_RULES } from './lib/elementblocker.js';
+// v3.8.1: GDrive Sync (Apps Script bridge) — Issue #1, #2, #6
+import { initGDriveSync, flushNow as gdriveFlushNow, sendFullBackup as gdriveSendFullBackup, uploadScreenshot as gdriveUploadScreenshot, testConnection as gdriveTestConnection, getSyncMeta as gdriveGetMeta, getQueueLength as gdriveGetQueueLength, clearQueue as gdriveClearQueue } from './lib/gdrive-sync.js';
 
 // ===== Setup context menu on install =====
 
@@ -99,9 +101,74 @@ browser.runtime.onInstalled.addListener(async () => {
   try { startAutoDiscardChecker(); }
   catch (e) { console.warn('[RecallFox] onInstalled: startAutoDiscardChecker failed:', e); }
 
+  // 8. v3.8.1: GDrive Sync init (Issue #1, #2, #6)
+  try { await initGDriveSync(); }
+  catch (e) { console.warn('[RecallFox] onInstalled: GDriveSync init failed:', e); }
+
+  // v3.13.3 (A1 fix): Start Supabase realtime sync + alarm saat onInstalled.
+  // BUG A1: Sebelumnya alarm hanya di-start di onStartup. Setelah update addon,
+  // alarm mati sampai Firefox di-restart → sync tidak real-time.
+  // Solusi: gated isLoggedIn() (mirror onStartup pattern).
+  try {
+    const { isLoggedIn } = await import('./lib/supabase-client.js');
+    const loggedIn = await isLoggedIn();
+    if (loggedIn) {
+      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+      await startRealtimeSync();
+      await subscribeRealtimeVault();
+      console.log('[RecallFox] onInstalled: Supabase realtime sync started (v3.13.3)');
+    }
+  } catch (e) { console.warn('[RecallFox] onInstalled: Supabase realtime start failed:', e.message); }
+
   // v0.8.36: HAPUS force-inject di onInstalled — bikin duplikat panel + loop.
   // Content script dari manifest.json akan auto-load saat tab di-refresh.
   // User cukup refresh tab YouTube/X manual setelah install.
+
+  // v3.15.0 P0-K1+K2: Migration — backfill contextPurpose untuk existing context items.
+  // Sebelumnya: tujuan ditempel jadi teks [Tujuan: ...] di awal body karena tidak ada kolom DB.
+  // Sekarang: kolom context_purpose ada di DB + field contextPurpose di local vault.
+  // Migration: parse [Tujuan: ...] dari body → set contextPurpose → bersihkan body.
+  // Juga backfill snapshotDomain dari source.url untuk existing snapshots.
+  try {
+    const { getVault, saveVault } = await import('./lib/storage.js');
+    const vault = await getVault();
+    let migrated = 0;
+    for (const item of (vault.items || [])) {
+      let changed = false;
+      // Migration K1+K2: context — parse [Tujuan: ...] dari body
+      if (item.type === 'context' && !item.contextPurpose) {
+        const m = (item.body || '').match(/^\[Tujuan:\s*([^\]]+)\]\s*\n\n/);
+        if (m) {
+          const purposeLabel = m[1].trim();
+          // Reverse map label → key
+          const labelToKey = {
+            'Instruksi Sistem': 'system', 'Konteks Proyek': 'project',
+            'Pengetahuan Domain': 'domain', 'Referensi': 'reference',
+            'Instruksi Kerja': 'instruction'
+          };
+          item.contextPurpose = labelToKey[purposeLabel] || 'custom';
+          item.body = item.body.slice(m[0].length);
+          changed = true;
+        } else {
+          item.contextPurpose = 'custom';
+        }
+      }
+      // Migration S1: snapshot — backfill snapshotDomain dari source.url
+      if (item.type === 'snapshot' && !item.snapshotDomain && item.source?.url) {
+        try {
+          item.snapshotDomain = new URL(item.source.url).hostname;
+          changed = true;
+        } catch (e) { /* ignore invalid URL */ }
+      }
+      if (changed) migrated++;
+    }
+    if (migrated > 0) {
+      await saveVault(vault);
+      console.log('[RecallFox] onInstalled: migrated', migrated, 'items (context purpose + snapshot domain backfill)');
+    }
+  } catch (e) {
+    console.warn('[RecallFox] onInstalled: migration failed:', e.message);
+  }
 });
 
 browser.runtime.onStartup.addListener(async () => {
@@ -120,13 +187,15 @@ browser.runtime.onStartup.addListener(async () => {
   if (settings.sidebarAutoOpen) {
     try {
       setTimeout(async () => {
-        try { await browser.sidebarAction.open(); console.log('[RecallFox] Sidebar auto-opened on startup'); }
+        try { await openSidebar(); console.log('[RecallFox] Sidebar auto-opened on startup'); }
         catch (e) { console.warn('[RecallFox] Sidebar auto-open failed:', e.message); }
       }, 2000);
     } catch (e) {
       console.warn('[RecallFox] Sidebar auto-open setup failed:', e.message);
     }
   }
+  // Chrome MV3: Setup side panel behavior (openPanelOnActionClick=false)
+  setupSidebarBehavior().catch(e => console.warn('[RecallFox] Sidebar behavior setup failed:', e.message));
 
   // Prayer reminder checker (runs every 60s)
   try { startPrayerReminderChecker(); }
@@ -144,6 +213,18 @@ browser.runtime.onStartup.addListener(async () => {
   try { await initContentGuardDefaults(); }
   catch (e) { console.warn('[RecallFox] onStartup: initContentGuardDefaults failed:', e); }
 
+  // v3.11.29: Start Supabase realtime sync kalau user sudah logged in
+  try {
+    const { isLoggedIn } = await import('./lib/supabase-client.js');
+    const loggedIn = await isLoggedIn();
+    if (loggedIn) {
+      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+      await startRealtimeSync();
+      await subscribeRealtimeVault();
+      console.log('[RecallFox] Supabase realtime sync started on startup (v3.11.33)');
+    }
+  } catch (e) { console.warn('[RecallFox] onStartup: Supabase realtime start failed:', e.message); }
+
   // v0.8.42: Element Blocker init
   try { await initElementBlockerDefaults(); }
   catch (e) { console.warn('[RecallFox] onStartup: initElementBlockerDefaults failed:', e); }
@@ -152,38 +233,51 @@ browser.runtime.onStartup.addListener(async () => {
   try { startAutoDiscardChecker(); }
   catch (e) { console.warn('[RecallFox] onStartup: startAutoDiscardChecker failed:', e); }
 
+  // v3.8.1: GDrive Sync init (Issue #1, #2, #6)
+  try { await initGDriveSync(); }
+  catch (e) { console.warn('[RecallFox] onStartup: GDriveSync init failed:', e); }
+
   // v0.8.36: HAPUS force-inject di onStartup juga — bikin duplikat + loop
 });
 
+// v3.11.6: Helper escapeHtml untuk background context (tidak punya DOM).
+// Dipakai saat build text/html payload untuk clipboard.
+function _escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 async function setupContextMenu() {
-  await browser.menus.removeAll().catch(() => {});
+  await browser.contextMenus.removeAll().catch(() => {});
 
   // Selection-based: save as Prompt / Context
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-prompt',
     title: browser.i18n.getMessage('ctxMenuSaveAsPrompt'),
     contexts: ['selection']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-context',
     title: browser.i18n.getMessage('ctxMenuSaveAsContext'),
     contexts: ['selection']
   });
 
   // Page-based: save current page as Link
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-1',
     type: 'separator',
     contexts: ['page', 'frame', 'selection']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-page',
     title: browser.i18n.getMessage('ctxMenuSavePage'),
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
   // Link-based: save specific link as Link
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-save-link',
     title: browser.i18n.getMessage('ctxMenuSaveLink'),
     contexts: ['link'],
@@ -191,35 +285,26 @@ async function setupContextMenu() {
   });
 
   // Snapshot (AI domains only)
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-2',
     type: 'separator',
     contexts: ['page']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-snapshot',
     title: browser.i18n.getMessage('ctxMenuSnapshot'),
-    contexts: ['page'],
-    documentUrlPatterns: [
-      'https://chat.z.ai/*',
-      'https://chatgpt.com/*',
-      'https://claude.ai/*',
-      'https://gemini.google.com/*',
-      'https://chat.deepseek.com/*',
-      'https://tongyi.aliyun.com/*',
-      'https://chat.qwen.ai/*',
-      'https://kimi.moonshot.cn/*',
-      'https://kimi.com/*'
-    ]
+    contexts: ['page']
+    // v3.16.2: Hapus documentUrlPatterns hardcoded — pakai dynamic isAIPageFromOrigin di handler.
+    // Menu muncul di semua halaman, tapi handler cek aiSites sebelum eksekusi snapshot.
   });
 
   // Screenshot single entry (FireShot-style — opens modal with PDF/JPG/PNG/Copy/Vault options)
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-3',
     type: 'separator',
     contexts: ['page']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-screenshot',
     title: browser.i18n.getMessage('ctxMenuCaptureScreenshot') || 'Capture Screenshot',
     contexts: ['page'],
@@ -227,33 +312,46 @@ async function setupContextMenu() {
   });
 
   // Clear Cache (clearcache-style) — works on all http(s) pages
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-4',
     type: 'separator',
     contexts: ['page']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-clear-cache',
     title: browser.i18n.getMessage('ctxMenuClearCache') || 'Clear Cache',
     contexts: ['page']
   });
 
   // "Tanya AI" context menu — sends selected text to AI assistant
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-5',
     type: 'separator',
     contexts: ['selection']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-ask-ai',
     title: '🤖 Tanya Si Pandai',
+    contexts: ['selection']
+  });
+
+  // v3.14.0: RecallTape — "Add to RecallFox Tape" (klik kanan teks/angka terseleksi)
+  // Memunculkan popover RecallTape di tab aktif + menambahkan teks terseleksi sebagai baris baru.
+  browser.contextMenus.create({
+    id: 'rf-separator-tape',
+    type: 'separator',
+    contexts: ['selection']
+  });
+  browser.contextMenus.create({
+    id: 'rf-add-to-tape',
+    title: browser.i18n.getMessage('ctxMenuAddToTape') || '🧾 Tambah ke RecallTape',
     contexts: ['selection']
   });
 
   // ===== Content Guardian: "Blokir Konten Ini" (v0.8.21) =====
   // Hanya muncul di YouTube & X — klik kanan untuk blokir konten yang
   // sedang di-hover (video card / tweet).
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-6',
     type: 'separator',
     contexts: ['page', 'link', 'video'],
@@ -265,7 +363,7 @@ async function setupContextMenu() {
     ]
   });
   // Sub-menu: pilih cara blokir
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-root',
     title: '🚫 Blokir Konten Ini',
     contexts: ['page', 'link', 'video'],
@@ -276,32 +374,32 @@ async function setupContextMenu() {
       'https://*.twitter.com/*'
     ]
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-title',
     parentId: 'rf-cg-block-root',
     title: 'Blokir judul ini (title)',
     contexts: ['page', 'link', 'video']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-exact-title',
     parentId: 'rf-cg-block-root',
     title: 'Blokir judul PERSIS ini (exact)',
     contexts: ['page', 'link', 'video']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-channel',
     parentId: 'rf-cg-block-root',
     title: 'Blokir channel/akun ini',
     contexts: ['page', 'link', 'video']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-keyword',
     parentId: 'rf-cg-block-root',
     title: 'Blokir kata kunci dari teks terseleksi…',
     contexts: ['selection']
   });
   // Blokir berdasarkan teks terseleksi (selection) — paling fleksibel
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-selection',
     parentId: 'rf-cg-block-root',
     title: 'Blokir teks terseleksi: "%s"',
@@ -311,7 +409,7 @@ async function setupContextMenu() {
   // v3.4: Blokir URL post X — muncul hanya di x.com/twitter.com
   // Saat user klik kanan pada link tweet atau di halaman tweet, simpan URL-nya.
   // Semua post dengan URL yang sama (atau path yang sama) akan di-hide di timeline X.
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-cg-block-x-post-url',
     parentId: 'rf-cg-block-root',
     title: '🔗 Blokir URL post X ini',
@@ -323,13 +421,13 @@ async function setupContextMenu() {
   });
 
   // v0.9.0: Element Blocker — "Block Element Ini" (klik kanan di elemen mana saja)
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-separator-7',
     type: 'separator',
     contexts: ['page', 'link', 'image', 'video'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
-  browser.menus.create({
+  browser.contextMenus.create({
     id: 'rf-eb-block-element',
     title: '🚫 Block Element Ini (Element Blocker)',
     contexts: ['page', 'link', 'image', 'video'],
@@ -339,7 +437,7 @@ async function setupContextMenu() {
 
 // ===== Handle context menu clicks =====
 
-browser.menus.onClicked.addListener(async (info, tab) => {
+browser.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'rf-save-prompt' || info.menuItemId === 'rf-save-context') {
     const text = (info.selectionText || '').trim();
     if (!text) return;
@@ -400,7 +498,17 @@ browser.menus.onClicked.addListener(async (info, tab) => {
       await browser.tabs.sendMessage(tab.id, { type: 'SHOW_TOAST', message: 'toastSaved' });
     } catch (e) {}
   } else if (info.menuItemId === 'rf-snapshot') {
+    // v3.16.2: Cek via isAIPageFromOrigin (dynamic dari storage.aiSites)
     try {
+      const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
+      const isAI = await isAIPageFromOrigin(tab.url || info.pageUrl);
+      if (!isAI) {
+        console.log('[RecallFox] Snapshot dibatalkan — halaman bukan AI site (cek aiSites)');
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: 'SHOW_TOAST', message: 'Snapshot hanya bisa di halaman AI chat. Tambahkan situs ini ke Kelola Situs AI kalau perlu.' });
+        } catch (e) {}
+        return;
+      }
       await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
     } catch (e) {
       console.warn('[RecallFox] Cannot open snapshot modal:', e);
@@ -478,7 +586,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '🚫 Element Diblokir!',
           message: `Selector "${elementInfo.selector}" ditambahkan untuk ${domain}. Elemen langsung di-hide.`,
-          iconUrl: browser.runtime.getURL('icons/icon-96.png')
+          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
         });
       } catch (e) {}
     } else {
@@ -487,7 +595,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '⚠️ Tidak bisa block element',
           message: 'Arahkan kursor ke elemen yang mau di-block, lalu klik kanan → Block Element Ini. Refresh halaman kalau belum jalan.',
-          iconUrl: browser.runtime.getURL('icons/icon-96.png')
+          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
         });
       } catch (e) {}
     }
@@ -498,6 +606,36 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     console.log('[RecallFox] Ask AI about:', text.slice(0, 80));
     // Use shared orchestration: store pending + open sidebar + deliver message
     await routeAiQuery(text, { sourceUrl: info.pageUrl || '', sourceTitle: tab?.title || '' });
+  } else if (info.menuItemId === 'rf-add-to-tape') {
+    // v3.14.0: RecallTape — kirim teks terseleksi ke popover Tape di tab aktif
+    const text = (info.selectionText || '').trim();
+    if (!text) return;
+    console.log('[RecallFox/Tape] Add to tape:', text.slice(0, 80));
+    try {
+      await browser.tabs.sendMessage(tab.id, { type: 'ADD_TO_TAPE', text });
+    } catch (e) {
+      // Content script belum loaded — inject manual lalu kirim ulang
+      console.warn('[RecallFox/Tape] sendMessage failed, trying inject:', e.message);
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/tape-cs.js']
+        });
+        // Kasih waktu dynamic import selesai
+        await new Promise(r => setTimeout(r, 200));
+        await browser.tabs.sendMessage(tab.id, { type: 'ADD_TO_TAPE', text });
+      } catch (e2) {
+        console.error('[RecallFox/Tape] Inject fallback failed:', e2.message);
+        try {
+          browser.notifications.create({
+            type: 'basic',
+            iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+            title: 'RecallTape',
+            message: 'Tidak bisa membuka tape di halaman ini. Coba di halaman http/https biasa.'
+          });
+        } catch (_) {}
+      }
+    }
   } else if (info.menuItemId === 'rf-cg-block-selection') {
     // Blokir teks terseleksi sebagai keyword
     const text = (info.selectionText || '').trim();
@@ -519,7 +657,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '⚠️ Tidak ada URL',
           message: 'Klik kanan pada link tweet atau di halaman tweet untuk memblokir URL-nya.',
-          iconUrl: browser.runtime.getURL('icons/icon-96.png')
+          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
         });
       } catch (e) {}
       return;
@@ -583,7 +721,7 @@ browser.menus.onClicked.addListener(async (info, tab) => {
             type: 'basic',
             title: '🚫 Tidak ada konten terdeteksi',
             message: 'Arahkan kursor ke video/tweet dulu, atau blok teks lalu klik kanan → Blokir teks terseleksi.',
-            iconUrl: browser.runtime.getURL('icons/icon-96.png')
+            iconUrl: browser.runtime.getURL('icons/icon-96.svg')
           });
         } catch (e) {}
       }
@@ -619,21 +757,21 @@ async function notifyBlockResult(res, label, value) {
         type: 'basic',
         title: '🚫 Diblokir!',
         message: `${label.charAt(0).toUpperCase() + label.slice(1)} "${value.slice(0, 50)}${value.length > 50 ? '…' : ''}" ditambahkan ke blocklist. Konten serupa akan disembunyikan.`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.png')
+        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
       });
     } else if (res?.error === 'duplicate') {
       await browser.notifications.create({
         type: 'basic',
         title: 'ℹ️ Sudah diblokir',
         message: `${label} ini sudah ada di blocklist.`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.png')
+        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
       });
     } else {
       await browser.notifications.create({
         type: 'basic',
         title: '⚠️ Gagal blokir',
         message: `Error: ${res?.error || 'unknown'}`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.png')
+        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
       });
     }
   } catch (e) { /* notif gagal bukan masalah */ }
@@ -659,24 +797,24 @@ async function broadcastCgUpdate(tabId) {
 // ===== Context menu visibility toggle (hanya tampilkan opsi yang relevan) =====
 // Saat user klik kanan: jika ada selection → tampilkan opsi "Blokir teks terseleksi"
 // dan ubah %s ke teks yang terseleksi. Jika tidak ada selection → sembunyikan opsi itu.
-if (browser.menus.onShown) {
-  browser.menus.onShown.addListener((info, tab) => {
+if (browser.contextMenus.onShown) {
+  browser.contextMenus.onShown.addListener((info, tab) => {
     const hasSelection = !!(info.selectionText && info.selectionText.trim().length > 0);
     const selPreview = hasSelection
       ? info.selectionText.trim().slice(0, 40) + (info.selectionText.trim().length > 40 ? '…' : '')
       : '';
     // Update title dan visibility untuk opsi "Blokir teks terseleksi"
     try {
-      browser.menus.update('rf-cg-block-selection', {
+      browser.contextMenus.update('rf-cg-block-selection', {
         visible: hasSelection,
         title: hasSelection ? `Blokir teks terseleksi: "${selPreview}"` : 'Blokir teks terseleksi'
       }).catch(() => {});
       // Update opsi "Blokir kata kunci dari teks terseleksi" juga
-      browser.menus.update('rf-cg-block-keyword', {
+      browser.contextMenus.update('rf-cg-block-keyword', {
         visible: hasSelection,
         title: hasSelection ? `Blokir sebagai kata kunci: "${selPreview}"` : 'Blokir kata kunci dari teks terseleksi…'
       }).catch(() => {});
-      browser.menus.refresh().catch(() => {});
+      browser.contextMenus.refresh().catch(() => {});
     } catch (e) { /* ignore */ }
   });
 }
@@ -705,8 +843,26 @@ async function captureFullPage(tab, opts = {}) {
   }
 
   const settings = await getSettings();
-  const format = settings.screenshotFormat === 'jpeg' ? 'jpeg' : 'png';
-  const quality = Math.max(50, Math.min(100, settings.screenshotJpegQuality || 90));
+  // v3.11.7-fix (Issue #1): Baca "compression level" dulu, lalu map ke format + quality.
+  // Ini menggantikan pembacaan langsung screenshotFormat/screenshotJpegQuality supaya
+  // user cukup pilih 1 dropdown (Lossless / Sedikit / Sedang / Tinggi) dan kita yang
+  // atur format + quality di belakang. Default = "high" (JPEG q60) supaya upload
+  // GDrive sync selalu di bawah limit Apps Script (~10MB) dan Apps Script doGet payload.
+  const compLevel = settings.screenshotCompression || 'high';
+  let format, quality;
+  switch (compLevel) {
+    case 'lossless':
+      format = 'png'; quality = 100; break;     // PNG lossless — besar, ~puluhan MB
+    case 'low':
+      format = 'jpeg'; quality = 90; break;     // JPEG q90 — sedikit kompresi, ~1-3 MB
+    case 'medium':
+      format = 'jpeg'; quality = 75; break;     // JPEG q75 — sedang, ~500KB-1.5 MB
+    case 'high':
+    default:
+      format = 'jpeg'; quality = 60; break;     // JPEG q60 — tinggi, ~200KB-800KB (default)
+  }
+  // Override kalau user set format/quality eksplisit via settings lama (kompatibilitas)
+  // — TIDAK dipakai lagi, biarkan compression level yang menentukan.
   const maxHeight = Math.max(2048, Math.min(32768, settings.screenshotMaxFullHeight || 16384));
   const mode = opts.mode || 'entire';  // FireShot-style default
 
@@ -821,8 +977,10 @@ async function saveCaptureToVault(payload) {
     source: {
       url: payload.url,
       title: payload.pageTitle,
-      capturedAt: new Date().toISOString()
+      capturedAt: new Date().toISOString(),
+      annotationNote: payload.annotationNote || ''  // v3.11.26 (Issue #2): catatan anotasi
     },
+    annotationNote: payload.annotationNote || '',  // v3.11.26 (Issue #2): simpan di top-level juga
     screenshotMode: payload.mode,
     screenshotWidth: payload.width,
     screenshotHeight: payload.height,
@@ -833,6 +991,18 @@ async function saveCaptureToVault(payload) {
   });
 
   browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+  // v3.11.25 (Sesi 15, Issue #2): Auto-sync ke Supabase setelah capture screenshot.
+  // User feedback: "pastikan gambar yang telah di screnshot dengan menggunakan fitur
+  // 'tangkap halaman' itu masuk ke supabase agar saya bisa kopi paste nantinya di
+  // device manapun."
+  // Sebelumnya: screenshot hanya disimpan lokal, user harus Push manual.
+  // Sekarang: auto-trigger Supabase push (debounced 3s) supaya screenshot otomatis
+  // masuk ke cloud + Storage bucket.
+  try {
+    const { triggerAutoSync } = await import('./lib/supabase-sync.js');
+    triggerAutoSync();
+    console.log('[RecallFox] Auto-sync triggered after screenshot save');
+  } catch (e) { /* Supabase mungkin belum di-setup — silent */ }
   return { ok: true, id: newItem.id };
 }
 
@@ -934,25 +1104,50 @@ async function generateThumbnail(dataUrl, max) {
 // return the dataUrl.
 
 async function handleCaptureVisible(format, quality) {
+  // v3.11.7-fix2 (Sesi 7): Tambah fallback JPEG → PNG.
+  // User report: "gambar hanya bisa ditangkap di lossless (tanpa kompresi) jika dengan
+  // kompresi error". Root cause: di beberapa halaman (CSP strict, cross-origin iframe),
+  // Firefox captureVisibleTab dengan format=jpeg melempar error "Format image not supported"
+  // atau "Canvas tainted". Fallback: coba JPEG dulu, kalau gagal coba PNG lossless.
+  // User tetap dapat screenshot (walau ukuran lebih besar), bukan error total.
+  const tryCapture = async (fmt, q) => {
+    const opts = { format: fmt || 'png' };
+    if (fmt === 'jpeg') opts.quality = (q || 90) / 100;
+    return await browser.tabs.captureVisibleTab(undefined, opts);
+  };
+
   try {
-    const opts = { format: format || 'png' };
-    if (format === 'jpeg') opts.quality = (quality || 90) / 100;
-    const dataUrl = await browser.tabs.captureVisibleTab(undefined, opts);
-    return { ok: true, dataUrl };
+    const dataUrl = await tryCapture(format, quality);
+    return { ok: true, dataUrl, format: format || 'png' };
   } catch (e) {
-    console.error('[RecallFox] captureVisibleTab failed:', e.message);
+    console.error('[RecallFox] captureVisibleTab failed (format=' + format + '):', e.message);
+    // v3.11.7-fix2: Kalau JPEG gagal, fallback ke PNG lossless supaya tetap dapat screenshot
+    if (format === 'jpeg') {
+      console.log('[RecallFox] Fallback: coba PNG lossless karena JPEG gagal...');
+      try {
+        const dataUrl = await tryCapture('png', 100);
+        return { ok: true, dataUrl, format: 'png', fallback: true, originalError: e.message };
+      } catch (e2) {
+        console.error('[RecallFox] PNG fallback juga gagal:', e2.message);
+        // Lanjut ke retry logic di bawah untuk rate-limit
+      }
+    }
     // Firefox rate-limit error: "An unexpected error occurred" — wait and retry once
     if (e.message && (e.message.includes('unexpected') || e.message.includes('rate'))) {
       console.log('[RecallFox] Retrying captureVisibleTab after rate-limit delay…');
       await new Promise(r => setTimeout(r, 500));
       try {
-        const opts = { format: format || 'png' };
-        if (format === 'jpeg') opts.quality = (quality || 90) / 100;
-        const dataUrl = await browser.tabs.captureVisibleTab(undefined, opts);
-        return { ok: true, dataUrl };
+        const dataUrl = await tryCapture(format, quality);
+        return { ok: true, dataUrl, format: format || 'png' };
       } catch (e2) {
         console.error('[RecallFox] captureVisibleTab retry failed:', e2.message);
-        return { ok: false, error: e2.message };
+        // Last resort: coba PNG lossless
+        try {
+          const dataUrl = await tryCapture('png', 100);
+          return { ok: true, dataUrl, format: 'png', fallback: true };
+        } catch (e3) {
+          return { ok: false, error: e3.message };
+        }
       }
     }
     return { ok: false, error: e.message };
@@ -994,9 +1189,9 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
 
   let sidebarAlreadyOpen = false;
   try {
-    sidebarAlreadyOpen = await browser.sidebarAction.isOpen({});
+    sidebarAlreadyOpen = await isSidebarOpen();
   } catch (e) {
-    // isOpen() not available in older Firefox — assume closed.
+    // isOpen() not available — assume closed.
   }
 
   if (!sidebarAlreadyOpen) {
@@ -1007,8 +1202,8 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
     // or in case the sidebar's init has already run and missed the storage
     // pending. The sidebar's runtime handler clears the storage pending
     // key immediately, so a duplicate fire is prevented.
-    try { await browser.sidebarAction.open(); } catch (e) {
-      console.warn('[RecallFox] sidebarAction.open failed:', e);
+    try { await openSidebar(); } catch (e) {
+      console.warn('[RecallFox] openSidebar failed:', e);
     }
   }
 
@@ -1039,17 +1234,6 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
 //   capture-visible  → Alt+Shift+7  → current viewport only
 
 browser.commands.onCommand.addListener(async (cmd) => {
-  // Chrome: toggle side panel via keyboard shortcut (replaces Firefox _execute_sidebar_action)
-  if (cmd === 'toggle-side-panel') {
-    try {
-      // Chrome sidePanel API — toggle panel for current window
-      await chrome.sidePanel.open({ windowId: (await chrome.windows.getCurrent()).id });
-    } catch (e) {
-      console.warn('[RecallFox] sidePanel toggle failed:', e);
-    }
-    return;
-  }
-
   if (cmd === 'capture-page' || cmd === 'capture-area' || cmd === 'capture-visible') {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) return;
@@ -1129,7 +1313,32 @@ browser.commands.onCommand.addListener(async (cmd) => {
 
 let syncTimer = null;
 
-browser.runtime.onMessage.addListener(async (msg, sender) => {
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  (async () => {
+  if (msg.type === 'TAPE_SAVE_TO_VAULT') {
+    // v3.14.0: RecallTape — simpan tape ke vault sebagai tipe Prompt
+    try {
+      const { title, body, source } = msg.payload || {};
+      if (!body) { sendResponse({ ok: false, error: 'empty_body' }); return; }
+      const item = await addItem({
+        type: 'prompt',
+        title: title || 'RecallTape',
+        body,
+        tags: ['tape', 'calculator'],
+        source: source || { kind: 'tape', savedAt: new Date().toISOString() }
+      });
+      console.log('[RecallFox/Tape] Saved to vault:', item.id);
+      sendResponse({ ok: true, itemId: item.id });
+      // Notify sender tab with toast
+      try {
+        await browser.tabs.sendMessage(sender.tab.id, { type: 'SHOW_TOAST', message: 'toastSaved' });
+      } catch (e) {}
+    } catch (e) {
+      console.error('[RecallFox/Tape] Save failed:', e);
+      sendResponse({ ok: false, error: e.message });
+    }
+    return;
+  }
   if (msg.type === 'TRIGGER_SYNC') {
     // debounce 2s
     if (syncTimer) clearTimeout(syncTimer);
@@ -1142,51 +1351,49 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       }
       syncTimer = null;
     }, 2000);
+    // v3.11.7: Jika multi-PC auto-sync aktif, jadwalkan juga
+    try {
+      const settings = await getSettings();
+      if (settings.syncAutoEnabled) {
+        const { scheduleAutoSync } = await import('./lib/sync-profile.js');
+        scheduleAutoSync();
+      }
+    } catch (e) { /* silent */ }
     return false;
   }
   if (msg.type === 'SYNC_NOW') {
     try {
       const ok = await pushToSync();
-      return { ok };
+      sendResponse({ ok }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'PULL_SYNC') {
     try {
       const ok = await mergeSyncIntoLocal();
-      return { ok };
+      sendResponse({ ok }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'GET_VAULT') {
-    return await getVault();
+    sendResponse(await getVault()); return;
   }
   if (msg.type === 'OPEN_SIDEBAR') {
     // Toggle sidebar: open if closed, close if open
     try {
-      // Check if sidebar is open (Firefox 124+)
-      let isOpen = false;
-      try {
-        isOpen = await browser.sidebarAction.isOpen({});
-      } catch (e) {
-        // isOpen() not available in older Firefox — assume closed
-        console.log('[RecallFox] sidebarAction.isOpen not available, trying open()');
-      }
-      
-      if (isOpen) {
-        await browser.sidebarAction.close();
-        console.log('[RecallFox] Sidebar closed');
-        return { ok: true, action: 'closed' };
+      const result = await toggleSidebar();
+      if (result.ok) {
+        console.log('[RecallFox] Sidebar toggled:', result);
+        sendResponse({ ok: true, action: 'toggled' });
       } else {
-        await browser.sidebarAction.open();
-        console.log('[RecallFox] Sidebar opened');
-        return { ok: true, action: 'opened' };
+        sendResponse({ ok: false, error: result.error || 'toggle_failed' });
       }
+      return;
     } catch (e) {
       console.error('[RecallFox] Sidebar toggle failed:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'SAVE_SELECTION_FROM_CS') {
@@ -1202,19 +1409,22 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
           capturedAt: new Date().toISOString()
         }
       });
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
       console.error('[RecallFox] SAVE_SELECTION_FROM_CS failed:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'QUICK_SNAPSHOT') {
-    // Sent from popup quick-action button — open snapshot modal on active tab
+    // v3.16.1: QUICK_SNAPSHOT sekarang return conversation data ke popup (bukan buka modal di tab).
+    // Popup yang handle modal preview (lebih reliable — user pasti lihat di sidebar).
+    // Sebelumnya: QUICK_SNAPSHOT → OPEN_SNAPSHOT_MODAL di tab, tapi popup close terlalu cepat
+    // → user tidak lihat modal → kira snapshot gagal.
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     try {
-      await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
-      return { ok: true };
+      const res = await browser.tabs.sendMessage(tab.id, { type: 'EXTRACT_SNAPSHOT' });
+      sendResponse(res || { ok: false, error: 'no_response' }); return;
     } catch (e) {
       // Content script not loaded — try to inject it
       try {
@@ -1227,19 +1437,19 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
           files: ['content/content.css']
         });
         await new Promise(r => setTimeout(r, 500));
-        await browser.tabs.sendMessage(tab.id, { type: 'OPEN_SNAPSHOT_MODAL' });
-        return { ok: true };
+        const res = await browser.tabs.sendMessage(tab.id, { type: 'EXTRACT_SNAPSHOT' });
+        sendResponse(res || { ok: false, error: 'no_response' }); return;
       } catch (e2) {
-        return { ok: false, error: e2.message };
+        sendResponse({ ok: false, error: e2.message }); return;
       }
     }
   }
   if (msg.type === 'QUICK_SAVE_SELECTION') {
     // Sent from popup quick-action button — get selection from active tab via scripting API
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     if (!tab.url || !/^https?:\/\//.test(tab.url)) {
-      return { ok: false, error: 'not_http_page' };
+      sendResponse({ ok: false, error: 'not_http_page' }); return;
     }
     try {
       const results = await browser.scripting.executeScript({
@@ -1248,7 +1458,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       });
       const text = results?.[0]?.result || '';
       if (!text.trim()) {
-        return { ok: false, error: 'no_selection' };
+        sendResponse({ ok: false, error: 'no_selection' }); return;
       }
       await addItem({
         type: 'prompt',
@@ -1256,24 +1466,24 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         body: text,
         source: { url: tab.url, title: tab.title, capturedAt: new Date().toISOString() }
       });
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'INJECT_TO_ACTIVE_TAB') {
     // Used by popup/sidebar when on AI domain
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     try {
       const res = await browser.tabs.sendMessage(tab.id, {
         type: 'INJECT_TEXT',
         text: msg.text,
         mode: msg.mode
       });
-      return res;
+      sendResponse(res); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1282,17 +1492,17 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type === 'COPY_TO_CLIPBOARD') {
     try {
       await navigator.clipboard.writeText(msg.text || '');
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
       // Fallback: pakai content script di active tab
       try {
         const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
         if (tab?.id) {
           await browser.tabs.sendMessage(tab.id, { type: 'COPY_TEXT', text: msg.text });
-          return { ok: true };
+          sendResponse({ ok: true }); return;
         }
       } catch (e2) {}
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1307,7 +1517,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       let ext = 'json';
       if (msg.encrypted) {
         if (!msg.passphrase || msg.passphrase.length < 1) {
-          return { ok: false, error: 'passphrase_required' };
+          sendResponse({ ok: false, error: 'passphrase_required' }); return;
         }
         content = await encryptBackup(json, msg.passphrase);
         ext = 'rfvault';
@@ -1324,10 +1534,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       });
       // Update lastBackupAt
       await saveSettings({ lastBackupAt: new Date().toISOString(), lastBackupSize: content.length });
-      return { ok: true, filename, size: content.length };
+      sendResponse({ ok: true, filename, size: content.length }); return;
     } catch (e) {
       console.error('[RecallFox] EXPORT_BACKUP error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1335,27 +1545,27 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
   if (msg.type === 'IMPORT_BACKUP') {
     try {
       const text = msg.text || '';
-      if (!text) return { ok: false, error: 'empty_text' };
+      if (!text) { sendResponse({ ok: false, error: 'empty_text' }); return; }
       let jsonStr;
       if (isEncryptedBackup(text)) {
-        if (!msg.passphrase) return { ok: false, error: 'passphrase_required' };
+        if (!msg.passphrase) { sendResponse({ ok: false, error: 'passphrase_required' }); return; }
         try {
           jsonStr = await decryptBackup(text, msg.passphrase);
         } catch (err) {
-          return { ok: false, error: err.message === 'WRONG_PASSPHRASE' ? 'Passphrase salah atau file rusak' : 'Gagal decrypt: ' + err.message };
+          sendResponse({ ok: false, error: err.message === 'WRONG_PASSPHRASE' ? 'Passphrase salah atau file rusak' : 'Gagal decrypt: ' + err.message }); return;
         }
       } else {
         try {
           JSON.parse(text);  // validate
           jsonStr = text;
         } catch (err) {
-          return { ok: false, error: 'File backup tidak valid' };
+          sendResponse({ ok: false, error: 'File backup tidak valid' }); return;
         }
       }
       const parsed = JSON.parse(jsonStr);
       const importedVault = parsed.vault || parsed;
       if (!importedVault || !Array.isArray(importedVault.items)) {
-        return { ok: false, error: 'Format backup tidak dikenal' };
+        sendResponse({ ok: false, error: 'Format backup tidak dikenal' }); return;
       }
       // Merge: item dengan ID yang sudah ada → skip
       const currentVault = await getVault();
@@ -1376,10 +1586,10 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       }
       // Jangan import bundles otomatis (bisa conflict) — info saja
       console.log('[RecallFox] Import selesai: ' + added + ' added, ' + skipped + ' skipped');
-      return { ok: true, added, skipped };
+      sendResponse({ ok: true, added, skipped }); return;
     } catch (e) {
       console.error('[RecallFox] IMPORT_BACKUP error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
 
@@ -1388,14 +1598,374 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     try {
       const { manualBackupWithTimestamp } = await import('./lib/autobackup.js');
       const result = await manualBackupWithTimestamp();
+      // v3.8.1 (Issue #6): Jika gdriveAutoBackupOnLocalBackup aktif, kirim juga ke GDrive
+      try {
+        const s = await getSettings();
+        if (s.gdriveSyncEnabled && s.gdriveAutoBackupOnLocalBackup && result?.ok) {
+          // Kirim full backup async (fire-and-forget)
+          (async () => {
+            try {
+              const { buildBackupPayload } = await import('./lib/autobackup.js');
+              const payload = await buildBackupPayload();
+              payload.backupType = 'manual';
+              await gdriveSendFullBackup(payload);
+              console.log('[RecallFox] GDrive auto-backup on local backup: OK');
+            } catch (e) {
+              console.warn('[RecallFox] GDrive auto-backup on local backup failed:', e.message);
+            }
+          })();
+        }
+      } catch (e) {}
       return result || { ok: true };
     } catch (e) {
       console.error('[RecallFox] MANUAL_BACKUP_NOW error:', e);
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // ========== v3.8.1: GDrive Sync handlers (Issue #1, #2, #6) ==========
+  if (msg.type === 'GDRIVE_SYNC_NOW') {
+    try {
+      const result = await gdriveFlushNow();
+      sendResponse({ ok: true, result }); return;
+    } catch (e) {
+      console.error('[RecallFox] GDRIVE_SYNC_NOW error:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  if (msg.type === 'GDRIVE_FULL_BACKUP') {
+    try {
+      const { buildBackupPayload } = await import('./lib/autobackup.js');
+      const payload = await buildBackupPayload();
+      payload.backupType = 'manual';
+      const result = await gdriveSendFullBackup(payload);
+      // Update settings.gdriveLastSyncAt/error
+      try {
+        const meta = await gdriveGetMeta();
+        await saveSettings({
+          gdriveLastSyncAt: meta.lastSyncAt,
+          gdriveLastError: meta.lastError
+        });
+      } catch (e) {}
+      sendResponse(result); return;
+    } catch (e) {
+      console.error('[RecallFox] GDRIVE_FULL_BACKUP error:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  if (msg.type === 'GDRIVE_TEST') {
+    try {
+      const result = await gdriveTestConnection();
+      sendResponse(result); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  if (msg.type === 'GDRIVE_STATUS') {
+    try {
+      const meta = await gdriveGetMeta();
+      const queueLen = await gdriveGetQueueLength();
+      sendResponse({ ok: true, meta, queueLength: queueLen }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  if (msg.type === 'GDRIVE_CLEAR_QUEUE') {
+    try {
+      await gdriveClearQueue();
+      sendResponse({ ok: true }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // ============================================================
+  // v3.11.7: Multi-PC Bidirectional Sync handlers
+  // ============================================================
+  if (msg.type === 'SYNC_GET_PROFILES') {
+    try {
+      const { getSyncProfiles } = await import('./lib/sync-profile.js');
+      sendResponse({ ok: true, data: await getSyncProfiles() }); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_ADD_PROFILE') {
+    try {
+      const { addSyncProfile } = await import('./lib/sync-profile.js');
+      const profile = await addSyncProfile(msg.profile);
+      sendResponse({ ok: true, profile }); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_UPDATE_PROFILE') {
+    try {
+      const { updateSyncProfile } = await import('./lib/sync-profile.js');
+      const profile = await updateSyncProfile(msg.id, msg.patch);
+      sendResponse({ ok: true, profile }); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_DELETE_PROFILE') {
+    try {
+      const { deleteSyncProfile } = await import('./lib/sync-profile.js');
+      const data = await deleteSyncProfile(msg.id);
+      sendResponse({ ok: true, data }); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_SET_ACTIVE') {
+    try {
+      const { setActiveProfile } = await import('./lib/sync-profile.js');
+      await setActiveProfile(msg.id);
+      sendResponse({ ok: true }); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_PUSH') {
+    try {
+      const { pushStateToCloud, getActiveProfile } = await import('./lib/sync-profile.js');
+      const profile = msg.profileId
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        : await getActiveProfile();
+      if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
+      const result = await pushStateToCloud(profile);
+      sendResponse(result); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_PULL') {
+    try {
+      const { pullStateFromCloud, getActiveProfile } = await import('./lib/sync-profile.js');
+      const profile = msg.profileId
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        : await getActiveProfile();
+      if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
+      const result = await pullStateFromCloud(profile);
+      if (result.ok) {
+        // Notify semua tabs untuk refresh UI
+        try {
+          const tabs = await browser.tabs.query({});
+          for (const t of tabs) {
+            browser.tabs.sendMessage(t.id, { type: 'VAULT_UPDATED' }).catch(() => {});
+          }
+        } catch (e) {}
+        browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+      }
+      sendResponse(result); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_FULL') {
+    try {
+      const { fullSync, getActiveProfile } = await import('./lib/sync-profile.js');
+      const profile = msg.profileId
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        : await getActiveProfile();
+      if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
+      const result = await fullSync(profile);
+      if (result.ok) {
+        try {
+          const tabs = await browser.tabs.query({});
+          for (const t of tabs) {
+            browser.tabs.sendMessage(t.id, { type: 'VAULT_UPDATED' }).catch(() => {});
+          }
+        } catch (e) {}
+        browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+      }
+      sendResponse(result); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_TEST_PROFILE') {
+    try {
+      const { testProfileConnection } = await import('./lib/sync-profile.js');
+      const result = await testProfileConnection(msg.profile);
+      sendResponse(result); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+  if (msg.type === 'SYNC_STATUS') {
+    try {
+      const { getSyncStatus } = await import('./lib/sync-profile.js');
+      sendResponse({ ok: true, status: await getSyncStatus() }); return;
+    } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
+  }
+
+  // Issue #4 fallback: GET_PAGE_CONTEXT_VIA_BG — kalau content script tidak ter-inject
+  // (mis. tab about: atau halaman restricted), background inject script on-demand.
+  // v3.11.11 (Sesi 10, Issue #2): FIX bug loading terus tanpa hasil.
+  //   Root cause v3.11.10:
+  //   (a) Di dalam browser.scripting.executeScript.func, code pakai `sendResponse(...)`
+  //       — sendResponse TIDAK tersedia di context page inject (hanya di listener context).
+  //       Function inject harus RETURN value, bukan call sendResponse.
+  //   (b) Setelah executeScript, listener pakai `return results?.[0]?.result;` —
+  //       return value dari async IIFE, BUKAN call sendResponse. Firefox expect
+  //       sendResponse tapi tidak pernah dipanggil → popup loading terus.
+  //   Fix:
+  //   (a) Hapus sendResponse dari dalam executeScript.func — pakai return value.
+  //   (b) Setelah executeScript, call sendResponse(results?.[0]?.result); return;
+  if (msg.type === 'GET_PAGE_CONTEXT_VIA_BG') {
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      if (!tab.url || !/^https?:\/\//.test(tab.url)) {
+        sendResponse({ ok: false, error: 'not_http_page', url: tab.url }); return;
+      }
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (maxLen) => {
+          // v3.11.11: JANGAN pakai sendResponse di sini — return value saja.
+          // Function ini di-inject ke page context, bukan listener context.
+          // v3.16.0 K3: Ekstraksi halaman BERSIH — buang nav/aside/footer/script/dll.
+          try {
+            // Clone body, hapus elemen noise
+            const bodyClone = document.body.cloneNode(true);
+            const noiseSelectors = [
+              'nav', 'header', 'footer', 'aside', 'script', 'style', 'noscript',
+              'iframe', 'svg', 'canvas', 'form', 'button', 'input', 'select', 'textarea',
+              '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+              '[role="search"]', '[aria-hidden="true"]',
+              '.nav', '.navbar', '.menu', '.sidebar', '.footer', '.header',
+              '.cookie', '.banner', '.popup', '.modal', '.overlay',
+              '.advertisement', '.ads', '.ad', '.sponsor',
+              '.social', '.share', '.comment', '.comments',
+              '.breadcrumb', '.pagination', '.related', '.recommended',
+              '[class*="cookie" i]', '[class*="banner" i]', '[class*="popup" i]',
+              '[class*="modal" i]', '[class*="overlay" i]', '[class*="advert" i]',
+              '[id*="cookie" i]', '[id*="banner" i]', '[id*="popup" i]'
+            ];
+            for (const sel of noiseSelectors) {
+              bodyClone.querySelectorAll(sel).forEach(el => el.remove());
+            }
+            const main = bodyClone.querySelector('main')
+                      || bodyClone.querySelector('[role="main"]')
+                      || bodyClone.querySelector('article')
+                      || bodyClone;
+            let text = (main?.innerText || '').trim();
+            text = text.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
+            const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
+            const ogDesc = document.querySelector('meta[property="og:description"]')?.content || '';
+            const desc = (metaDesc || ogDesc || '').trim();
+            const sel = (window.getSelection()?.toString() || '').trim();
+            if (text.length > maxLen) text = text.slice(0, maxLen) + '\n\n[... dipotong, total ' + text.length + ' char]';
+            return {
+              ok: true,
+              text, title: document.title || '', url: location.href,
+              description: desc, selection: sel,
+              meta: { wordCount: text ? text.split(/\s+/).length : 0, charCount: text.length }
+            };
+          } catch (e) {
+            return { ok: false, error: e.message };
+          }
+        },
+        args: [msg.maxLen || 8000]
+      });
+      // v3.11.11: Pakai sendResponse (bukan return) supaya popup dapat response.
+      const result = results?.[0]?.result || { ok: false, error: 'no_result' };
+      sendResponse(result); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  // Issue #3: SAVE_UPLOADED_SCREENSHOT — simpan screenshot dari file upload/paste
+  if (msg.type === 'SAVE_UPLOADED_SCREENSHOT') {
+    try {
+      let { title, dataUrl, source } = msg;
+      if (!dataUrl) { sendResponse({ ok: false, error: 'NO_DATA_URL' }); return; }
+      // Build screenshot item
+      const match = dataUrl.match(/^data:(image\/[a-z]+);base64,/i);
+      let fmt = match && match[1] === 'image/jpeg' ? 'jpeg' : 'png';
+      // Decode untuk dapat width/height/bytes
+      let width = 0, height = 0, bytes = 0;
+      try {
+        const base64 = dataUrl.split(',')[1];
+        const binStr = atob(base64);
+        bytes = binStr.length;
+      } catch (e) {}
+
+      // v3.11.7-fix (Issue #1 gap): Kompresi upload manual sesuai screenshotCompression.
+      // Sebelumnya upload manual tidak dikompresi → file PNG 9MB tetap 9MB → GDrive sync gagal.
+      // Sekarang kompres otomatis pakai setting yang sama dengan capture path.
+      try {
+        const settings = await getSettings();
+        const compLevel = settings.screenshotCompression || 'high';
+        let targetFormat = 'jpeg', targetQuality = 60;
+        if (compLevel === 'lossless') { targetFormat = 'png'; targetQuality = 100; }
+        else if (compLevel === 'low') { targetFormat = 'jpeg'; targetQuality = 90; }
+        else if (compLevel === 'medium') { targetFormat = 'jpeg'; targetQuality = 75; }
+        // 'high' default → jpeg q60
+
+        // Kompres hanya kalau target lebih kecil dari source (atau format beda)
+        const sourceIsPng = fmt === 'png';
+        const needCompress = (targetFormat === 'jpeg') || (sourceIsPng && targetFormat === 'png' && compLevel !== 'lossless');
+        // Skip kompresi kalau lossless ATAU sudah jpeg dengan quality sama/lebih rendah
+        if (compLevel !== 'lossless' && needCompress) {
+          const imgBlob = await (await fetch(dataUrl)).blob();
+          const bitmap = await createImageBitmap(imgBlob);
+          const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+          const ctx2 = canvas.getContext('2d');
+          // Untuk JPEG, fill background putih dulu (JPEG tidak support transparansi)
+          if (targetFormat === 'jpeg') {
+            ctx2.fillStyle = '#ffffff';
+            ctx2.fillRect(0, 0, canvas.width, canvas.height);
+          }
+          ctx2.drawImage(bitmap, 0, 0);
+          const newBlob = await canvas.convertToBlob({
+            type: `image/${targetFormat}`,
+            quality: targetQuality / 100
+          });
+          // Hanya pakai hasil kompresi kalau ukurannya lebih kecil dari original
+          if (newBlob.size < bytes) {
+            dataUrl = await new Promise(resolve => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(newBlob);
+            });
+            fmt = targetFormat;
+            bytes = newBlob.size;
+            console.log(`[RecallFox] Upload manual dikompres: ${imgBlob.size} → ${newBlob.size} bytes (${compLevel})`);
+          }
+        }
+      } catch (e) {
+        console.warn('[RecallFox] Kompresi upload manual gagal (lanjut pakai original):', e.message);
+      }
+
+      // Generate thumbnail (200px) via OffscreenCanvas (background-compatible)
+      let thumbnailDataUrl = '';
+      try {
+        const offscreen = new OffscreenCanvas(200, 200);
+        const ctx = offscreen.getContext('2d');
+        const imgBlob = await (await fetch(dataUrl)).blob();
+        const bitmap = await createImageBitmap(imgBlob);
+        // Aspect ratio preserve
+        const ratio = bitmap.width / bitmap.height;
+        let tw = 200, th = 200;
+        if (ratio > 1) th = 200 / ratio; else tw = 200 * ratio;
+        offscreen.width = Math.round(tw);
+        offscreen.height = Math.round(th);
+        ctx.drawImage(bitmap, 0, 0, offscreen.width, offscreen.height);
+        width = bitmap.width;
+        height = bitmap.height;
+        const thumbBlob = await offscreen.convertToBlob({ type: 'image/png', quality: 0.85 });
+        thumbnailDataUrl = await new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(thumbBlob);
+        });
+      } catch (e) {
+        console.warn('[RecallFox] Thumbnail generation failed:', e.message);
+      }
+      const newItem = await addItem({
+        type: 'screenshot',
+        title: title || 'Screenshot Upload',
+        screenshotDataUrl: dataUrl,
+        screenshotMode: 'upload',
+        screenshotWidth: width,
+        screenshotHeight: height,
+        screenshotFormat: fmt,
+        screenshotBytes: bytes,
+        thumbnailDataUrl,
+        source: source || { kind: 'upload', url: '', title: title || 'Screenshot Upload' }
+      });
+      sendResponse({ ok: true, item: newItem }); return;
+    } catch (e) {
+      console.error('[RecallFox] SAVE_UPLOADED_SCREENSHOT error:', e);
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'CAPTURE_VISIBLE_TAB') {
-    return await handleCaptureVisible(msg.format, msg.quality);
+    sendResponse(await handleCaptureVisible(msg.format, msg.quality)); return;
   }
   if (msg.type === 'CLEAR_CACHE') {
     // Sent from popup/sidebar "Clear Cache" button
@@ -1408,50 +1978,50 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       reload: settings.clearCacheReload,
       notify: settings.clearCacheNotify
     });
-    return res;
+    sendResponse(res); return;
   }
   if (msg.type === 'VOLUME_SET') {
     // Set volume for current tab's domain
     const { normalizeDb, setSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
     const dB = normalizeDb(msg.dB);
     await setSiteVolume(domain, dB);
     try {
       await browser.tabs.sendMessage(tab.id, { command: 'setVolume', dB: dB });
     } catch (e) { /* volume-cs.js might not be loaded */ }
-    return { ok: true, dB };
+    sendResponse({ ok: true, dB }); return;
   }
   if (msg.type === 'VOLUME_GET') {
     // Get volume for current tab's domain
     const { getSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
     const dB = await getSiteVolume(domain);
-    return { ok: true, dB, domain };
+    sendResponse({ ok: true, dB, domain }); return;
   }
   if (msg.type === 'VOLUME_GET_STATE') {
     // Get current audio state from the active tab
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     try {
       const res = await browser.tabs.sendMessage(tab.id, { command: 'getAudioControlState' });
-      return { ok: true, state: res?.response || { volume: 0, muted: false, mono: false } };
+      sendResponse({ ok: true, state: res?.response || { volume: 0, muted: false, mono: false } }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'VOLUME_MUTE') {
     // Toggle mute on active tab
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     try {
       await browser.tabs.sendMessage(tab.id, { command: 'setMute', muted: msg.muted });
-      return { ok: true, muted: msg.muted };
+      sendResponse({ ok: true, muted: msg.muted }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'RESTART_BACKUP_TIMER') {
@@ -1459,9 +2029,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     try {
       const { startBackupInterval } = await import('./lib/autobackup.js');
       await startBackupInterval();
-      return { ok: true };
+      sendResponse({ ok: true }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'TOGGLE_OVERLAY') {
@@ -1475,22 +2045,33 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       try { await browser.tabs.sendMessage(tab.id, { type: 'OVERLAY_TOGGLED' }); } catch (e) {}
     }
     console.log('[RecallFox] Overlay toggled:', newEnabled);
-    return { ok: true, enabled: newEnabled };
+    sendResponse({ ok: true, enabled: newEnabled }); return;
   }
 
   // v3.7.2 (Issue 6): Toggle Mode Anak — 1 klik aktif/nonaktifkan YouTube Kids Only + Block Shorts.
-  // Saat aktif: semua youtube.com → youtubekids.com, dan /shorts/ diblokir.
-  // Saat nonaktif: keduanya mati. Popup bisa panggil ini untuk tombol "Mode Anak".
+  // v3.10.0 (Issue 2): Mode Anak — bukan redirect ke youtubekids, tapi tetap di youtube.com
+  // dengan filter konten ramah anak via content script. Saat aktif:
+  //   - contentGuardKidModeFilter: ON  → content script hide non-kid content di youtube.com
+  //   - contentGuardBlockShorts: ON    → Shorts tetap di-hide (umumnya tidak ramah anak)
+  //   - contentGuardYoutubeKidsOnly: OFF (legacy, tidak dipakai default — user bisa aktifkan manual)
   if (msg.type === 'TOGGLE_KID_MODE') {
     const s = await getSettings();
-    const newOn = msg.enabled !== undefined ? !!msg.enabled : !(s.contentGuardYoutubeKidsOnly === true);
+    const newOn = msg.enabled !== undefined ? !!msg.enabled : !(s.contentGuardKidModeFilter === true);
     await saveSettings({
-      contentGuardYoutubeKidsOnly: newOn,
+      contentGuardKidModeFilter: newOn,
       contentGuardBlockShorts: newOn,
       contentGuardKidModeArmUntil: 0
     });
-    console.log('[RecallFox] Kid Mode toggled:', newOn);
-    return { ok: true, enabled: newOn };
+    console.log('[RecallFox] Kid Mode (filter) toggled:', newOn);
+    // Notify all youtube tabs to re-apply filter
+    browser.tabs.query({}).then(tabs => {
+      for (const t of tabs) {
+        if (t.url && /youtube\.com|youtu\.be/.test(t.url)) {
+          browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        }
+      }
+    }).catch(() => {});
+    sendResponse({ ok: true, enabled: newOn }); return;
   }
 
   // v3.7.2 (Issue 6): Toggle Block Shorts saja (tanpa YouTube Kids redirect).
@@ -1499,24 +2080,24 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     const newOn = msg.enabled !== undefined ? !!msg.enabled : !(s.contentGuardBlockShorts === true);
     await saveSettings({ contentGuardBlockShorts: newOn });
     console.log('[RecallFox] Block Shorts toggled:', newOn);
-    return { ok: true, enabled: newOn };
+    sendResponse({ ok: true, enabled: newOn }); return;
   }
 
   if (msg.type === 'PRAYER_FETCH') {
     // Fetch prayer times for today (used by popup/sidebar Prayer tab)
     const s = await getSettings();
     if (!s.prayerEnabled) {
-      return { ok: false, error: 'not_enabled' };
+      sendResponse({ ok: false, error: 'not_enabled' }); return;
     }
     if (typeof s.prayerLatitude !== 'number' || typeof s.prayerLongitude !== 'number') {
-      return { ok: false, error: 'no_location' };
+      sendResponse({ ok: false, error: 'no_location' }); return;
     }
 
     // Check cache: refresh if missing or stale (>24h or different date)
     const cached = s.prayerCachedTimes;
     const today = new Date().toISOString().slice(0, 10);
     if (cached && cached.date === today) {
-      return { ok: true, times: cached, fromCache: true };
+      sendResponse({ ok: true, times: cached, fromCache: true }); return;
     }
 
     try {
@@ -1528,9 +2109,9 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         prayerCachedTimes: times,
         prayerLastFetch: new Date().toISOString()
       });
-      return { ok: true, times, fromCache: false };
+      sendResponse({ ok: true, times, fromCache: false }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'PRAYER_GEOLOCATE') {
@@ -1539,16 +2120,16 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     // because Firefox requires user activation for geolocation prompts.
     // We do the actual getCurrentPosition in popup/sidebar; this handler is
     // only used if popup delegates to background (not recommended).
-    return { ok: false, error: 'use_popup_geolocation' };
+    sendResponse({ ok: false, error: 'use_popup_geolocation' }); return;
   }
   if (msg.type === 'PRAYER_REVERSE_GEOCODE') {
     // Reverse geocode coordinates to a human-readable location
     const { reverseGeocode } = await import('./lib/salahtime.js');
     try {
       const location = await reverseGeocode(msg.lat, msg.lng);
-      return { ok: true, location };
+      sendResponse({ ok: true, location }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'PRAYER_GEOCODE') {
@@ -1556,25 +2137,25 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     const { geocode } = await import('./lib/salahtime.js');
     try {
       const result = await geocode(msg.address);
-      return { ok: true, ...result };
+      sendResponse({ ok: true, ...result }); return;
     } catch (e) {
-      return { ok: false, error: e.message };
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'CAPTURE_FOR_PREVIEW') {
     // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
     // Caller then shows modal with PDF/JPG/PNG/Copy/Vault save options.
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
-    return await captureFullPage(tab, { mode: msg.mode || 'entire' });
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+    sendResponse(await captureFullPage(tab, { mode: msg.mode || 'entire' })); return;
   }
   if (msg.type === 'SAVE_CAPTURE_AS') {
     // Save captured image to Downloads folder as PDF / JPG / PNG
-    return await saveCaptureAs(msg);
+    sendResponse(await saveCaptureAs(msg)); return;
   }
   if (msg.type === 'SAVE_CAPTURE_TO_VAULT') {
     // Save captured image to vault as screenshot item
-    return await saveCaptureToVault(msg);
+    sendResponse(await saveCaptureToVault(msg)); return;
   }
   if (msg.type === 'CAPTURE_SCREENSHOT') {
     // Legacy: sent from popup/sidebar quick-action button — now triggers the modal flow
@@ -1583,47 +2164,676 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     // Guard: only forward string modes; ignore accidental event objects.
     const mode = (typeof msg.mode === 'string') ? msg.mode : undefined;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return { ok: false, error: 'no_active_tab' };
+    if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
     try {
       await browser.tabs.sendMessage(tab.id, {
         type: 'TRIGGER_CAPTURE_FROM_POPUP',
         mode: mode  // forwarded to overlay.js -> triggerCapture(mode)
       });
-      return { ok: true, deferred: true };
+      sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
       // Fallback to direct save (skips modal)
-      return await triggerScreenshot(tab, mode || 'entire');
+      sendResponse(await triggerScreenshot(tab, mode || 'entire')); return;
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {
-    // Lazy-load full image for popup/sidebar preview
-    const { getScreenshotBlob } = await import('./lib/storage.js');
-    const dataUrl = await getScreenshotBlob(msg.id);
-    return { ok: true, dataUrl };
+    // v3.11.35: Lazy-load screenshot blob — local-first, cloud fallback.
+    // Sebelumnya: hanya cari di storage.local → return null kalau tidak ada.
+    //   → device B (setelah pull sync) tidak punya blob → copy/paste gagal.
+    // Sekarang: kalau local null, fetch dari Supabase Storage URL (gdriveFileUrl)
+    //   → cache ke storage.local → return dataUrl.
+    // User audit: "Pull sync hanya transfer metadata, bukan blob gambar.
+    //   Saat device lain coba copy/paste, blob lokal tidak ada → error 'no_blob'."
+    try {
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      const res = await getOrDownloadScreenshotBlob(msg.id);
+      sendResponse({ ok: res.ok, dataUrl: res.dataUrl, source: res.source, error: res.error });
+      return;
+    } catch (e) {
+      console.warn('[RecallFox] GET_SCREENSHOT_BLOB failed:', e.message);
+      // Fallback ke cara lama (local-only) kalau supabase-sync gagal import
+      try {
+        const { getScreenshotBlob } = await import('./lib/storage.js');
+        const dataUrl = await getScreenshotBlob(msg.id);
+        sendResponse({ ok: true, dataUrl }); return;
+      } catch (e2) {
+        sendResponse({ ok: false, dataUrl: null, error: e2.message }); return;
+      }
+    }
+  }
+  // v3.12.1: GET_DOCUMENT_PAGES — return metadata document (page URLs, title, dll)
+  // Dipakai oleh popup/viewer.js untuk multi-page viewer.
+  if (msg.type === 'GET_DOCUMENT_PAGES') {
+    try {
+      const { getVault } = await import('./lib/storage.js');
+      const vault = await getVault();
+      const item = (vault.items || []).find(i => i.id === msg.id);
+      if (!item) {
+        sendResponse({ ok: false, error: 'item_not_found' }); return;
+      }
+      if (item.type !== 'document') {
+        sendResponse({ ok: false, error: 'not_a_document' }); return;
+      }
+      const pages = item.source?.pages || [];
+      // Jika pages[0].url null tapi gdriveFileUrl ada, isi dari sana
+      const pagesWithUrls = pages.map((p, i) => {
+        if (p?.url) return p;
+        if (i === 0 && item.gdriveFileUrl) {
+          return { ...p, url: item.gdriveFileUrl };
+        }
+        return p;
+      });
+      sendResponse({
+        ok: true,
+        id: item.id,
+        title: item.title || 'Dokumen',
+        pages: pagesWithUrls,
+        totalPages: pagesWithUrls.length,
+        annotationNote: item.annotationNote || item.source?.annotationNote || ''
+      }); return;
+    } catch (e) {
+      console.warn('[RecallFox] GET_DOCUMENT_PAGES failed:', e.message);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  // v3.12.1: DOWNLOAD_URL — download arbitrary URL via browser.downloads
+  // Dipakai oleh viewer.js untuk download halaman dokumen.
+  if (msg.type === 'DOWNLOAD_URL') {
+    try {
+      const downloadId = await browser.downloads.download({
+        url: msg.url,
+        filename: msg.filename || 'download.bin',
+        saveAs: false
+      });
+      sendResponse({ ok: true, downloadId }); return;
+    } catch (e) {
+      console.warn('[RecallFox] DOWNLOAD_URL failed:', e.message);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  if (msg.type === 'INJECT_ANNOTATE_SCRIPT') {
+    // v3.11.4: Inject content/annotate.js into the active tab on-demand.
+    // Called by overlay.js when user clicks "Anotasi" in capture preview modal.
+    try {
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      await browser.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        files: ['content/annotate.js']
+      });
+      sendResponse({ ok: true }); return;
+    } catch (e) {
+      console.warn('[RecallFox] inject annotate.js failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
   }
   if (msg.type === 'DOWNLOAD_SCREENSHOT') {
     // Save full image to user's Downloads folder via browser.downloads API
-    const { getScreenshotBlob } = await import('./lib/storage.js');
-    const dataUrl = await getScreenshotBlob(msg.id);
-    if (!dataUrl) return { ok: false, error: 'no_blob' };
-    const safeName = (msg.title || 'screenshot').replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
-    const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
-    const ext = msg.format === 'jpeg' ? 'jpg' : 'png';
+    // v3.13.4: Pakai getOrDownloadScreenshotBlob (cloud fallback) bukan getScreenshotBlob (local-only).
+    // v3.14.9 FIX: Konversi dataUrl → Blob → objectURL sebelum browser.downloads.download.
+    //   Sebelumnya: url: dataUrl (data:image/png;base64,...) — Firefox MV3 sering
+    //   render dataUrl sebagai teks di tab (full screen base64 string) alih-alih
+    //   download. User report: "layar penuh teks acak yang tampak seperti encoded
+    //   string (Base64)". Pattern ini sudah dipakai 4x di file ini (clipboard
+    //   fallback) — sekarang konsisten.
     try {
-      const id = await browser.downloads.download({
-        url: dataUrl,
-        filename: `RecallFox/${safeName}_${ts}.${ext}`,
-        saveAs: false
-      });
-      return { ok: true, downloadId: id };
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      const res = await getOrDownloadScreenshotBlob(msg.id);
+      const dataUrl = res?.ok ? res.dataUrl : null;
+      if (!dataUrl) { sendResponse({ ok: false, error: res?.error || 'no_blob' }); return; }
+      const safeName = (msg.title || 'screenshot').replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
+      const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+      const ext = msg.format === 'jpeg' ? 'jpg' : 'png';
+      const mimeType = msg.format === 'jpeg' ? 'image/jpeg' : 'image/png';
+      try {
+        // v3.14.9: Konversi dataUrl → Blob → objectURL (pattern dari clipboard fallback line ~2361)
+        const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: mimeType });
+        const objectUrl = URL.createObjectURL(blob);
+        const id = await browser.downloads.download({
+          url: objectUrl,
+          filename: `RecallFox/${safeName}_${ts}.${ext}`,
+          saveAs: false,
+          conflictAction: 'uniquify'
+        });
+        // Revoke objectURL setelah 30s (cukup untuk download dimulai)
+        setTimeout(() => { try { URL.revokeObjectURL(objectUrl); } catch (e) {} }, 30000);
+        sendResponse({ ok: true, downloadId: id }); return;
+      } catch (e) {
+        console.warn('[RecallFox] DOWNLOAD_SCREENSHOT download failed:', e.message);
+        sendResponse({ ok: false, error: e.message }); return;
+      }
     } catch (e) {
-      return { ok: false, error: e.message };
+      console.warn('[RecallFox] DOWNLOAD_SCREENSHOT exception:', e.message);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  if (msg.type === 'COPY_SCREENSHOT_TO_CLIPBOARD') {
+    // v3.11.6 (Issue 1 dari Google Doc): Salin screenshot dari Vault ke clipboard.
+    // Popup/sidebar tidak bisa akses navigator.clipboard.write dengan image di Firefox
+    // karena perlu user gesture di page context. Solusi: inject content script ke
+    // tab aktif yang eksekusi clipboard write di context page.
+    //
+    // v3.11.21 FIX: Sebelumnya fungsi executeScript.func pakai sendResponse() di dalam
+    // func body — tapi sendResponse adalah background context function, TIDAK BISA
+    // diakses dari content script context. Akibatnya throw ReferenceError, ditangkap
+    // catch, lalu diteruskan sebagai 'clipboard_write_failed'.
+    // Fix: ganti sendResponse(...) ke return { ... } pattern (sama seperti
+    // COPY_SCREENSHOTS_BATCH yang sudah benar di v3.11.12).
+    //
+    // msg: { id, withCaption: bool }
+    // Returns: { ok: bool, message?: string, error?: string }
+    try {
+      // v3.11.35: Pakai lazy download — kalau blob lokal null, fetch dari cloud.
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      const { getVault } = await import('./lib/storage.js');
+      const blobRes = await getOrDownloadScreenshotBlob(msg.id);
+      const dataUrl = blobRes.dataUrl;
+      if (!dataUrl) { sendResponse({ ok: false, error: blobRes.error || 'no_blob' }); return; }
+
+      const vault = await getVault();
+      const item = vault.items.find(i => i.id === msg.id);
+      if (!item) { sendResponse({ ok: false, error: 'item_not_found' }); return; }
+
+      // Build caption (URL, title, time, mode, dims) — v3.11.28: disamakan dengan format preview modal (overlay.js)
+      // User feedback: "tapi kalau pakai sidebar itu jelek jelek jelek banget. banyak yang ga muncul ya kan?
+      // nah standarkan dong, disamakan format kopi paste nya yang sidebar ke menjadi selengkap
+      // tekan tombol gambar + keterangan di preview modal"
+      const pageTitle = item.source?.title || item.title || 'screenshot';
+      const pageUrl = item.source?.url || '';
+      const capturedAt = item.source?.capturedAt || new Date().toISOString();
+      const modeLabel = item.screenshotMode === 'visible' ? 'Viewport' : (item.screenshotMode === 'selection' ? 'Area' : 'Seluruh halaman');
+      const dims = (item.screenshotWidth || 0) + '×' + (item.screenshotHeight || 0) + ' px';
+      // v3.11.28: Sertakan catatan anotasi kalau ada (sama seperti overlay.js)
+      const annotationNote = item.annotationNote || item.source?.annotationNote || '';
+      const capturedDateStr = new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' });
+
+      const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
+        + (pageUrl ? 'Sumber: ' + pageUrl + '\n' : '')
+        + 'Waktu: ' + capturedDateStr + '\n'
+        + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
+        + (annotationNote ? '📝 Catatan: ' + annotationNote + '\n' : '')
+        + 'Ditangkap oleh RecallFox';
+
+      const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
+        + '<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
+        + '<p style="margin:8px 0 2px"><strong>📸 ' + _escapeHtml(pageTitle) + '</strong></p>'
+        + (pageUrl ? '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + _escapeHtml(pageUrl) + '">' + _escapeHtml(pageUrl) + '</a></p>' : '')
+        + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + _escapeHtml(capturedDateStr) + '</p>'
+        + (annotationNote ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + _escapeHtml(annotationNote) + '</p>' : '')
+        + '<p style="margin:0;color:#78716c">🔧 ' + _escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
+        + '</div>';
+
+      // Inject clipboard writer ke tab aktif
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      // Skip jika tab adalah about: atau file:// (tidak bisa inject)
+      if (!tab.url || /^(about|moz-extension|chrome-extension|file):/i.test(tab.url)) {
+        sendResponse({ ok: false, error: 'cannot_inject_this_page' }); return;
+      }
+
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        func: async (dataUrl, withCaption, textPlain, textHtml) => {
+          // v3.11.21 FIX: PAKAI RETURN, bukan sendResponse.
+          // executeScript.func berjalan di content script context, tidak punya
+          // akses ke sendResponse (background-only). Pakai return value, akan
+          // diterima via results[0].result di background.
+          try {
+            // Konversi dataUrl → Blob
+            const resp = await fetch(dataUrl);
+            const blob = await resp.blob();
+            // Normalisasi ke PNG supaya clipboard API support (Firefox hanya image/png)
+            let pngBlob;
+            if (blob.type === 'image/png') {
+              pngBlob = blob;
+            } else {
+              // Convert JPEG/other ke PNG via canvas
+              const img = await createImageBitmap(blob);
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              const ctx = canvas.getContext('2d');
+              ctx.drawImage(img, 0, 0);
+              pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            }
+            if (!pngBlob) {
+              return { ok: false, error: 'blob_conversion_failed' };
+            }
+
+            if (withCaption && typeof ClipboardItem !== 'undefined') {
+              // Multi-mime: image/png + text/html + text/plain
+              const item = new ClipboardItem({
+                'image/png': pngBlob,
+                'text/html': new Blob([textHtml], { type: 'text/html' }),
+                'text/plain': new Blob([textPlain], { type: 'text/plain' })
+              });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' };
+            } else if (typeof ClipboardItem !== 'undefined') {
+              // Image only
+              const item = new ClipboardItem({ 'image/png': pngBlob });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar tersalin ke clipboard' };
+            } else {
+              // Fallback: browser.clipboard.setImageData (Firefox < 127) — ini harus
+              // dilakukan di background context, bukan content script. Tapi karena
+              // kita sudah di content script, return signal supaya background handle.
+              return { ok: false, error: 'clipboard_item_unsupported', needsFallback: true, pngSize: pngBlob.size };
+            }
+          } catch (e) {
+            return { ok: false, error: e.message || 'clipboard_write_failed' };
+          }
+        },
+        args: [dataUrl, !!msg.withCaption, textPlain, textHtml]
+      });
+
+      const result = results?.[0]?.result;
+      if (result && typeof result.then === 'function') {
+        // Function return Promise — await di listener
+        const awaited = await result;
+        // v3.11.22 (Issue #1 fix): HAPUS fallback browser.clipboard.setImageData.
+        // Background script di Firefox MV3 TIDAK punya browser.clipboard API.
+        // Error user: "can't access property 'setImageData', browser clipboard is undefined".
+        // Solusi: kalau ClipboardItem tidak support (Firefox < 127), pakai download file
+        // sebagai fallback (lebih reliable daripada clipboard.setImageData).
+        if (awaited?.needsFallback) {
+          // v3.11.22: Download screenshot sebagai file PNG (fallback kalau clipboard tidak support)
+          try {
+            const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+            const objectUrl = URL.createObjectURL(blob);
+            const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+            await browser.downloads.download({
+              url: objectUrl,
+              filename: filename,
+              saveAs: false
+            });
+            // Revoke URL after delay
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+            if (msg.withCaption) {
+              // Copy caption ke clipboard sebagai text fallback
+              try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+            }
+            sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads (clipboard tidak support di browser ini). Caption disalin ke clipboard.' }); return;
+          } catch (e) {
+            sendResponse({ ok: false, error: 'fallback_failed: ' + e.message }); return;
+          }
+        }
+        sendResponse(awaited); return;
+      }
+      if (result && result.ok) { sendResponse(result); return; }
+      // v3.11.22: Kalau clipboard write gagal tapi kita punya dataUrl, download sebagai file
+      if (result && result.error && result.error.includes('clipboard')) {
+        try {
+          const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+          const objectUrl = URL.createObjectURL(blob);
+          const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+          await browser.downloads.download({
+            url: objectUrl,
+            filename: filename,
+            saveAs: false
+          });
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+          if (msg.withCaption) {
+            try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+          }
+          sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads (clipboard write gagal, pakai file). Caption disalin.' }); return;
+        } catch (e) {
+          sendResponse({ ok: false, error: 'download_fallback_failed: ' + e.message }); return;
+        }
+      }
+      sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
+    } catch (e) {
+      console.warn('[RecallFox] COPY_SCREENSHOT_TO_CLIPBOARD failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  // v3.11.23 (Issue #1 fix): COPY_DATAURL_TO_CLIPBOARD — copy screenshot dari preview modal
+  // (overlay.js) yang belum disimpan ke vault. Terima dataUrl langsung, bukan item ID.
+  // Inject clipboard write ke tab aktif (page context punya user gesture + clipboard access).
+  if (msg.type === 'COPY_DATAURL_TO_CLIPBOARD') {
+    try {
+      const { dataUrl, withCaption, textPlain, textHtml } = msg;
+      if (!dataUrl) { sendResponse({ ok: false, error: 'no_dataurl' }); return; }
+
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      if (!tab.url || /^(about|moz-extension|chrome-extension|file):/i.test(tab.url)) {
+        sendResponse({ ok: false, error: 'cannot_inject_this_page' }); return;
+      }
+
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        func: async (dataUrl, withCaption, textPlain, textHtml) => {
+          try {
+            const resp = await fetch(dataUrl);
+            const blob = await resp.blob();
+            let pngBlob;
+            if (blob.type === 'image/png') {
+              pngBlob = blob;
+            } else {
+              const img = await createImageBitmap(blob);
+              const canvas = document.createElement('canvas');
+              canvas.width = img.width;
+              canvas.height = img.height;
+              canvas.getContext('2d').drawImage(img, 0, 0);
+              pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            }
+            if (!pngBlob) return { ok: false, error: 'blob_conversion_failed' };
+
+            if (withCaption && typeof ClipboardItem !== 'undefined' && textPlain && textHtml) {
+              const item = new ClipboardItem({
+                'image/png': pngBlob,
+                'text/html': new Blob([textHtml], { type: 'text/html' }),
+                'text/plain': new Blob([textPlain], { type: 'text/plain' })
+              });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar + keterangan tersalin ke clipboard' };
+            } else if (typeof ClipboardItem !== 'undefined') {
+              const item = new ClipboardItem({ 'image/png': pngBlob });
+              await navigator.clipboard.write([item]);
+              return { ok: true, message: '✓ Gambar tersalin ke clipboard' };
+            } else {
+              return { ok: false, error: 'ClipboardItem tidak support' };
+            }
+          } catch (e) {
+            return { ok: false, error: e.message || 'clipboard_write_failed' };
+          }
+        },
+        args: [dataUrl, !!withCaption, textPlain || '', textHtml || '']
+      });
+
+      const result = results?.[0]?.result;
+      if (result && typeof result.then === 'function') {
+        const awaited = await result;
+        if (awaited?.ok) {
+          sendResponse(awaited); return;
+        }
+        // Fallback: download file
+        try {
+          const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+          const objectUrl = URL.createObjectURL(blob);
+          const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+          await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+          if (withCaption && textPlain) {
+            try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+          }
+          sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads + keterangan disalin' }); return;
+        } catch (e) {
+          sendResponse({ ok: false, error: 'download_fallback_failed: ' + e.message }); return;
+        }
+      }
+      if (result && result.ok) { sendResponse(result); return; }
+      // Fallback: download file
+      try {
+        const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
+        const objectUrl = URL.createObjectURL(blob);
+        const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
+        await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+        if (withCaption && textPlain) {
+          try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
+        }
+        sendResponse({ ok: true, message: '✓ Screenshot disimpan ke Downloads + keterangan disalin' }); return;
+      } catch (e) {
+        sendResponse({ ok: false, error: result?.error || 'clipboard_write_failed' }); return;
+      }
+    } catch (e) {
+      console.warn('[RecallFox] COPY_DATAURL_TO_CLIPBOARD failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  // v3.11.11 (Issue #1): COPY_SCREENSHOTS_BATCH — copy multiple screenshot + keterangan
+  // User feedback: "apakah bisa dipilih beberapa di menu ini dan kopinya sekalian baik
+  // gambar maupun keterangannya sekaligus? tapi kamu pikirkan formatnya yang sangat rapih
+  // sehingga ketika dipaste tu orang atau ai bacanya ngerti."
+  //
+  // Strategi: inject content script ke tab aktif, kirim semua dataUrl + metadata,
+  // content script tulis clipboard dengan format:
+  //   - text/plain: markdown rapi dengan section per screenshot
+  //   - text/html: HTML dengan <img> + <h3> + <p> per screenshot
+  //   - Image gambar tetap di-clipboard sebagai blob (kalau Firefox support)
+  //
+  // Format markdown (text/plain):
+  //   # Screenshot Bundle — RecallFox
+  //   Tanggal: 21 Jul 2026, 14:30 · Total: 3 screenshot
+  //
+  //   ## 1. Judul Screenshot 1
+  //   **Sumber:** https://example.com/page1
+  //   **Waktu:** Selasa, 21 Jul 2026 06:31
+  //   **Mode:** Area · 648×268 px
+  //   **Tag:** bug, ui
+  //
+  //   [Gambar 1 — lihat di clipboard gambar]
+  //
+  //   ---
+  //
+  //   ## 2. Judul Screenshot 2
+  //   ...
+  if (msg.type === 'COPY_SCREENSHOTS_BATCH') {
+    try {
+      const { ids, withCaption } = msg;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        sendResponse({ ok: false, error: 'no_ids' }); return;
+      }
+      const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
+      const vault = await getVault();
+      const screenshots = [];
+      for (const id of ids) {
+        const item = vault.items.find(i => i.id === id);
+        if (!item || item.type !== 'screenshot') continue;
+        const dataUrl = await getScreenshotBlob(id);
+        if (!dataUrl) continue;
+        screenshots.push({ item, dataUrl });
+      }
+      if (screenshots.length === 0) {
+        sendResponse({ ok: false, error: 'no_valid_screenshots' }); return;
+      }
+
+      // Build markdown + HTML
+      // v3.11.28: Format disamakan dengan preview modal (overlay.js) — lengkap dengan
+      // 📝 Catatan anotasi, footer "Ditangkap oleh RecallFox", styling konsisten.
+      // User feedback: "berlaku juga untuk batch harus sama formatnya dengan selengkap
+      // tekan tombol gambar + keterangan di preview modal"
+      const now = new Date();
+      const dateStr = now.toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+      let mdParts = [
+        '# 📷 Screenshot Bundle — RecallFox',
+        'Tanggal: ' + dateStr + ' · Total: ' + screenshots.length + ' screenshot',
+        ''
+      ];
+      // v3.11.28: HTML header disamakan dengan overlay.js style
+      let htmlParts = [
+        '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">',
+        '<h1 style="margin:0 0 6px">📷 Screenshot Bundle — RecallFox</h1>',
+        '<p style="margin:0 0 10px;color:#57534e"><em>Tanggal: ' + escHtml(dateStr) + ' · Total: ' + screenshots.length + ' screenshot</em></p>'
+      ];
+      const dataUrls = []; // untuk kirim ke content script (image/png blobs)
+      for (let i = 0; i < screenshots.length; i++) {
+        const { item, dataUrl } = screenshots[i];
+        const pageTitle = item.source?.title || item.title || 'screenshot';
+        const pageUrl = item.source?.url || '';
+        const capturedAt = item.source?.capturedAt || item.createdAt || now.toISOString();
+        const modeLabel = item.screenshotMode === 'visible' ? 'Viewport' : (item.screenshotMode === 'selection' ? 'Area' : (item.screenshotMode === 'entire' ? 'Seluruh halaman' : '-'));
+        const dims = (item.screenshotWidth || 0) + '×' + (item.screenshotHeight || 0) + ' px';
+        const tags = Array.isArray(item.tags) ? item.tags.join(', ') : (item.tags || '');
+        const annotationNote = item.annotationNote || item.source?.annotationNote || '';
+        const capturedDate = new Date(capturedAt).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' });
+        const num = i + 1;
+        dataUrls.push(dataUrl);
+
+        // v3.11.28: Markdown lengkap — sama format dengan preview modal
+        mdParts.push('## ' + num + '. 📸 ' + pageTitle);
+        if (pageUrl) mdParts.push('Sumber: ' + pageUrl);
+        mdParts.push('Waktu: ' + capturedDate);
+        mdParts.push('Mode: ' + modeLabel + ' · ' + dims);
+        if (tags) mdParts.push('Tag: ' + tags);
+        if (annotationNote) mdParts.push('📝 Catatan: ' + annotationNote);
+        mdParts.push('Ditangkap oleh RecallFox');
+        mdParts.push('');
+        // Placeholder saja — gambar asli ada di HTML clipboard / image/png blob
+        mdParts.push('[📸 Gambar ' + num + ' — ' + dims + ']');
+        mdParts.push('');
+        if (i < screenshots.length - 1) mdParts.push('---');
+
+        // v3.11.28: HTML disamakan dengan overlay.js — styling konsisten per screenshot
+        if (i > 0) htmlParts.push('<hr style="border:none;border-top:1px solid #e7e5e4;margin:16px 0">');
+        htmlParts.push('<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>');
+        htmlParts.push('<p style="margin:8px 0 2px"><strong>📸 ' + num + '. ' + escHtml(pageTitle) + '</strong></p>');
+        if (pageUrl) htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escHtml(pageUrl) + '">' + escHtml(pageUrl) + '</a></p>');
+        htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🕒 ' + escHtml(capturedDate) + '</p>');
+        if (annotationNote) htmlParts.push('<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escHtml(annotationNote) + '</p>');
+        let footerLine = '🔧 ' + escHtml(modeLabel) + ' · ' + escHtml(dims);
+        if (tags) footerLine += ' · ' + escHtml(tags);
+        footerLine += ' · RecallFox';
+        htmlParts.push('<p style="margin:0;color:#78716c">' + footerLine + '</p>');
+      }
+      htmlParts.push('</div>');
+
+      const mdText = mdParts.join('\n');
+      const htmlText = htmlParts.join('\n');
+
+      // Inject content script ke tab aktif untuk write clipboard
+      const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+      if (!tab.url || !/^https?:\/\//.test(tab.url)) {
+        sendResponse({ ok: false, error: 'not_http_page' }); return;
+      }
+      // v3.11.12: Kirim dataUrls juga supaya content script bisa fetch blob untuk image/png
+      const results = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: async (mdText, htmlText, withCaption, screenshotCount, dataUrls) => {
+          try {
+            // v3.11.12: Strategy clipboard yang lebih robust
+            // 1. ClipboardItem utama: text/plain (markdown) + text/html (HTML dengan <img>)
+            // 2. Kalau hanya 1 screenshot: tambah image/png blob supaya paste ke Paint jalan
+            // 3. Kalau multiple: tetap cuma 1 ClipboardItem (browser limit image/png per write)
+
+            const blobData = {
+              'text/plain': new Blob([mdText], { type: 'text/plain' })
+            };
+            if (withCaption) {
+              blobData['text/html'] = new Blob([htmlText], { type: 'text/html' });
+            }
+
+            // v3.11.12: Tambah image/png untuk screenshot pertama (supaya paste ke image editor jalan)
+            // Firefox support image/png di ClipboardItem
+            let imageAdded = false;
+            if (dataUrls && dataUrls.length > 0) {
+              try {
+                // Fetch data URL jadi blob
+                const response = await fetch(dataUrls[0]);
+                const blob = await response.blob();
+                if (blob.type.startsWith('image/')) {
+                  // Convert ke PNG kalau perlu (clipboard API hanya support image/png)
+                  if (blob.type === 'image/png') {
+                    blobData['image/png'] = blob;
+                    imageAdded = true;
+                  } else {
+                    // Convert JPEG/other ke PNG via canvas
+                    const img = await createImageBitmap(blob);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                    if (pngBlob) {
+                      blobData['image/png'] = pngBlob;
+                      imageAdded = true;
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('[RecallFox] image/png blob conversion failed:', e.message);
+              }
+            }
+
+            const item = new ClipboardItem(blobData);
+            await navigator.clipboard.write([item]);
+            const msg = '✓ ' + screenshotCount + ' screenshot tersalin (' +
+              (withCaption ? 'markdown + HTML' : 'markdown') +
+              (imageAdded ? ' + gambar pertama sebagai PNG' : '') + ')';
+            return { ok: true, message: msg, imageAdded };
+          } catch (e) {
+            return { ok: false, error: 'clipboard_write_failed: ' + e.message };
+          }
+        },
+        args: [mdText, htmlText, withCaption, screenshots.length, dataUrls]
+      });
+      const result = await results?.[0]?.result;
+      if (result && typeof result.then === 'function') {
+        // Function return Promise — await di listener
+        const awaited = await result;
+        sendResponse(awaited); return;
+      }
+      sendResponse(result || { ok: false, error: 'no_result' }); return;
+    } catch (e) {
+      console.warn('[RecallFox] COPY_SCREENSHOTS_BATCH failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  // v3.11.13 (Sesi 12): DELETE_ITEMS_BATCH — hapus multiple item dari vault sekaligus.
+  // User feedback: "sudah bagus fitur batch nya harusnya ada batch delete juga, jadi
+  // bersih bersihnya gampang. apakah bisa ditambahkan?"
+  // v3.11.14: Generalisasi — handle JUGA bundle (sebelumnya hanya item).
+  // Pakai deleteItem/deleteBundle yang sudah ada (handle screenshot blob + bundle cleanup + GDrive sync).
+  if (msg.type === 'DELETE_ITEMS_BATCH') {
+    try {
+      const { ids } = msg;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        sendResponse({ ok: false, error: 'no_ids' }); return;
+      }
+      const { deleteItem, deleteBundle, getVault } = await import('./lib/storage.js');
+      // Ambil vault sekali untuk cek apakah id adalah item atau bundle
+      const vault = await getVault();
+      const itemIdSet = new Set((vault.items || []).map(i => i.id));
+      const bundleIdSet = new Set((vault.bundles || []).map(b => b.id));
+      let deleted = 0;
+      let errors = [];
+      for (const id of ids) {
+        try {
+          if (itemIdSet.has(id)) {
+            await deleteItem(id);
+            deleted++;
+          } else if (bundleIdSet.has(id)) {
+            await deleteBundle(id);
+            deleted++;
+          } else {
+            // Sudah tidak ada (mungkin sudah dihapus di iterasi sebelumnya)
+            errors.push({ id, error: 'not_found' });
+          }
+        } catch (e) {
+          console.warn('[RecallFox] delete failed for', id, e.message);
+          errors.push({ id, error: e.message });
+        }
+      }
+      // Trigger sync sekali setelah semua hapus (lebih efisien daripada sync per item)
+      try {
+        const { pushToSync } = await import('./lib/storage.js');
+        await pushToSync();
+      } catch (e) { /* silent — sync opsional */ }
+      sendResponse({
+        ok: true,
+        deleted,
+        failed: errors.length,
+        errors: errors.length > 0 ? errors : undefined,
+        message: '✓ ' + deleted + ' item dihapus' + (errors.length > 0 ? ' (' + errors.length + ' gagal)' : '')
+      }); return;
+    } catch (e) {
+      console.warn('[RecallFox] DELETE_ITEMS_BATCH failed:', e);
+      sendResponse({ ok: false, error: e.message }); return;
     }
   }
   if (msg.type === 'CAPTURE_SNAPSHOT') {
     // sent from snapshot modal in content script — save directly
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    return await addItem({
+    // v3.11.10 fix: pakai sendResponse (bukan return await) supaya tidak
+    // "Promised response from onMessage listener went out of scope"
+    // v3.15.0 P0-S1: pass snapshotDomain + snapshotMessageCount ke addItem.
+    //   Sebelumnya tidak diteruskan → storage.js addItem() tidak simpan →
+    //   DB columns snapshot_domain/snapshot_message_count selalu NULL/0.
+    const result = await addItem({
       type: 'snapshot',
       title: msg.title || 'Untitled snapshot',
       body: msg.body,
@@ -1632,18 +2842,21 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         url: msg.url || tab?.url,
         title: msg.pageTitle || tab?.title,
         capturedAt: new Date().toISOString()
-      }
+      },
+      snapshotDomain: msg.snapshotDomain || (msg.url ? new URL(msg.url).hostname : (tab?.url ? new URL(tab.url).hostname : '')),
+      snapshotMessageCount: msg.snapshotMessageCount || msg.messageCount || 0
     });
+    sendResponse(result); return;
   }
   if (msg.type === 'AI_ASK_QUERY') {
     // From selection-ai.js floating button. Delegate to shared orchestrator.
     const text = (msg.text || '').trim();
-    if (!text) return { ok: false, error: 'no_text' };
+    if (!text) { sendResponse({ ok: false, error: 'no_text' }); return; }
     await routeAiQuery(text, {
       sourceUrl: msg.sourceUrl || '',
       sourceTitle: msg.sourceTitle || ''
     });
-    return { ok: true };
+    sendResponse({ ok: true }); return;
   }
 
   // v0.9.7: Discard handlers — dipindahkan ke listener 1 karena async listener
@@ -1652,7 +2865,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
     console.log('[RecallFox/AD] Manual discard triggered');
     const result = await checkAutoDiscard();
     console.log('[RecallFox/AD] Manual result:', JSON.stringify(result));
-    return result;
+    sendResponse(result); return;
   }
 
   if (msg.type === 'AD_FORCE_DISCARD_ALL') {
@@ -1686,7 +2899,7 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
       result.error = e.message;
       console.error('[RecallFox/AD] FORCE error:', e);
     }
-    return result;
+    sendResponse(result); return;
   }
 
   // v0.9.7: CG_SAVE_SETTING — juga pindahkan ke sini
@@ -1699,10 +2912,194 @@ browser.runtime.onMessage.addListener(async (msg, sender) => {
         browser.tabs.sendMessage(t.id, { type: 'EB_RULES_UPDATED' }).catch(() => {});
       }
     }).catch(() => {});
-    return { ok: true };
+    sendResponse({ ok: true }); return;
   }
 
-  return false;
+  // ========================================================================
+  // v3.11.21: SUPABASE INTEGRATION — Auth + Sync
+  // User feedback: "buatkan databasenya menggunakan suppabase untuk menyimpan
+  // seluruh data yang dihasilkan di dalam addon seperti desain apps sync nya
+  // aja namun versi otomatis karena ini kan pake suppabase"
+  // ========================================================================
+
+  // SUPABASE_LOGIN — login email/password
+  if (msg.type === 'SUPABASE_LOGIN') {
+    try {
+      const { signInWithEmail } = await import('./lib/supabase-client.js');
+      const res = await signInWithEmail(msg.email, msg.password);
+      // v3.11.29: Start realtime sync setelah login sukses
+      // v3.11.33: Also subscribe to Realtime WebSocket channel
+      if (res.ok) {
+        try {
+          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+          await startRealtimeSync();
+          await subscribeRealtimeVault();
+        } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
+      }
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_SIGNUP — signup email/password baru
+  if (msg.type === 'SUPABASE_SIGNUP') {
+    try {
+      const { signUpWithEmail } = await import('./lib/supabase-client.js');
+      const res = await signUpWithEmail(msg.email, msg.password);
+      // v3.11.29: Start realtime sync setelah signup sukses
+      // v3.11.33: Also subscribe to Realtime WebSocket channel
+      if (res.ok) {
+        try {
+          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+          await startRealtimeSync();
+          await subscribeRealtimeVault();
+        } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
+      }
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_GMAIL — login via Gmail OAuth (redirect)
+  if (msg.type === 'SUPABASE_GMAIL') {
+    try {
+      const { signInWithGmail } = await import('./lib/supabase-client.js');
+      const res = await signInWithGmail();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_LOGOUT
+  if (msg.type === 'SUPABASE_LOGOUT') {
+    try {
+      // v3.11.29: Stop realtime sync sebelum logout
+      try {
+        const { stopRealtimeSync } = await import('./lib/supabase-sync.js');
+        await stopRealtimeSync();
+      } catch (e) {}
+      const { signOut } = await import('./lib/supabase-client.js');
+      await signOut();
+      sendResponse({ ok: true }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_STATUS — cek login status + user info
+  if (msg.type === 'SUPABASE_STATUS') {
+    try {
+      const { getSupabaseStatus } = await import('./lib/supabase-sync.js');
+      const status = await getSupabaseStatus();
+      sendResponse({ ok: true, status }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_PUSH — upload local state ke cloud
+  if (msg.type === 'SUPABASE_PUSH') {
+    try {
+      const { pushToSupabase } = await import('./lib/supabase-sync.js');
+      const res = await pushToSupabase();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_PULL — download cloud state ke local
+  if (msg.type === 'SUPABASE_PULL') {
+    try {
+      // v3.13.3 (A2 fix): Pakai pullFromSupabaseV33 — variant yang filter
+      // deleted_at IS NULL server-side + hapus item lokal yang sudah di-hard-delete
+      // di device lain. Variant lama (pullFromSupabase) tidak ada reconciliation.
+      const { pullFromSupabaseV33 } = await import('./lib/supabase-sync.js');
+      const res = await pullFromSupabaseV33();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_FULL_SYNC — push + pull
+  if (msg.type === 'SUPABASE_FULL_SYNC') {
+    try {
+      const { fullSync } = await import('./lib/supabase-sync.js');
+      const res = await fullSync();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_TEST_CONNECTION — test koneksi ke project (tanpa login)
+  if (msg.type === 'SUPABASE_TEST_CONNECTION') {
+    try {
+      const { testConnection } = await import('./lib/supabase-client.js');
+      const res = await testConnection();
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_DELETE_ITEM — hapus item dari cloud saat item lokal dihapus
+  // v3.11.29: Fix — gunakan msg.itemId (bukan msg.id) supaya cocok dengan storage.js
+  if (msg.type === 'SUPABASE_DELETE_ITEM') {
+    try {
+      const { deleteItemFromCloud } = await import('./lib/supabase-sync.js');
+      const res = await deleteItemFromCloud(msg.itemId || msg.id);
+      // v3.11.29: Setelah delete di cloud, trigger pull supaya device lain dapat update
+      // (realtime subscription akan handle ini, tapi pull sebagai fallback)
+      console.log('[RecallFox] SUPABASE_DELETE_ITEM:', msg.itemId || msg.id, '→', res.ok ? 'OK' : res.error);
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_DELETE_NOTE — hapus note dari cloud
+  // v3.11.29: Fix — gunakan msg.noteId (bukan msg.id)
+  if (msg.type === 'SUPABASE_DELETE_NOTE') {
+    try {
+      const { deleteNoteFromCloud } = await import('./lib/supabase-sync.js');
+      const res = await deleteNoteFromCloud(msg.noteId || msg.id);
+      console.log('[RecallFox] SUPABASE_DELETE_NOTE:', msg.noteId || msg.id, '→', res.ok ? 'OK' : res.error);
+      sendResponse(res); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_AUTO_SYNC — trigger push debounced (dipanggil otomatis saat vault berubah)
+  // v3.11.29: Sekaligus trigger pull setelah push (untuk realtime sync)
+  if (msg.type === 'SUPABASE_AUTO_SYNC') {
+    try {
+      const { triggerAutoSync } = await import('./lib/supabase-sync.js');
+      triggerAutoSync();
+      sendResponse({ ok: true }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  // SUPABASE_OAUTH_CALLBACK — handle redirect dari Gmail OAuth (parse token dari URL hash)
+  if (msg.type === 'SUPABASE_OAUTH_CALLBACK') {
+    try {
+      const { handleOAuthCallback } = await import('./lib/supabase-client.js');
+      const res = await handleOAuthCallback();
+      sendResponse(res || { ok: false, error: 'no_callback_data' }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
+  })();
+  return true;
 });
 
 // ===== Listen to sync changes (from other devices) =====
@@ -1801,7 +3198,7 @@ async function checkPrayerReminder() {
                   type: 'basic',
                   title: `${tomorrowFast.emoji} Besok Puasa ${tomorrowFast.name}`,
                   message: tomorrowFast.desc,
-                  iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+                  iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
                   priority: 2
                 });
                 console.log('[RecallFox] Fast reminder sent:', tomorrowFast.name);
@@ -1837,12 +3234,86 @@ async function checkPrayerReminder() {
         type: 'basic',
         title: `🕌 ${next.name} segera masuk`,
         message,
-        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
         priority: 2
       });
       console.log('[RecallFox] Prayer reminder sent:', message);
     } catch (e) {
       console.warn('[RecallFox] Reminder notification failed:', e.message);
+    }
+
+    // v3.11.7-fix (Issue #6): Adzan sound saat masuk waktu sholat (0-1 menit sisa).
+    // Cek terpisah dari reminder notification — adzan bisa ON walau reminder OFF.
+    try {
+      const adzanEnabled = settings.prayerAdzanEnabled === true;
+      if (adzanEnabled && next.minutesUntil <= 1 && next.minutesUntil >= 0) {
+        const adzanKey = `${times.date}-${next.name}-adzan`;
+        const adzanLastKey = settings.prayerAdzanLastPlayedKey || '';
+        // Cek apakah prayer ini termasuk yang harus bunyi adzan
+        const adzanPrayers = Array.isArray(settings.prayerAdzanPrayers) && settings.prayerAdzanPrayers.length > 0
+          ? settings.prayerAdzanPrayers
+          : ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
+        // next.name sudah dalam format Indonesia: Subuh/Dzuhur/Ashar/Magrib/Isya
+        // Map ke key Fajr/Dhuhr/Asr/Maghrib/Isha
+        const prayerKeyMap = { 'Subuh':'Fajr', 'Dzuhur':'Dhuhr', 'Ashar':'Asr', 'Magrib':'Maghrib', 'Isya':'Isha' };
+        const prayerKey = prayerKeyMap[next.name] || next.name;
+        if (adzanPrayers.includes(prayerKey) && adzanLastKey !== adzanKey) {
+          // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan tidak berfungsi karena sendMessage
+          // ke popup hanya sampai kalau popup terbuka. Fix: kirim ke CONTENT SCRIPT
+          // tab aktif (yang selalu ada kalau user browsing) + kirim ke popup juga
+          // sebagai fallback. Content script mainkan audio di context page.
+          try {
+            const adzanPayload = {
+              type: 'PLAY_ADZAN',
+              prayer: next.name,
+              prayerKey: prayerKey,
+              volume: settings.prayerAdzanVolume ?? 0.7,
+              sound: settings.prayerAdzanSound || 'default',
+              customUrl: settings.prayerAdzanCustomUrl || ''
+            };
+            // Strategy 1: kirim ke content script tab aktif (paling reliable)
+            let played = false;
+            try {
+              const activeTabs = await browser.tabs.query({ active: true, lastFocusedWindow: true });
+              for (const at of activeTabs) {
+                if (!at.url || !/^https?:\/\//.test(at.url)) continue;
+                if (/^(about:|moz-extension:|chrome:|file:)/.test(at.url)) continue;
+                try {
+                  const r = await browser.tabs.sendMessage(at.id, adzanPayload);
+                  if (r?.ok) { played = true; break; }
+                } catch (e) { /* tab mungkin tidak punya content script — skip */ }
+              }
+            } catch (e) {
+              console.warn('[RecallFox] Adzan ke active tab failed:', e.message);
+            }
+            // Strategy 2: fallback — kirim ke popup/sidebar (kalau terbuka)
+            if (!played) {
+              try {
+                await browser.runtime.sendMessage(adzanPayload).catch(() => {});
+              } catch (e) { /* popup mungkin tidak aktif — silent */ }
+            }
+            // Strategy 3: tampilkan notifikasi browser sebagai fallback terakhir
+            // supaya user tahu adzan masuk walau audio tidak bunyi
+            if (!played) {
+              try {
+                await browser.notifications.create({
+                  type: 'basic',
+                  title: '🕌 ' + next.name + ' telah masuk',
+                  message: 'Adzan tidak bisa diputar otomatis (popup tertutup & tab aktif tidak kompatibel). Buka RecallFox untuk test adzan manual.',
+                  iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                  priority: 2
+                });
+              } catch (e) {}
+            }
+            console.log('[RecallFox] Adzan broadcasted for', next.name, '(played=' + played + ')');
+            await saveSettings({ prayerAdzanLastPlayedKey: adzanKey });
+          } catch (e) {
+            console.warn('[RecallFox] Adzan broadcast failed:', e.message);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[RecallFox] Adzan trigger failed:', e.message);
     }
 
     await saveSettings({ prayerLastReminderKey: reminderKey });
@@ -2013,8 +3484,15 @@ async function checkExerciseReminder() {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
       const activeUrl = tabs?.[0]?.url || '';
-      const aiPatterns = ['chat.z.ai', 'chatgpt.com', 'claude.ai', 'gemini.google.com'];
-      const isOnAI = aiPatterns.some(p => activeUrl.includes(p));
+      // v3.16.2: Cek AI page via isAIPageFromOrigin (dynamic dari storage.aiSites)
+      let isOnAI = false;
+      try {
+        const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
+        isOnAI = await isAIPageFromOrigin(activeUrl);
+      } catch (e) {
+        // Fallback: kalau ai-detect.js gagal load, anggap bukan AI
+        isOnAI = false;
+      }
       // Don't fully skip on AI tool (user might benefit from stretch break),
       // but lower priority notification (priority 0 instead of 1) so it's less intrusive
       const priority = isOnAI ? 0 : 1;
@@ -2028,7 +3506,7 @@ async function checkExerciseReminder() {
           message: isOnAI
             ? `Sudah ${interval} menit. Sambil nunggu AI jawab, berdiri 5 menit + regangkan badan. Baik untuk punggung & mata.`
             : `Sudah ${interval} menit duduk. Berdiri 5 menit, regangkan badan, lihat jauh ke depan. Baik untuk punggung & mata.`,
-          iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+          iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
           priority
         });
         console.log('[RecallFox] Exercise reminder sent (smart mode, AI tab:', isOnAI, ')');
@@ -2196,6 +3674,15 @@ browser.alarms.onAlarm.addListener((alarm) => {
       console.warn('[RecallFox/AD] Alarm check error:', e.message);
     });
   }
+  // v3.11.30: Realtime sync alarm — pull dari Supabase kalau ada perubahan
+  if (alarm.name === 'rf-supabase-realtime') {
+    console.log('[RecallFox] Realtime alarm fired');
+    import('./lib/supabase-sync.js').then(({ handleRealtimeAlarm }) => {
+      handleRealtimeAlarm().catch(e => {
+        console.warn('[RecallFox/Supabase] Realtime alarm handler error:', e.message);
+      });
+    }).catch(() => {});
+  }
 });
 
 // v0.9.2: PANGGIL DI TOP LEVEL — supaya jalan setiap kali background script load,
@@ -2238,7 +3725,7 @@ async function checkQuranReminder() {
         type: 'basic',
         title: `📖 Pengingat Ngaji Quran`,
         message: `Belum ngaji hari ini. Target: ${settings.quranTargetPages || 1} halaman. ${status.streak > 0 ? `Streak: ${status.streak} hari! Jangan putus! 🔥` : 'Mulai streak hari ini!'}`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
         priority: 2
       });
       console.log('[RecallFox] Quran reminder sent');
@@ -2373,7 +3860,7 @@ async function checkContentGuard(tabId, url, tab) {
               type: 'basic',
               title: '👶 Mode Anak Aktif',
               message: 'Navigasi YouTube dialihkan ke YouTube Kids.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+              iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
               priority: 1
             });
           } catch (e) {}
@@ -2406,7 +3893,7 @@ async function checkContentGuard(tabId, url, tab) {
               type: 'basic',
               title: '🚫 YouTube Shorts Diblokir',
               message: 'Navigasi ke Shorts dicegah. Kembali ke beranda YouTube.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+              iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
               priority: 1
             });
           } catch (e) {}
@@ -2521,7 +4008,7 @@ async function redirectWithNotify(tabId, newUrl, settings, title, message) {
         type: 'basic',
         title: `🛡️ ${title}`,
         message,
-        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
         priority: 1
       });
     } catch (e) { /* notif gagal bukan masalah */ }
@@ -2717,6 +4204,25 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;  // async response
   }
 
+  // v3.14.3: SAVE_TAPE_TO_VAULT — simpan tape calculation ke vault sebagai note
+  if (msg.type === 'SAVE_TAPE_TO_VAULT') {
+    (async () => {
+      try {
+        const { markdown, text, grandTotal } = msg;
+        const { addNote } = await import('./lib/storage.js');
+        const note = await addNote(markdown || text, {
+          title: '🧮 RecallTape — Total: ' + (grandTotal || 0).toLocaleString('id-ID'),
+          group: 'RecallTape'
+        });
+        sendResponse({ ok: true, noteId: note.id });
+      } catch (e) {
+        console.error('[RecallFox] SAVE_TAPE_TO_VAULT failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
   // AD_DISCARD_NOW & AD_FORCE_DISCARD_ALL — sudah dipindahkan ke listener 1 (v0.9.7)
 });
 
@@ -2731,35 +4237,9 @@ browser.runtime.onInstalled.addListener(async (details) => {
         type: 'basic',
         title: '🛡️ Content Guardian v0.8.21 — Klik Kanan untuk Blokir',
         message: 'Sekarang Anda bisa klik kanan pada video/tweet di YouTube/X → "🚫 Blokir Konten Ini" untuk blokir permanen. Daftar kata kunci politik & korupsi juga diperluas.',
-        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
         priority: 2
       });
     }
   } catch (e) { /* ignore */ }
-
-  // ===== Chrome: configure side panel behavior =====
-  // Set side panel to open when user clicks the action icon's side panel button,
-  // OR via Alt+Shift+4 keyboard shortcut.
-  try {
-    if (chrome.sidePanel && chrome.sidePanel.setPanelBehavior) {
-      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
-      console.log('[RecallFox] Side panel behavior configured');
-    }
-  } catch (e) {
-    console.warn('[RecallFox] sidePanel.setPanelBehavior failed:', e);
-  }
-});
-
-// ===== Chrome: handle action click to toggle side panel =====
-// In Firefox, sidebar_action auto-toggles. In Chrome, we need to manually open sidePanel.
-chrome.action.onClicked.addListener(async (tab) => {
-  // Only fires if no popup is set. Since we have a popup, this won't fire.
-  // But if user removes popup, this becomes the toggle handler.
-  try {
-    if (chrome.sidePanel && chrome.sidePanel.open) {
-      await chrome.sidePanel.open({ windowId: tab.windowId });
-    }
-  } catch (e) {
-    console.warn('[RecallFox] sidePanel.open failed:', e);
-  }
 });

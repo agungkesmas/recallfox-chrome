@@ -1,62 +1,80 @@
-# 🦊 RecallFox (Chrome Version)
+# RecallFox Chrome Extension
 
-> **Chrome extension all-in-one untuk produktivitas AI + kehidupan Muslim Indonesia.**
-> Vault prompt & konteks, screenshot FireShot-style, Content Guardian, waktu shalat Muhammadiyah, tracker ngaji & olahraga, volume booster, side panel — semua lokal-first, tanpa server, tanpa telemetry.
+Port dari Firefox addon [RecallFox](https://github.com/agungkesmas/recallfox) ke Chrome MV3.
 
-**Versi:** 3.7.2 · **Manifest:** V3 · **Browser:** Chrome 114+ · **Lisensi:** MIT
+## Status
 
-Ini adalah versi Chrome dari [RecallFox](https://github.com/agungkesmas/recallfox) (aslinya Firefox addon). Semua fitur sama, hanya adaptasi API untuk Chrome.
+🚧 **Work in Progress** — port dari Firefox v3.20.0-stable.
 
-## Perbedaan dengan Firefox version
+## Perbedaan dari Firefox Addon
 
 | Aspek | Firefox | Chrome |
 |-------|---------|--------|
-| Background | `background.scripts` (module) | `background.service_worker` (module) |
-| Sidebar | `sidebar_action` (auto-toggle) | `side_panel` API (manual toggle via `chrome.sidePanel.open()`) |
-| API namespace | `browser.*` (promise-based) | `chrome.*` (mixed, polyfill via `lib/browser-polyfill.js`) |
-| Icons | SVG supported | PNG recommended (untuk notifications) |
-| Permissions | `menus` | `contextMenus` |
-| Min browser | Firefox 115+ | Chrome 114+ (sidePanel API) |
+| Background | `background.scripts` + `type: module` | `service_worker` + `type: module` |
+| Sidebar | `sidebar_action` + `browser.sidebarAction` | `side_panel` + `chrome.sidePanel` (Chrome 114+) |
+| Context Menu | `browser.menus` + permission `menus` | `browser.contextMenus` + permission `contextMenus` (via polyfill) |
+| Namespace | `browser.*` native | `browser.*` via [webextension-polyfill](https://github.com/mozilla/webextension-polyfill) |
+| Icons | SVG | PNG (SVG support inconsistent di Chrome) |
+| browser_specific_settings | `gecko.id` | Dihapus |
+| Commands | `_execute_sidebar_action` | `_execute_action` |
 
-## Fitur
+## Struktur
 
-Semua fitur RecallFox Firefox tersedia:
-- 🗄️ Vault (Prompt, Konteks, Link, Bundle, Snapshot, Screenshot)
-- 🤖 AI Integration (7 AI domain + 6 provider)
-- 🛡️ Content Guardian (filter berita negatif + Mode Anak)
-- 🧱 Element Blocker
-- 🎯 Screenshot (3 mode)
-- 🔊 Volume Booster
-- 🕌 Waktu Shalat Muhammadiyah + tracker ngaji/olahraga
-- 📝 Catatan (12 warna + group)
-- 💾 Backup & Sync
+```
+recallfox-chrome/
+├── manifest.json           ← Chrome MV3 manifest
+├── background.js           ← Service worker (import polyfill di awal)
+├── lib/
+│   ├── browser-polyfill.min.js  ← webextension-polyfill v0.12.0
+│   ├── sidebar-compat.js        ← Abstraksi Firefox sidebarAction vs Chrome sidePanel
+│   └── ... (shared dengan Firefox)
+├── popup/                  ← Popup UI
+├── sidebar/                ← Side panel UI (Chrome 114+)
+├── content/                ← Content scripts
+├── settings/               ← Settings page
+├── icons/                  ← PNG icons (converted dari SVG)
+└── _locales/               ← i18n
+```
 
-## Install
+## Cara Load (Development)
 
-### Cara 1 — Load unpacked (untuk dev)
-1. Download/clone repo ini
-2. Buka `chrome://extensions`
-3. Aktifkan **Developer mode** (toggle kanan atas)
-4. Klik **Load unpacked**
-5. Pilih folder repo ini
-6. Addon aktif — ikon 🦊 RecallFox muncul di toolbar
+1. Buka `chrome://extensions`
+2. Aktifkan "Developer mode" (kanan atas)
+3. Klik "Load unpacked"
+4. Pilih folder `recallfox-chrome/`
+5. Extension muncul di toolbar
 
-### Cara 2 — Install dari ZIP
-1. Download file ZIP dari [Releases](../../releases)
-2. Extract ZIP ke folder
-3. Ikuti langkah 2-6 di atas
+## Minimum Chrome Version
 
-### Cara 3 — Chrome Web Store (coming soon)
-Akan di-submit ke Chrome Web Store setelah review internal.
+- **Chrome 114+** (Mei 2023) — untuk Side Panel API
+- Chrome 99+ untuk Promise-based `chrome.*` API (polyfill handle)
 
-## Cara Pakai
+## Fitur yang Berjalan
 
-1. Klik ikon 🦊 di toolbar → popup muncul
-2. Atau tekan `Alt+Shift+4` → side panel terbuka
-3. Setup AI: Tools → Tanya AI → pilih provider (Groq gratis recommended)
-4. Mulai simpan prompt/konteks/link via klik kanan di halaman web
-5. Screenshot: `Alt+Shift+5/6/7` untuk full/area/viewport
+✅ Vault (prompt, context, snapshot, link, bundle, document, screenshot)
+✅ Folder tree (nested, DnD, sort, tag filter, breadcrumb, color)
+✅ Sidebar / Side Panel
+✅ Context menu (save as prompt/context/link/snapshot/screenshot)
+✅ Keyboard shortcuts (capture, clear cache, volume, dll)
+✅ Sync Supabase (cross-device)
+✅ Waktu shalat Muhammadiyah + habits tracker
+✅ Content Guardian (YouTube/X blocker)
+✅ Volume booster (600% per tab)
+✅ RecallTape (keyboard-first calculator)
+✅ Screenshot FireShot-style (visible/entire/selection)
 
-## Lisensi
+## Kompatibilitas
 
-MIT — bebas pakai, modifikasi, distribusi.
+- Schema storage sama dengan Firefox addon → sync cross-device via Supabase
+- Code shared 95% dengan Firefox (hanya polyfill + sidebar-compat yang beda)
+- Tidak ganggu repo Firefox — repo terpisah
+
+## Build
+
+Tidak butuh build step — load langsung dari folder.
+
+Untuk distribusi (`.zip`):
+```bash
+cd recallfox-chrome
+zip -r recallfox-chrome-v3.20.0.zip . -x ".git/*" -x "node_modules/*"
+```

@@ -56,6 +56,27 @@
     return (b / 1024 / 1024).toFixed(2) + ' MB';
   }
 
+  // v3.11.4: Inject content/annotate.js on-demand.
+  // annotate.js is too heavy to load on every page; we only inject when user
+  // clicks "Anotasi" in the preview modal.
+  async function _injectAnnotateScript() {
+    if (typeof window.__RecallFoxAnnotate__ === 'function') return;
+    try {
+      await browser.runtime.sendMessage({ type: 'INJECT_ANNOTATE_SCRIPT' });
+      // Wait for global to be available (max 5s)
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && typeof window.__RecallFoxAnnotate__ !== 'function') {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (typeof window.__RecallFoxAnnotate__ !== 'function') {
+        throw new Error('annotate.js failed to load');
+      }
+    } catch (e) {
+      console.warn('[RecallFox/Overlay] Failed to inject annotate.js:', e);
+      throw e;
+    }
+  }
+
   function loadPos() {
     try {
       const raw = localStorage.getItem(POS_KEY);
@@ -613,6 +634,10 @@
             <span class="rf-capture-modal-info-size">💾 ${sizeText}</span>
             <span class="rf-capture-modal-info-mode">🔧 ${escapeHtml(modeLabel)}</span>
           </div>
+          <!-- v3.11.26 (Issue #2): Catatan anotasi — muncul setelah anotasi dibuat -->
+          <div class="rf-capture-modal-note" style="display:none;margin-top:6px;padding:6px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;font-size:12px;color:#92400e">
+            <strong>📝 Catatan:</strong> <span class="rf-capture-modal-note-text"></span>
+          </div>
         </div>
         <div class="rf-capture-modal-footer">
           <div class="rf-capture-modal-actions-primary">
@@ -630,9 +655,17 @@
             </button>
           </div>
           <div class="rf-capture-modal-actions-secondary">
-            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="copy">
+            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="annotate">
+              <span class="rf-cap-btn-icon">✏️</span>
+              <span>Anotasi</span>
+            </button>
+            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="copy" title="Salin gambar saja ke clipboard">
               <span class="rf-cap-btn-icon">📋</span>
-              <span>Salin</span>
+              <span>Salin Gambar</span>
+            </button>
+            <button class="rf-cap-btn rf-cap-btn-ghost" data-action="copy-bundle" title="Salin gambar + keterangan (URL, judul, waktu) ke clipboard">
+              <span class="rf-cap-btn-icon">📦</span>
+              <span>Salin + Keterangan</span>
             </button>
             <button class="rf-cap-btn rf-cap-btn-ghost" data-action="save-vault">
               <span class="rf-cap-btn-icon">🦊</span>
@@ -714,19 +747,199 @@
         if (res?.ok) showStatus(`✓ ${ext.toUpperCase()} tersimpan ke folder Downloads`);
         else showStatus('✗ Gagal: ' + (res?.error || 'unknown'), true);
 
+      } else if (action === 'annotate') {
+        // v3.11.4: Buka editor anotasi (canvas-based).
+        // Inject annotate.js on-demand, lalu panggil __RecallFoxAnnotate__.
+        showStatus('Membuka editor anotasi…');
+        try {
+          // Inject annotate.js if not yet loaded
+          if (typeof window.__RecallFoxAnnotate__ !== 'function') {
+            await _injectAnnotateScript();
+          }
+          // Hide preview modal while editor is open (but don't close it)
+          modalEl.style.display = 'none';
+          const result = await window.__RecallFoxAnnotate__(lastCapture.dataUrl);
+          if (result && !result.cancelled && result.dataUrl) {
+            // Replace lastCapture.dataUrl dengan versi annotated
+            lastCapture.dataUrl = result.dataUrl;
+            // v3.11.26 (Issue #2): Simpan catatan anotasi
+            if (result.note) {
+              lastCapture.note = result.note;
+              // Tampilkan catatan di preview modal
+              const noteEl = modalEl.querySelector('.rf-capture-modal-note');
+              if (noteEl) {
+                noteEl.style.display = '';
+                noteEl.querySelector('.rf-capture-modal-note-text').textContent = result.note;
+              }
+            }
+            // Recompute bytes (PNG size approx)
+            try {
+              const blob = await (await fetch(result.dataUrl)).blob();
+              lastCapture.bytes = blob.size;
+            } catch (e) {}
+            // Update preview image
+            const previewImg = modalEl.querySelector('.rf-capture-modal-preview img');
+            if (previewImg) previewImg.src = result.dataUrl;
+            // Update size display
+            const sizeEl = modalEl.querySelector('.rf-capture-modal-info-size');
+            if (sizeEl) sizeEl.textContent = '💾 ' + fmtBytes(lastCapture.bytes);
+            showStatus('✓ Anotasi diterapkan — siap disimpan');
+          } else {
+            showStatus('Anotasi dibatalkan');
+          }
+          modalEl.style.display = '';
+        } catch (e) {
+          showStatus('✗ Anotasi error: ' + e.message, true);
+          modalEl.style.display = '';
+        }
       } else if (action === 'copy') {
-        showStatus('Menyalin ke clipboard…');
+        // v3.11.23 (Issue #1 fix): Salin gambar saja ke clipboard (tanpa keterangan)
+        // FIX: Sebelumnya fallback pakai browser.clipboard.setImageData yang TIDAK ADA
+        // di content script → error "browser clipboard is undefined".
+        // Sekarang: coba navigator.clipboard.write (works di Firefox 127+ dengan user gesture),
+        // kalau gagal → delegate ke background (inject clipboard write ke page context),
+        // kalau masih gagal → download file sebagai fallback.
+        showStatus('Menyalin gambar ke clipboard…');
+        let copyOk = false;
         try {
           const blob = await (await fetch(lastCapture.dataUrl)).blob();
-          await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-          showStatus('✓ Gambar tersalin ke clipboard');
-        } catch (e) {
-          try {
-            const arr = await (await fetch(lastCapture.dataUrl)).arrayBuffer();
-            await browser.clipboard.setImageData(arr, 'png');
+          // Normalisasi ke PNG (Firefox clipboard hanya support image/png)
+          let pngBlob = blob;
+          if (blob.type !== 'image/png') {
+            const img = await createImageBitmap(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          }
+          if (typeof ClipboardItem !== 'undefined') {
+            await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
             showStatus('✓ Gambar tersalin ke clipboard');
-          } catch (e2) {
-            showStatus('✗ Gagal salin: ' + e2.message, true);
+            copyOk = true;
+          }
+        } catch (e) {
+          console.warn('[RecallFox] clipboard.write failed in overlay:', e.message);
+        }
+        if (!copyOk) {
+          // Fallback: delegate ke background (inject clipboard write ke page context)
+          try {
+            const res = await browser.runtime.sendMessage({
+              type: 'COPY_DATAURL_TO_CLIPBOARD',
+              dataUrl: lastCapture.dataUrl,
+              withCaption: false
+            });
+            if (res?.ok) {
+              showStatus(res.message || '✓ Gambar tersalin ke clipboard');
+              copyOk = true;
+            }
+          } catch (e) {
+            console.warn('[RecallFox] Background clipboard delegate failed:', e.message);
+          }
+        }
+        if (!copyOk) {
+          // Last resort: download file
+          try {
+            const a = document.createElement('a');
+            a.href = lastCapture.dataUrl;
+            a.download = 'screenshot-' + Date.now() + '.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            showStatus('✓ Gambar disimpan ke Downloads (clipboard tidak support)');
+          } catch (e) {
+            showStatus('✗ Gagal salin: ' + e.message, true);
+          }
+        }
+
+      } else if (action === 'copy-bundle') {
+        // v3.11.23 (Issue #1 fix): Salin gambar + keterangan lengkap
+        // FIX: Sama seperti 'copy' — hapus browser.clipboard.setImageData fallback.
+        showStatus('Menyalin gambar + keterangan…');
+        const pageTitle = document.title || 'screenshot';
+        const pageUrl = location.href;
+        const capturedAt = new Date().toISOString();
+        const modeLabel = lastCapture.mode === 'visible' ? 'Viewport' : (lastCapture.mode === 'selection' ? 'Area' : 'Seluruh halaman');
+        const dims = lastCapture.width + '×' + lastCapture.height + ' px';
+
+        // v3.11.26 (Issue #2): Sertakan catatan anotasi di keterangan kalau ada
+        const noteText = lastCapture.note ? '\n📝 Catatan: ' + lastCapture.note : '';
+        const noteHtml = lastCapture.note
+          ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escapeHtml(lastCapture.note) + '</p>'
+          : '';
+
+        const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
+          + 'Sumber: ' + pageUrl + '\n'
+          + 'Waktu: ' + new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' }) + '\n'
+          + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
+          + (lastCapture.note ? '📝 Catatan: ' + lastCapture.note + '\n' : '')
+          + 'Ditangkap oleh RecallFox';
+
+        const textHtml = '<div style="font-family:-apple-system,system-ui,sans-serif;font-size:13px;color:#1c1917">'
+          + '<p style="margin:0 0 6px"><img src="' + lastCapture.dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
+          + '<p style="margin:8px 0 2px"><strong>📸 ' + escapeHtml(pageTitle) + '</strong></p>'
+          + '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escapeHtml(pageUrl) + '">' + escapeHtml(pageUrl) + '</a></p>'
+          + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + escapeHtml(new Date().toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })) + '</p>'
+          + (lastCapture.note ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escapeHtml(lastCapture.note) + '</p>' : '')
+          + '<p style="margin:0;color:#78716c">🔧 ' + escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
+          + '</div>';
+
+        let copyOk = false;
+        try {
+          const blob = await (await fetch(lastCapture.dataUrl)).blob();
+          let pngBlob = new Blob([await blob.arrayBuffer()], { type: 'image/png' });
+          if (blob.type !== 'image/png') {
+            const img = await createImageBitmap(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            pngBlob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+          }
+          if (typeof ClipboardItem !== 'undefined') {
+            const clipboardItem = new ClipboardItem({
+              'image/png': pngBlob,
+              'text/html': new Blob([textHtml], { type: 'text/html' }),
+              'text/plain': new Blob([textPlain], { type: 'text/plain' })
+            });
+            await navigator.clipboard.write([clipboardItem]);
+            showStatus('✓ Gambar + keterangan tersalin ke clipboard');
+            copyOk = true;
+          }
+        } catch (e) {
+          console.warn('[RecallFox] clipboard.write bundle failed:', e.message);
+        }
+        if (!copyOk) {
+          // Fallback: delegate ke background
+          try {
+            const res = await browser.runtime.sendMessage({
+              type: 'COPY_DATAURL_TO_CLIPBOARD',
+              dataUrl: lastCapture.dataUrl,
+              withCaption: true,
+              textPlain: textPlain,
+              textHtml: textHtml
+            });
+            if (res?.ok) {
+              showStatus(res.message || '✓ Gambar + keterangan tersalin');
+              copyOk = true;
+            }
+          } catch (e) {
+            console.warn('[RecallFox] Background clipboard delegate failed:', e.message);
+          }
+        }
+        if (!copyOk) {
+          // Last resort: copy text + download image
+          try {
+            await navigator.clipboard.writeText(textPlain);
+            const a = document.createElement('a');
+            a.href = lastCapture.dataUrl;
+            a.download = 'screenshot-' + Date.now() + '.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            showStatus('✓ Keterangan disalin + gambar di-download (clipboard image tidak support)');
+          } catch (e) {
+            showStatus('✗ Gagal salin: ' + e.message, true);
           }
         }
 
@@ -736,7 +949,8 @@
           type: 'SAVE_CAPTURE_TO_VAULT',
           dataUrl: lastCapture.dataUrl, width: lastCapture.width,
           height: lastCapture.height, bytes: lastCapture.bytes, mode: lastCapture.mode,
-          url: location.href, pageTitle: document.title
+          url: location.href, pageTitle: document.title,
+          annotationNote: lastCapture.note || ''  // v3.11.26 (Issue #2): catatan anotasi
         });
         if (res?.ok) showStatus('✓ Tersimpan ke vault');
         else showStatus('✗ Gagal: ' + (res?.error || 'unknown'), true);
@@ -790,7 +1004,7 @@
   }).observe(document.body, { childList: true, subtree: true });
 
   // Listen for setting changes & capture triggers from background
-  browser.runtime.onMessage.addListener((msg) => {
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'OVERLAY_TOGGLED') {
       maybeInjectOverlay();
     }
@@ -798,7 +1012,236 @@
       // msg.mode can be 'entire' | 'visible' | 'selection' | undefined (show picker)
       triggerCapture(msg.mode);
     }
+    // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan playback dari content script.
+    // Audio tidak bisa di-play dari background service worker (MV3 restriction).
+    // Background kirim PLAY_ADZAN ke content script tab aktif, di sini kita mainkan.
+    if (msg.type === 'PLAY_ADZAN') {
+      try {
+        _playAdzanInPage(msg);
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.warn('[RecallFox] Adzan playback failed in content script:', e.message);
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true; // async response
+    }
+    if (msg.type === 'STOP_ADZAN') {
+      try {
+        _stopAdzanInPage();
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true;
+    }
   });
+
+  // ===== Adzan audio player (in-page) =====
+  // v3.11.10: Rewrite untuk pakai Web Audio API tone (sama seperti popup.js).
+  // V3.11.7-fix2 pakai URL IslamicFinder (azan1.mp3) → v3.11.9 ketahui 404.
+  // V3.11.10: pakai Web Audio API tone 30+ detik dengan chord + vibrato + reverb,
+  // lebih mirip suara adzan asli (bukan bel). Tetap allow custom URL ke file MP3 asli.
+  let _adzanAudioEl = null;
+  let _adzanToneCtx = null;
+  let _adzanBannerEl = null;
+
+  function _stopAdzanInPage() {
+    // Stop Audio element (untuk custom URL)
+    if (_adzanAudioEl) {
+      try { _adzanAudioEl.pause(); _adzanAudioEl.currentTime = 0; } catch (e) {}
+      _adzanAudioEl = null;
+    }
+    // Stop Web Audio API context (untuk default/short tone)
+    if (_adzanToneCtx) {
+      try { _adzanToneCtx.close(); } catch (e) {}
+      _adzanToneCtx = null;
+    }
+    if (_adzanBannerEl) {
+      try { _adzanBannerEl.remove(); } catch (e) {}
+      _adzanBannerEl = null;
+    }
+  }
+
+  // v3.11.10: Generate adzan tone dengan Web Audio API (chord + vibrato + reverb).
+  // Lihat popup/popup.js _playAdzanTone untuk dokumentasi lengkap.
+  function _playAdzanToneInPage(vol, isShort) {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        console.warn('[RecallFox] Web Audio API tidak support di page context');
+        return;
+      }
+      const ctx = new AudioCtx();
+      _adzanToneCtx = ctx;
+      const now = ctx.currentTime;
+
+      // Reverb
+      const reverbDelay = ctx.createDelay(2.0);
+      reverbDelay.delayTime.value = 0.18;
+      const reverbFeedback = ctx.createGain();
+      reverbFeedback.gain.value = 0.35;
+      const reverbWet = ctx.createGain();
+      reverbWet.gain.value = 0.25;
+      reverbDelay.connect(reverbFeedback);
+      reverbFeedback.connect(reverbDelay);
+      reverbDelay.connect(reverbWet);
+
+      // Master + lowpass
+      const masterGain = ctx.createGain();
+      masterGain.gain.value = vol;
+      const lowpass = ctx.createBiquadFilter();
+      lowpass.type = 'lowpass';
+      lowpass.frequency.value = 2400;
+      lowpass.Q.value = 0.7;
+      masterGain.connect(lowpass);
+      lowpass.connect(ctx.destination);
+      lowpass.connect(reverbDelay);
+      reverbWet.connect(ctx.destination);
+
+      const syllables = [
+        { freq: 440, start: 0.0, dur: 0.6, gain: 0.9 },
+        { freq: 392, start: 0.6, dur: 0.5, gain: 0.85 },
+        { freq: 440, start: 1.1, dur: 0.7, gain: 0.9 },
+        { freq: 329.63, start: 1.8, dur: 0.5, gain: 0.8 },
+        { freq: 440, start: 2.3, dur: 1.5, gain: 1.0 },
+        { freq: 0, start: 3.8, dur: 0.4, gain: 0 },
+        { freq: 466.16, start: 4.2, dur: 0.6, gain: 0.9 },
+        { freq: 415.30, start: 4.8, dur: 0.5, gain: 0.85 },
+        { freq: 466.16, start: 5.3, dur: 0.7, gain: 0.9 },
+        { freq: 349.23, start: 6.0, dur: 0.5, gain: 0.8 },
+        { freq: 466.16, start: 6.5, dur: 1.5, gain: 1.0 },
+        { freq: 0, start: 8.0, dur: 0.4, gain: 0 },
+      ];
+      const phrases = isShort ? syllables.slice(0, 6) : syllables;
+
+      for (const syl of phrases) {
+        if (syl.freq === 0) continue;
+        const start = now + syl.start;
+        const end = start + syl.dur;
+        const harmonics = [
+          { ratio: 1.0, gain: 0.6 },
+          { ratio: 2.0, gain: 0.2 },
+          { ratio: 1.5, gain: 0.15 },
+        ];
+        for (const h of harmonics) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = syl.freq * h.ratio;
+          const vibrato = ctx.createOscillator();
+          const vibratoGain = ctx.createGain();
+          vibrato.frequency.value = 5;
+          vibratoGain.gain.value = syl.freq * 0.015;
+          vibrato.connect(vibratoGain);
+          vibratoGain.connect(osc.frequency);
+          const peakGain = vol * syl.gain * h.gain;
+          gain.gain.setValueAtTime(0, start);
+          gain.gain.linearRampToValueAtTime(peakGain, start + 0.08);
+          gain.gain.linearRampToValueAtTime(peakGain * 0.75, start + syl.dur * 0.5);
+          gain.gain.linearRampToValueAtTime(0, end);
+          osc.connect(gain);
+          gain.connect(masterGain);
+          osc.start(start);
+          osc.stop(end + 0.1);
+          vibrato.start(start);
+          vibrato.stop(end + 0.1);
+        }
+      }
+
+      const totalDur = isShort ? 10 : 28;
+      setTimeout(() => {
+        try { if (ctx.state !== 'closed') ctx.close(); } catch (e) {}
+      }, totalDur * 1000 + 500);
+    } catch (e) {
+      console.warn('[RecallFox] Adzan tone in-page failed:', e.message);
+    }
+  }
+
+  function _playAdzanInPage(msg) {
+    _stopAdzanInPage();
+
+    // v3.11.10: Sound logic
+    // - 'custom' + customUrl → pakai Audio element dengan URL custom
+    // - 'short' → pakai Web Audio API tone (short version, 2 phrase)
+    // - 'default' atau lainnya → pakai Web Audio API tone (default, 2 phrase + 2 phrase)
+    const sound = msg.sound || 'default';
+    const vol = Math.max(0, Math.min(1, Number(msg.volume) || 0.7));
+
+    if (sound === 'custom' && msg.customUrl) {
+      // Pakai Audio element dengan URL custom (file MP3 user)
+      try {
+        _adzanAudioEl = new Audio(msg.customUrl);
+        _adzanAudioEl.volume = vol;
+        _adzanAudioEl.crossOrigin = 'anonymous';
+        _adzanAudioEl.play().catch(e => {
+          console.warn('[RecallFox] Adzan custom URL play failed:', e.message);
+          // Fallback ke tone
+          _playAdzanToneInPage(vol, false);
+        });
+      } catch (e) {
+        console.warn('[RecallFox] Adzan Audio init failed:', e.message);
+        _playAdzanToneInPage(vol, false);
+      }
+    } else {
+      // Pakai Web Audio API tone
+      _playAdzanToneInPage(vol, sound === 'short');
+    }
+
+    // Banner Stop (fixed di pojok kanan bawah halaman, tidak nutupin konten utama)
+    _adzanBannerEl = document.createElement('div');
+    _adzanBannerEl.id = 'rf-adzan-banner';
+    _adzanBannerEl.style.cssText = [
+      'position:fixed',
+      'bottom:16px',
+      'right:16px',
+      'background:linear-gradient(135deg,#10b981,#059669)',
+      'color:#fff',
+      'padding:10px 14px',
+      'border-radius:10px',
+      'display:flex',
+      'align-items:center',
+      'gap:10px',
+      'z-index:2147483647',
+      'font-size:13px',
+      'box-shadow:0 4px 12px rgba(0,0,0,0.2)',
+      'font-family:inherit',
+      'max-width:calc(100vw - 32px)'
+    ].join(';');
+    _adzanBannerEl.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px">'
+      + '<span style="font-size:18px">🕌</span>'
+      + '<div>'
+      +   '<div style="font-weight:600">Adzan — ' + (msg.prayer || 'waktu sholat') + ' telah masuk</div>'
+      +   '<div style="font-size:11px;opacity:0.85">Klik ⏹ Stop untuk menghentikan</div>'
+      + '</div>'
+      + '</div>'
+      + '<button id="rf-adzan-stop" style="background:rgba(255,255,255,0.2);color:#fff;border:none;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap">⏹ Stop</button>';
+    document.body.appendChild(_adzanBannerEl);
+
+    // Bind tombol Stop
+    const stopBtn = _adzanBannerEl.querySelector('#rf-adzan-stop');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', _stopAdzanInPage);
+    }
+
+    // Auto-cleanup saat audio selesai (hanya untuk Audio element custom URL)
+    if (_adzanAudioEl) {
+      _adzanAudioEl.onended = () => _stopAdzanInPage();
+      _adzanAudioEl.onerror = () => {
+        console.warn('[RecallFox] Adzan audio error — fallback ke tone');
+        _adzanAudioEl = null;
+        _playAdzanToneInPage(vol, false);
+      };
+    }
+
+    // Auto-stop setelah 5 menit (safety, kalau audio tidak pernah ended)
+    setTimeout(() => {
+      if (_adzanAudioEl || _adzanToneCtx || _adzanBannerEl) {
+        console.log('[RecallFox] Adzan auto-stop after 5 minutes');
+        _stopAdzanInPage();
+      }
+    }, 5 * 60 * 1000);
+  }
 
   // Reposition FAB on window resize (keep it on-screen)
   window.addEventListener('resize', () => {

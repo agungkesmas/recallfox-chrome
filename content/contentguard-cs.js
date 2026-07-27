@@ -328,6 +328,13 @@
       hideAllShorts();
     }
 
+    // v3.10.0 (Issue 2): Mode Anak — filter konten di youtube.com (no redirect).
+    // Hanya tampilkan video dari channel whitelist ramah anak + yang judulnya mengandung
+    // kata kunci anak/kids/edukasi. Semua video lain di-hide.
+    if (settings?.contentGuardKidModeFilter === true) {
+      hideNonKidContent();
+    }
+
     let changed = false;
     const scanDescription = settings?.contentGuardScanDescription !== false;
 
@@ -538,6 +545,126 @@
     const allText = el.textContent || '';
     const m = allText.match(/@([A-Za-z0-9_]{1,15})/);
     return m ? m[0] : '';
+  }
+
+  // v3.10.0 (Issue 2): Mode Anak — hide SEMUA video kecuali yang ramah anak.
+  // Definisi "ramah anak":
+  //   - Channel ada di whitelist KID_FRIENDLY_CHANNELS (channel edukasi/kartun/anak terkenal)
+  //   - ATAU judul mengandung kata kunci anak/kids/edukasi/cartoon/dongeng/dll.
+  //   - Video lain di-hide (display:none) — feed jadi hanya konten ramah anak.
+  // Catatan: ini bukan redirect ke youtubekids.com. User tetap di youtube.com biasa,
+  // tapi feed difilter supaya hanya konten ramah anak yang tampil.
+  //
+  // v3.11.1 (Issue 1 fix): Flicker fix.
+  //   YouTube recycle DOM node: judul/channel di-update oleh polymer saat scroll,
+  //   menyebabkan flag rfCgKidHidden stale. Fix: simpan content hash di dataset,
+  //   re-evaluate kalau hash berubah (node di-recycle dengan konten baru).
+  //   Hide via CSS !important (di injectHideCSS), bukan inline style — lebih persisten.
+  function hideNonKidContent() {
+    // Whitelist channel ramah anak (lowercase, match substring)
+    // v3.11.1: tambah banyak channel Islamic kids Indonesia + channel edukasi positif
+    const KID_FRIENDLY_CHANNELS = [
+      // Kartun/anak internasional
+      'cocomelon', 'super simple songs', 'pinkfong', 'little baby bum',
+      'chuchu tv', 'kids tv', 'cvn 78 kids', 'edukids', 'boboiboy',
+      'upin & ipin', 'upin ipin', 'didiketikdotcom', 'kastari animation',
+      'nussa official', 'nussa', 'ruqot', 'drummy kids', 'natgeo kids',
+      'national geographic kids', 'sesame street', 'pbs kids', 'tayo the little bus',
+      'robocar poli', 'pororo', 'tobot', 'hello carbot', 'bumi cartoon',
+      'keluarga cemara', 'si unyil', 'jalan sesame', 'monster school',
+      'minecraft for kids', 'roblox for kids', 'lego',
+      // v3.11.1: Channel Islamic / edukasi Islam anak
+      'nussa official', 'nussa channel', 'ruqot channel', 'syiar tv',
+      'boy shiandi', 'anis mata', 'matematika islam', 'yufid tv',
+      'yufid kids', 'kisah nabi', 'cerita nabi', 'dongeng islami',
+      'anak muslim', 'kids muslim', 'muslim kids', 'calon imam',
+      'belajar mengaji', 'belajar doa', 'belajar islam', 'hijaiyah',
+      'mini moslem', 'my little quran', 'sosok inspiratif', 'kisah rasul',
+      '25 nabi', 'kisah 25 nabi', 'dongeng nabi', 'cerita islami',
+      'adab anak muslim', 'anak saleh', 'anak sholeh', 'prasaja',
+      'boboiboy galaxy', 'nussa kids', 'nussy', 'saifulrahman',
+      // v3.11.1: Channel edukasi positif lain
+      'national geographic', 'disney junior', 'disney channel', 'cartoon network',
+      'kuassa teknologi', 'khan academy kids', 'scratch', 'tynker',
+      'code.org', 'belajar koding', 'hour of code',
+      // Indonesia edukasi
+      'edukidstv', 'kastari', 'sains anak', 'belajar sains', 'budak cisewu',
+      'keluarga sakinah', 'islamic kids', 'cahaya islam'
+    ];
+    // Kata kunci ramah anak di judul (lowercase, match substring)
+    // v3.11.1: tambah kata kunci Islamic + edukasi positif
+    const KID_TITLE_KEYWORDS = [
+      'anak', 'kids', 'kid', 'cartoon', 'kartun', 'dongeng', 'cerita anak',
+      'lagu anak', 'nursery rhymes', 'belajar', 'edukasi', 'balita',
+      'anak-anak', 'prasekolah', 'tk ', 'paud', 'animasi', 'petualangan',
+      'tayo', 'pororo', 'robocar', 'bumi', 'boboiboy', 'upin ipin',
+      'nussa', 'ruqot', 'cocomelon', 'pinkfong',
+      // v3.11.1: Kata kunci Islamic + edukasi
+      'islami', 'islamic', 'hijaiyah', 'kisah nabi', 'rasul', 'nabi',
+      'mengaji', 'doa harian', 'doa anak', 'quran kids', 'cerita islami',
+      'dongeng islami', 'anak muslim', 'anak sholeh', 'anak saleh',
+      'adab islam', 'akhlak', 'puasa anak', 'shalat anak', 'zakat',
+      'calon imam', 'hafiz', 'hafidz', 'tajwid', 'iqro', 'iqró',
+      'belajar shalat', 'belajar wudhu', 'belajar doa', 'belajar islam',
+      'belajar mengaji', 'belajar huruf hijaiyah',
+      // v3.11.1: Edukasi positif umum
+      'belajar abc', 'belajar angka', 'belajar warna', 'belajar huruf',
+      'belajar berhitung', 'belajar membaca', 'sains anak', 'edukasi sains',
+      'coding for kids', 'lego education', 'stem kids', 'robotics kids'
+    ];
+
+    let hiddenCount = 0;
+    let recycledCount = 0;
+    for (const sel of YT_VIDEO_SELECTORS) {
+      let nodes;
+      try { nodes = document.querySelectorAll(sel); }
+      catch (e) { continue; }
+      nodes.forEach(node => {
+        // Skip ad slots
+        if (node.querySelector('ytd-ad-slot-renderer, [class*="ad-"]')) return;
+        // Jangan hide kalau sudah di-hide oleh filter negatif (lebih spesifik)
+        if (node.dataset.rfCgHidden === '1') return;
+
+        const title = (getYouTubeTitle(node) || '').toLowerCase();
+        const channel = (getYouTubeChannel(node) || '').toLowerCase();
+        const combined = title + ' ' + channel;
+
+        // v3.11.1 (Issue 1 fix): Deteksi node recycling — hash judul+channel
+        // YouTube kadang reuse DOM node untuk video berbeda saat scroll.
+        // Kalau hash berubah, reset flag supaya re-evaluate.
+        const currentHash = combined.slice(0, 200); // batasi panjang hash
+        const prevHash = node.dataset.rfCgKidHash || '';
+        if (node.dataset.rfCgKidHidden === '1' && prevHash && prevHash !== currentHash) {
+          // Node di-recycle dengan konten baru — re-evaluate
+          delete node.dataset.rfCgKidHidden;
+          delete node.dataset.rfCgReason;
+          recycledCount++;
+        }
+        // Simpan hash untuk deteksi recycle berikutnya
+        node.dataset.rfCgKidHash = currentHash;
+
+        if (node.dataset.rfCgKidHidden === '1') return; // sudah di-hide, skip
+
+        // Cek apakah ramah anak
+        const isKidFriendly =
+          KID_FRIENDLY_CHANNELS.some(c => channel.includes(c)) ||
+          KID_TITLE_KEYWORDS.some(k => combined.includes(k));
+
+        if (!isKidFriendly) {
+          // v3.11.1: Hide via dataset attribute + CSS !important rule (di injectHideCSS).
+          // Tidak lagi pakai inline style.display='none' — terlalu mudah di-override YouTube.
+          node.dataset.rfCgKidHidden = '1';
+          node.dataset.rfCgReason = 'kid_mode_filter';
+          // Backup: set inline style juga (double protection)
+          node.style.setProperty('display', 'none', 'important');
+          hiddenCount++;
+        }
+      });
+    }
+    if ((hiddenCount > 0 || recycledCount > 0) && settings?.contentGuardDebugMode) {
+      console.log('[RecallFox/CG] Kid mode: hidden', hiddenCount, 'non-kid videos, recycled', recycledCount);
+    }
+    return hiddenCount;
   }
 
   function hideXNegative() {
@@ -799,8 +926,14 @@
     if (document.getElementById(cssId)) return;
     const style = document.createElement('style');
     style.id = cssId;
+    // v3.11.1 (Issue 1 fix): Mode Anak flicker fix.
+    // Sebelumnya hanya inline style.display='none' yang dipakai — YouTube
+    // merecycle node & meng-override inline style saat re-render, menyebabkan
+    // flicker. Sekarang hide via attribute selector + !important rule.
     style.textContent = `
       [data-rf-cg-hidden="1"] { display: none !important; }
+      [data-rf-cg-kid-hidden="1"] { display: none !important; }
+      [data-rf-cg-shelf-hidden="1"] { display: none !important; }
     `;
     document.documentElement.appendChild(style);
   }
@@ -825,6 +958,13 @@
           delete el.dataset.rfCgReason;
           delete el.dataset.rfCgTitle;
           delete el.dataset.rfCgChannel;
+        });
+        // v3.11.1 (Issue 1 fix): Reset juga flag Mode Anak + content hash
+        document.querySelectorAll('[data-rf-cg-kid-hidden="1"]').forEach(el => {
+          el.style.removeProperty('display');
+          delete el.dataset.rfCgKidHidden;
+          delete el.dataset.rfCgReason;
+          delete el.dataset.rfCgKidHash;
         });
         document.querySelectorAll('[data-rf-cg-shelf-hidden="1"]').forEach(el => {
           el.style.removeProperty('display');

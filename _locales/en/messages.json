@@ -84,6 +84,8 @@
 
   "ctxMenuClearCache":   { "message": "Clear Cache" },
 
+  "ctxMenuAddToTape":   { "message": "🧾 Add to RecallTape" },
+
   "screenshotSavedToast":      { "message": "Screenshot saved to vault" },
   "screenshotErrCannotCapture":{ "message": "Cannot capture this page (browser-protected)." },
   "screenshotErrTooLarge":     { "message": "Page is too large to capture in one image." },

@@ -732,3 +732,416 @@
     background: #242220;
   }
 }
+
+/* ============================================================
+   v3.11.4: Annotation editor — full-screen canvas-based editor
+   Loaded by content/annotate.js when user clicks "Anotasi" in
+   the capture preview modal.
+   ============================================================ */
+
+.rf-annotate-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  background: rgba(15, 12, 10, 0.85);
+  backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  color: #1c1917;
+  animation: rf-ann-fade-in 0.2s ease-out;
+}
+
+@keyframes rf-ann-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.rf-annotate-modal {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #fafaf9;
+}
+
+.rf-annotate-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #e7e5e4;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  flex-wrap: wrap;
+}
+
+.rf-annotate-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1c1917;
+  white-space: nowrap;
+  flex: none;
+}
+
+.rf-annotate-tools-group {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #f5f5f4;
+  border-radius: 10px;
+  flex: none;
+}
+
+.rf-ann-tool {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: #57534e;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+.rf-ann-tool svg {
+  width: 17px;
+  height: 17px;
+}
+.rf-ann-tool:hover {
+  background: #ffffff;
+  color: #4f46e5;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.rf-ann-tool.on {
+  background: #4f46e5;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.3);
+}
+.rf-ann-tool.on:hover {
+  background: #4338ca;
+  color: #ffffff;
+}
+
+.rf-annotate-colors {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #f5f5f4;
+  border-radius: 10px;
+  flex: none;
+}
+
+.rf-ann-color {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  position: relative;
+}
+.rf-ann-color:hover {
+  transform: scale(1.15);
+}
+.rf-ann-color.on {
+  border-color: #1c1917;
+  transform: scale(1.15);
+  box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #1c1917;
+}
+.rf-ann-color[data-color="#ffffff"] {
+  border: 2px solid #d6d3d1;
+}
+.rf-ann-color[data-color="#ffffff"].on {
+  border-color: #1c1917;
+}
+
+.rf-ann-color-picker {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+  margin-left: 4px;
+}
+.rf-ann-color-picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.rf-ann-color-picker::-webkit-color-swatch {
+  border: 2px solid #d6d3d1;
+  border-radius: 50%;
+}
+.rf-ann-color-picker::-moz-color-swatch {
+  border: 2px solid #d6d3d1;
+  border-radius: 50%;
+}
+
+.rf-annotate-stroke,
+.rf-annotate-fontsize {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #f5f5f4;
+  border-radius: 10px;
+  flex: none;
+}
+.rf-annotate-stroke label,
+.rf-annotate-fontsize label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #57534e;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.rf-annotate-stroke input[type=range],
+.rf-annotate-fontsize input[type=range] {
+  width: 80px;
+  height: 4px;
+  accent-color: #4f46e5;
+  cursor: pointer;
+}
+.rf-annotate-stroke span,
+.rf-annotate-fontsize span {
+  font-size: 11px;
+  font-weight: 600;
+  color: #1c1917;
+  min-width: 32px;
+  text-align: right;
+}
+
+.rf-annotate-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rf-annotate-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.rf-ann-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #57534e;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.rf-ann-btn svg {
+  width: 15px;
+  height: 15px;
+}
+.rf-ann-btn:hover:not(:disabled) {
+  background: #f5f5f4;
+  color: #1c1917;
+}
+.rf-ann-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.rf-ann-btn-ghost {
+  background: #f5f5f4;
+  border-color: #e7e5e4;
+}
+.rf-ann-btn-ghost:hover:not(:disabled) {
+  background: #e7e5e4;
+}
+.rf-ann-btn-primary {
+  background: #4f46e5;
+  color: #ffffff;
+  padding: 7px 16px;
+}
+.rf-ann-btn-primary:hover:not(:disabled) {
+  background: #4338ca;
+  color: #ffffff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+.rf-annotate-canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: auto;
+  background:
+    linear-gradient(45deg, #e7e5e4 25%, transparent 25%),
+    linear-gradient(-45deg, #e7e5e4 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #e7e5e4 75%),
+    linear-gradient(-45deg, transparent 75%, #e7e5e4 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  background-color: #fafaf9;
+}
+
+.rf-annotate-canvas-stage {
+  position: relative;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  background: #ffffff;
+}
+
+.rf-annotate-canvas-stage canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.rf-annotate-canvas-stage canvas:first-child {
+  position: relative;
+}
+
+#rfAnnPreviewCanvas {
+  z-index: 10;
+}
+
+.rf-annotate-hint {
+  flex: none;
+  padding: 8px 14px;
+  background: #ffffff;
+  border-top: 1px solid #e7e5e4;
+  font-size: 11px;
+  color: #78716c;
+  text-align: center;
+}
+.rf-annotate-hint kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #f5f5f4;
+  border: 1px solid #d6d3d1;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  color: #1c1917;
+  margin: 0 2px;
+}
+
+/* Floating text input untuk tool 'text' */
+.rf-ann-text-input {
+  position: absolute;
+  z-index: 20;
+  min-width: 80px;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 2px dashed #4f46e5;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  font-family: Inter, -apple-system, system-ui, sans-serif;
+  font-weight: 600;
+  resize: none;
+  outline: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  line-height: 1.2;
+  overflow: hidden;
+}
+.rf-ann-text-input::placeholder {
+  color: #a8a29e;
+  font-weight: 400;
+}
+
+/* Responsive: sidebar sempit */
+@media (max-width: 720px) {
+  .rf-annotate-header {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  .rf-annotate-title {
+    font-size: 12px;
+  }
+  .rf-ann-tool {
+    width: 30px;
+    height: 30px;
+  }
+  .rf-ann-tool svg {
+    width: 15px;
+    height: 15px;
+  }
+  .rf-ann-color {
+    width: 20px;
+    height: 20px;
+  }
+  .rf-annotate-stroke,
+  .rf-annotate-fontsize {
+    padding: 3px 6px;
+  }
+  .rf-annotate-stroke input[type=range],
+  .rf-annotate-fontsize input[type=range] {
+    width: 60px;
+  }
+  .rf-ann-btn {
+    padding: 6px 8px;
+    font-size: 11px;
+  }
+  .rf-annotate-canvas-wrap {
+    padding: 8px;
+  }
+}
+
+@media (max-width: 480px) {
+  .rf-annotate-header {
+    padding: 6px 8px;
+    gap: 4px;
+  }
+  .rf-annotate-title {
+    display: none;
+  }
+  .rf-annotate-tools-group {
+    padding: 3px 4px;
+    gap: 2px;
+  }
+  .rf-ann-tool {
+    width: 26px;
+    height: 26px;
+  }
+  .rf-annotate-colors {
+    padding: 3px 4px;
+    gap: 2px;
+  }
+  .rf-ann-color {
+    width: 18px;
+    height: 18px;
+  }
+  .rf-ann-color-picker {
+    width: 22px;
+    height: 22px;
+  }
+  .rf-annotate-stroke label,
+  .rf-annotate-fontsize label {
+    display: none;
+  }
+  .rf-annotate-stroke input[type=range],
+  .rf-annotate-fontsize input[type=range] {
+    width: 50px;
+  }
+  .rf-ann-btn {
+    padding: 5px 6px;
+    font-size: 10px;
+  }
+  .rf-ann-btn-primary {
+    padding: 5px 10px;
+  }
+}

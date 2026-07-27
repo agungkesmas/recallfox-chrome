@@ -237,9 +237,10 @@
   // ===== Selection mode (overlay + crop) =====
   async function captureSelection(format, quality) {
     ensureStyles();
-    showBanner('Seret untuk pilih area · Esc batal');
+    // v3.11.9 (Issue #1 fix): HAPUS showBanner — showSelectionOverlay sudah punya
+    // tip sendiri (recallfox-sel-tip "Drag untuk pilih area · Esc untuk batal")
+    // di tengah layar. Sebelumnya showBanner + sel-tip bertumpuk → user bingung.
     const rect = await showSelectionOverlay();
-    hideBanner();
     if (!rect) {
       return { dataUrl: null, cancelled: true, width: 0, height: 0, bytes: 0, selectionRect: null };
     }
@@ -612,6 +613,21 @@
       }
     } catch (e) {
       hideBanner();
+      // v3.11.7-fix2 (Sesi 7): Kalau capture gagal dengan JPEG, coba ulang dengan PNG lossless.
+      // User report: "gambar hanya bisa ditangkap di lossless, jika dengan kompresi error".
+      // Root cause: canvas.toDataURL('image/jpeg', q) bisa melempar error di canvas yang tainted
+      // (cross-origin image tanpa CORS) atau browser yang tidak support JPEG encoding.
+      if (format === 'jpeg' && !String(e.message || '').includes('cancelled')) {
+        console.warn('[RecallFox] Capture JPEG gagal (' + e.message + '), coba PNG lossless...');
+        try {
+          if (mode === 'visible') return await captureVisible('png', 100);
+          else if (mode === 'selection') return await captureSelection('png', 100);
+          else if (mode === 'entire') return await captureEntire('png', 100, maxHeight);
+        } catch (e2) {
+          console.error('[RecallFox] PNG fallback juga gagal:', e2.message);
+          return { dataUrl: null, cancelled: false, error: 'JPEG: ' + e.message + ' | PNG: ' + e2.message };
+        }
+      }
       return { dataUrl: null, cancelled: false, error: e.message };
     }
   };

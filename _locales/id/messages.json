@@ -84,6 +84,8 @@
 
   "ctxMenuClearCache":   { "message": "Bersihkan Cache" },
 
+  "ctxMenuAddToTape":   { "message": "🧾 Tambah ke RecallTape" },
+
   "screenshotSavedToast":      { "message": "Screenshot tersimpan ke vault" },
   "screenshotErrCannotCapture":{ "message": "Tidak bisa menangkap halaman ini (dilindungi browser)." },
   "screenshotErrTooLarge":     { "message": "Halaman terlalu besar untuk ditangkap dalam satu gambar." },

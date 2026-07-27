@@ -1,0 +1,222 @@
+/* popup/viewer.css — Document multi-page viewer (v3.12.1)
+ * Dibuka sebagai tab baru via browser.tabs.create().
+ * Styling minimal, dark theme supaya gambar dokumen menonjol.
+ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: #0c0a09;
+  color: #fafaf9;
+  font-family: -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* ===== Topbar ===== */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: #1c1917;
+  border-bottom: 1px solid #292524;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: #d6d3d1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.icon-btn:hover { background: #292524; }
+
+.title {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  font-size: 12px;
+  color: #a8a29e;
+  flex-shrink: 0;
+}
+
+/* ===== Page wrap (image area) ===== */
+.page-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow: auto;
+  min-height: 0;
+  position: relative;
+}
+
+.page-wrap img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+  display: none; /* hidden until first page loads */
+}
+
+.page-wrap img.loaded { display: block; }
+
+/* Loading spinner */
+.loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #a8a29e;
+  font-size: 13px;
+}
+
+.spinner {
+  width: 32px; height: 32px;
+  border: 3px solid #292524;
+  border-top-color: #6d3df5;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Error state */
+.err {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #fca5a5;
+  font-size: 14px;
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.err-icon { font-size: 40px; }
+.err-msg { color: #d6d3d1; }
+
+/* ===== Dots (pagination) ===== */
+.dots {
+  display: none; /* shown only when > 1 page */
+  gap: 6px;
+  justify-content: center;
+  padding: 6px 0;
+  flex-wrap: wrap;
+  max-width: 100%;
+  flex-shrink: 0;
+}
+
+.dots.multi { display: flex; }
+
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #44403c;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dot:hover { background: #78716c; }
+.dot.active { background: #fafaf9; }
+
+/* ===== Nav bar ===== */
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #1c1917;
+  border-top: 1px solid #292524;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.nav-btn {
+  background: #292524;
+  color: #fafaf9;
+  border: 1px solid #44403c;
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.nav-btn:hover:not(:disabled) { background: #3f3f46; }
+.nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.nav-btn-sec {
+  background: transparent;
+  border-color: #292524;
+  color: #a8a29e;
+  font-size: 12px;
+}
+
+.nav-btn-sec:hover:not(:disabled) {
+  background: #292524;
+  color: #fafaf9;
+}
+
+.ind {
+  font-size: 13px;
+  min-width: 90px;
+  text-align: center;
+  color: #d6d3d1;
+}
+
+.nav-sep {
+  width: 1px;
+  height: 22px;
+  background: #292524;
+  margin: 0 4px;
+}
+
+.btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.btn-p {
+  background: #6d3df5;
+  color: #fff;
+}
+
+.btn-p:hover { background: #5b2fd9; }
+
+/* ===== Responsive ===== */
+@media (max-width: 600px) {
+  .nav { gap: 4px; padding: 8px; }
+  .nav-btn { padding: 6px 10px; font-size: 12px; }
+  .nav-btn-sec { display: none; } /* sembunyikan tombol sekunder di mobile */
+  .nav-sep { display: none; }
+  .ind { min-width: 70px; font-size: 12px; }
+}

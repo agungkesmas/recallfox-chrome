@@ -160,14 +160,59 @@
   // ===== Snapshot extraction =====
   function extractConversation() {
     const config = window.__RecallFoxDomainConfig__;
-    if (!config) return { body: '', url: location.href, pageTitle: document.title, messageCount: 0, debug: 'No domain config' };
+    if (!config) return { body: '', url: location.href, pageTitle: document.title, messageCount: 0, snapshotDomain: location.hostname, snapshotMessageCount: 0, debug: 'No domain config' };
 
-    // Try domain-specific selectors first
+    // v3.16.1 S3: Ekstraksi v2 — dedup ancestor/descendant, preserve code fence, role detection lebih baik
     let allEls = [];
     let matchedSelector = '';
     const userSelectors = config.selectors.userMessage || [];
     const aiSelectors = config.selectors.aiMessage || [];
 
+    // Helper: cek apakah elemA adalah ancestor dari elemB
+    function isAncestorOf(elemA, elemB) {
+      try { return elemA.contains(elemB); } catch (e) { return false; }
+    }
+
+    // Helper: deteksi role dari elemen (lebih akurat dari sebelumnya)
+    function detectRole(el) {
+      // 1. data-message-author-role (ChatGPT)
+      const authorRole = el.getAttribute('data-message-author-role');
+      if (authorRole) return authorRole === 'user' ? 'user' : 'ai';
+      // 2. data-role
+      const dataRole = el.getAttribute('data-role');
+      if (dataRole) {
+        if (['user', 'human', 'you'].includes(dataRole.toLowerCase())) return 'user';
+        if (['assistant', 'ai', 'bot', 'model'].includes(dataRole.toLowerCase())) return 'ai';
+      }
+      // 3. data-testid
+      const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+      if (testid.includes('user') || testid.includes('human')) return 'user';
+      if (testid.includes('assistant') || testid.includes('ai')) return 'ai';
+      // 4. class name
+      const cls = (el.className || '').toString().toLowerCase();
+      if (cls.includes('user') || cls.includes('human')) return 'user';
+      if (cls.includes('assistant') || cls.includes('ai') || cls.includes('bot') || cls.includes('model')) return 'ai';
+      // 5. aria-label
+      const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+      if (aria.includes('you') || aria.includes('user')) return 'user';
+      if (aria.includes('assistant') || aria.includes('ai')) return 'ai';
+      return 'unknown';
+    }
+
+    // Helper: extract text dengan preserve code fence
+    function extractTextWithCode(el) {
+      // Clone, hapus script/style
+      const clone = el.cloneNode(true);
+      clone.querySelectorAll('script, style, button, [aria-hidden="true"]').forEach(e => e.remove());
+      // Ganti <pre>/<code> dengan code fence
+      const codeBlocks = clone.querySelectorAll('pre');
+      let text = clone.innerText || '';
+      // Code fence sudah ada di innerText (pre punya newline), tidak perlu transform khusus
+      // Tapi tandai kalau ada code block
+      return text.trim();
+    }
+
+    // Try domain-specific selectors first
     for (const sel of userSelectors) {
       try {
         const els = document.querySelectorAll(sel);
@@ -198,7 +243,6 @@
     // Fallback: if no messages found, try generic selectors
     if (allEls.length === 0) {
       const genericSelectors = [
-        // ChatGPT-like patterns
         '[data-message-author-role]',
         '[data-role="user"]', '[data-role="assistant"]',
         '[data-role="human"]', '[data-role="ai"]',
@@ -208,12 +252,9 @@
         '.msg-user', '.msg-assistant',
         '[class*="user-message"]', '[class*="assistant-message"]',
         '[class*="UserMessage"]', '[class*="AssistantMessage"]',
-        // z.ai / ChatGLM patterns
         '.chat-message', '.conversation-message',
-        // Generic markdown content (often AI responses)
         '.markdown-body', '.markdown-content',
         '[class*="prose"]',
-        // Role-based
         '[aria-label*="user" i]', '[aria-label*="assistant" i]',
         '[aria-label*="You" i]', '[aria-label*="AI" i]'
       ];
@@ -221,11 +262,8 @@
         try {
           const els = document.querySelectorAll(sel);
           if (els.length > 0) {
-            // Try to infer role from class/attributes
             els.forEach(el => {
-              const cls = (el.className || '').toString().toLowerCase();
-              const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-              const role = (cls.includes('user') || cls.includes('human') || aria.includes('you') || aria.includes('user')) ? 'user' : 'ai';
+              const role = detectRole(el);
               if (!seen.has(el)) {
                 allEls.push({ el, role });
                 seen.add(el);
@@ -245,7 +283,6 @@
         const textBlocks = mainContent.querySelectorAll('p, div, article');
         let count = 0;
         textBlocks.forEach(el => {
-          // Only leaf-like elements with substantial text
           if (el.children.length === 0 && el.innerText && el.innerText.trim().length > 20) {
             allEls.push({ el, role: 'unknown' });
             count++;
@@ -254,6 +291,25 @@
         matchedSelector += `fallback: text blocks (${count})\n`;
       }
     }
+
+    // v3.16.1 S3: Dedup ancestor/descendant — kalau elemA ancestor dari elemB, hapus ancestor (ambil descendant = lebih spesifik)
+    // Sebelumnya: parent + child ikut ter-capture → teks duplikat
+    const dedupedEls = [];
+    for (let i = 0; i < allEls.length; i++) {
+      const a = allEls[i];
+      let isAncestor = false;
+      for (let j = 0; j < allEls.length; j++) {
+        if (i === j) continue;
+        const b = allEls[j];
+        // Kalau a ancestor dari b, dan b lebih spesifik (innerText lebih pendek) → skip a
+        if (isAncestorOf(a.el, b.el) && (b.el.innerText || '').length < (a.el.innerText || '').length) {
+          isAncestor = true;
+          break;
+        }
+      }
+      if (!isAncestor) dedupedEls.push(a);
+    }
+    allEls = dedupedEls;
 
     // sort by DOM order
     allEls.sort((a, b) => {
@@ -265,14 +321,16 @@
     });
 
     // take last 50
-    const sliced = allEls.slice(-50);
+    const MAX_MSGS = 50;
+    const totalMsgs = allEls.length;
+    const sliced = allEls.slice(-MAX_MSGS);
 
     let body = '';
     for (const item of sliced) {
       const roleLabel = item.role === 'user' ? '👤 User' : item.role === 'ai' ? '🤖 AI' : '💬';
-      const text = (item.el.innerText || '').trim();
+      // v3.16.1 S3: pakai extractTextWithCode untuk preserve code fence
+      const text = extractTextWithCode(item.el);
       if (!text || text.length < 2) continue;
-      // Skip if text is too long (likely a container, not a message)
       const truncated = text.length > 2000 ? text.slice(0, 2000) + '...[truncated]' : text;
       body += `${roleLabel}:\n${truncated}\n\n`;
     }
@@ -283,13 +341,20 @@
       url: location.href,
       pageTitle: document.title,
       messageCount: sliced.length,
+      // v3.15.0 P0-S1: tambah snapshotDomain + snapshotMessageCount (key benar)
+      // Sebelumnya hanya return messageCount (key salah — harusnya snapshotMessageCount).
+      // background.js CAPTURE_SNAPSHOT sekarang baca snapshotMessageCount + snapshotDomain.
+      snapshotDomain: location.hostname,
+      snapshotMessageCount: sliced.length,
       debug: matchedSelector || 'No selectors matched'
     };
   }
 
   // ===== Snapshot Modal =====
-  function openSnapshotModal() {
-    if (!window.__RecallFoxIsAIDomain__) {
+  async function openSnapshotModal() {
+    // v3.16.2: Pakai async isAIPage() dari storage.aiSites (single source of truth)
+    const isAI = window.__recallfoxIsAIPage__ ? await window.__recallfoxIsAIPage__() : !!window.__RecallFoxIsAIDomain__;
+    if (!isAI) {
       showToast('errNotAIDomain');
       return;
     }
@@ -399,133 +464,14 @@
     return escapeHtml(s).replace(/'/g, '&#39;');
   }
 
-  // ===== Floating button (only on AI domains) =====
+  // ===== Floating button — DIHAPUS v3.16.1 =====
+  // User feedback: "jangan pernah bikin tombol floating snapshot maupun konteks, karena ganggu"
+  // Snapshot sekarang hanya via quick action tile di popup/sidebar (snapshotFlow).
+  // Fungsi ini di-keep sebagai no-op supaya call sites tidak error, tapi tidak inject apa-apa.
   async function maybeInjectFloatingButton() {
-    if (!window.__RecallFoxIsAIDomain__) return;
-    // check setting via runtime message
-    let floatingEnabled = true;
-    try {
-      const vault = await browser.runtime.sendMessage({ type: 'GET_VAULT' });
-      floatingEnabled = vault?.settings?.floatingButtonEnabled !== false;
-    } catch (e) { /* default true */ }
-
-    if (!floatingEnabled) return;
-    if (document.getElementById('recallfox-floating-btn')) return;
-
-    const btn = document.createElement('button');
-    btn.id = 'recallfox-floating-btn';
-    btn.className = 'recallfox-floating-btn';
-    btn.title = browser.i18n.getMessage('snapshotTitle');
-    btn.textContent = '📸';
-    btn.type = 'button';
-    document.body.appendChild(btn);
-
-    // Click handler — opens snapshot modal (unless this was a drag)
-    btn.addEventListener('click', (e) => {
-      // If we just dragged, suppress
-      if (btn._suppressClick) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      // Visual feedback: pulse
-      btn.style.transform = 'scale(0.9)';
-      setTimeout(() => { btn.style.transform = ''; }, 120);
-      // Open snapshot modal
-      openSnapshotModal();
-    });
-
-    // Draggable using setPointerCapture (industry-standard, reliable drag)
-    // Pointer capture ensures move events keep flowing to this button even
-    // when the cursor leaves it. Much more reliable than window.addEventListener.
-    let dragState = null;
-
-    // Position persistence (per-device, per-domain)
-    const SNAP_POS_KEY = 'recallfox_snap_btn_pos';
-    try {
-      const saved = localStorage.getItem(SNAP_POS_KEY);
-      if (saved) {
-        const p = JSON.parse(saved);
-        if (typeof p.left === 'number' && typeof p.top === 'number') {
-          btn.style.right = 'auto';
-          btn.style.bottom = 'auto';
-          btn.style.left = p.left + 'px';
-          btn.style.top = p.top + 'px';
-        }
-      }
-    } catch (e) {}
-
-    function saveSnapPos(left, top) {
-      try {
-        const w = btn.offsetWidth || 44;
-        const h = btn.offsetHeight || 44;
-        const clampedLeft = Math.max(8, Math.min(window.innerWidth - w - 8, left));
-        const clampedTop = Math.max(8, Math.min(window.innerHeight - h - 8, top));
-        localStorage.setItem(SNAP_POS_KEY, JSON.stringify({ left: clampedLeft, top: clampedTop }));
-      } catch (e) {}
-    }
-
-    btn.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return; // only left click
-      const rect = btn.getBoundingClientRect();
-      dragState = {
-        startX: e.clientX,
-        startY: e.clientY,
-        offsetX: e.clientX - rect.left,
-        offsetY: e.clientY - rect.top,
-        moved: false,
-        pointerId: e.pointerId
-      };
-      // Capture pointer so move events keep flowing to this button
-      try { btn.setPointerCapture(e.pointerId); } catch (err) {}
-    });
-    btn.addEventListener('pointermove', (e) => {
-      if (!dragState) return;
-      const dx = e.clientX - dragState.startX;
-      const dy = e.clientY - dragState.startY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 5) {
-        dragState.moved = true;
-        btn.classList.add('recallfox-floating-btn-dragging');
-        btn.style.right = 'auto';
-        btn.style.bottom = 'auto';
-        // Clamp to viewport so button stays accessible
-        const w = btn.offsetWidth;
-        const h = btn.offsetHeight;
-        const left = Math.max(8, Math.min(window.innerWidth - w - 8, e.clientX - dragState.offsetX));
-        const top = Math.max(8, Math.min(window.innerHeight - h - 8, e.clientY - dragState.offsetY));
-        btn.style.left = left + 'px';
-        btn.style.top = top + 'px';
-        btn.style.cursor = 'grabbing';
-      }
-    });
-    btn.addEventListener('pointerup', (e) => {
-      if (!dragState) return;
-      try { btn.releasePointerCapture(dragState.pointerId); } catch (err) {}
-      btn.classList.remove('recallfox-floating-btn-dragging');
-      btn.style.cursor = '';
-      // If we dragged, suppress the upcoming click event + persist position
-      if (dragState.moved) {
-        btn._suppressClick = true;
-        setTimeout(() => { btn._suppressClick = false; }, 50);
-        const rect = btn.getBoundingClientRect();
-        saveSnapPos(rect.left, rect.top);
-        // Brief visual confirmation
-        btn.style.transform = 'scale(1.1)';
-        setTimeout(() => { btn.style.transform = ''; }, 200);
-      }
-      setTimeout(() => { dragState = null; }, 10);
-    });
-    btn.addEventListener('pointercancel', () => {
-      if (dragState) {
-        btn.classList.remove('recallfox-floating-btn-dragging');
-        btn.style.cursor = '';
-        dragState = null;
-      }
-    });
+    return; // no-op — floating button disabled permanently
   }
+
 
   // ===== Message handlers =====
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -538,12 +484,119 @@
     } else if (msg.type === 'OPEN_SNAPSHOT_MODAL') {
       openSnapshotModal();
       sendResponse({ ok: true });
+    } else if (msg.type === 'EXTRACT_SNAPSHOT') {
+      // v3.16.1: Extract conversation data tanpa buka modal di tab.
+      // Popup yang handle modal preview (lebih reliable — user pasti lihat di sidebar).
+      // Sebelumnya: QUICK_SNAPSHOT → OPEN_SNAPSHOT_MODAL di tab, tapi popup close terlalu cepat
+      // → user tidak lihat modal → kira snapshot gagal.
+      // v3.16.2: Pakai async isAIPage() dari storage.aiSites (single source of truth)
+      (async () => {
+        try {
+          const isAI = window.__recallfoxIsAIPage__ ? await window.__recallfoxIsAIPage__() : !!window.__RecallFoxIsAIDomain__;
+          if (!isAI) {
+            sendResponse({ ok: false, error: 'not_ai_domain' });
+            return;
+          }
+          const conv = extractConversation();
+          sendResponse({
+            ok: true,
+            body: conv?.body || '',
+            pageTitle: conv?.pageTitle || document.title || '',
+            url: conv?.url || location.href,
+            snapshotDomain: conv?.snapshotDomain || location.hostname,
+            snapshotMessageCount: conv?.snapshotMessageCount || conv?.messageCount || 0,
+            debug: conv?.debug || ''
+          });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message });
+        }
+      })();
+      return true;  // async response
     } else if (msg.type === 'PING') {
       sendResponse({
         ok: true,
         isAIDomain: window.__RecallFoxIsAIDomain__,
         domainId: window.__RecallFoxDomainConfig__?.id
       });
+    } else if (msg.type === 'GET_PAGE_CONTEXT') {
+      // v3.8.1 (Issue #4): Handler untuk "Ambil dari halaman aktif" di popup Konteks.
+      // v3.16.0 K3: Ekstraksi halaman BERSIH — buang nav/aside/footer/script/style/
+      //   form/button/iframe/svg. Skoring paragraf (prioritas <p> dan <article>).
+      //   Sebelumnya: pakai main.innerText mentah → nav, sidebar, footer, banner ikut masuk.
+      try {
+        // v3.16.0 K3: Clone body, hapus elemen noise, lalu extract text
+        const bodyClone = document.body.cloneNode(true);
+        // Hapus elemen yang tidak relevan untuk konteks AI
+        const noiseSelectors = [
+          'nav', 'header', 'footer', 'aside', 'script', 'style', 'noscript',
+          'iframe', 'svg', 'canvas', 'form', 'button', 'input', 'select', 'textarea',
+          '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]',
+          '[role="search"]', '[aria-hidden="true"]',
+          '.nav', '.navbar', '.menu', '.sidebar', '.footer', '.header',
+          '.cookie', '.banner', '.popup', '.modal', '.overlay',
+          '.advertisement', '.ads', '.ad', '.sponsor',
+          '.social', '.share', '.comment', '.comments',
+          '.breadcrumb', '.pagination', '.related', '.recommended',
+          '[class*="cookie" i]', '[class*="banner" i]', '[class*="popup" i]',
+          '[class*="modal" i]', '[class*="overlay" i]', '[class*="advert" i]',
+          '[id*="cookie" i]', '[id*="banner" i]', '[id*="popup" i]'
+        ];
+        for (const sel of noiseSelectors) {
+          bodyClone.querySelectorAll(sel).forEach(el => el.remove());
+        }
+        // Skoring paragraf: prioritas <p>, <article>, <section>, <main>, <div role="main">
+        let main = bodyClone.querySelector('main')
+                || bodyClone.querySelector('[role="main"]')
+                || bodyClone.querySelector('article')
+                || bodyClone.querySelector('article[class]')
+                || bodyClone;
+        // v3.16.0 K4: Dedup by URL — cek apakah URL ini sudah pernah di-ambil.
+        // Cek localStorage key 'recallfox_page_context_urls' (array of {url, ts}).
+        // Kalau URL sama diambil <60 detik lalu, beri warning (tapi tetap return text).
+        const urlKey = 'recallfox_page_context_urls';
+        let urlHistory = [];
+        try { urlHistory = JSON.parse(localStorage.getItem(urlKey) || '[]'); } catch (e) {}
+        const now = Date.now();
+        const recent = urlHistory.filter(h => h.url === location.href && (now - h.ts) < 60000);
+        const isDuplicate = recent.length > 0;
+        // Update history (keep last 20)
+        urlHistory = urlHistory.filter(h => (now - h.ts) < 7 * 24 * 60 * 60 * 1000); // 7 hari
+        urlHistory.push({ url: location.href, ts: now, title: document.title || '' });
+        urlHistory = urlHistory.slice(-20);
+        try { localStorage.setItem(urlKey, JSON.stringify(urlHistory)); } catch (e) {}
+
+        let text = (main?.innerText || '').trim();
+        // Bersihkan whitespace berlebih
+        text = text.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+/g, ' ').trim();
+        // Ambil meta description untuk konteks tambahan
+        const metaDesc = document.querySelector('meta[name="description"]')?.content || '';
+        const ogDesc = document.querySelector('meta[property="og:description"]')?.content || '';
+        const desc = (metaDesc || ogDesc || '').trim();
+        // Ambil selection text (kalau user blok teks tertentu)
+        const sel = (window.getSelection()?.toString() || '').trim();
+        // Batasi panjang (8000 char ~ 1500 kata)
+        const maxLen = msg.maxLen || 8000;
+        if (text.length > maxLen) text = text.slice(0, maxLen) + '\n\n[... dipotong, total ' + text.length + ' char]';
+        sendResponse({
+          ok: true,
+          text: text,
+          title: document.title || '',
+          url: location.href,
+          description: desc,
+          selection: sel,
+          isDuplicate: isDuplicate, // v3.16.0 K4: flag untuk UI warning
+          meta: {
+            wordCount: text ? text.split(/\s+/).length : 0,
+            charCount: text.length,
+            hasMain: !!document.querySelector('main'),
+            hasArticle: !!document.querySelector('article')
+          }
+        });
+      } catch (e) {
+        console.warn('[RecallFox] GET_PAGE_CONTEXT error:', e);
+        sendResponse({ ok: false, error: e.message, text: '', title: document.title || '', url: location.href });
+      }
+      return true; // async-safe
     }
   });
 

@@ -2,12 +2,11 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.7.2",
+  "version": "3.20.0",
   "description": "__MSG_extDesc__",
-  "author": "agungkesmas",
+  "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
   "default_locale": "id",
-  "minimum_chrome_version": "114",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -51,7 +50,14 @@
     "https://generativelanguage.googleapis.com/*",
     "https://api.x.ai/*",
     "https://api.z.ai/*",
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*",
+    "https://drive.google.com/*",
+    "https://docs.google.com/*",
+    "https://www.googleapis.com/*",
+    "https://qmwofsfpxjptpyvncylp.supabase.co/*",
+    "https://*.supabase.co/*"
   ],
   "action": {
     "default_icon": {
@@ -83,7 +89,7 @@
         "https://kimi.com/*"
       ],
       "js": [
-        "content/browser-polyfill-cs.js",
+        "lib/browser-polyfill.min.js",
         "content/ai-resolvers.js",
         "content/content.js"
       ],
@@ -98,7 +104,7 @@
         "https://*/*"
       ],
       "js": [
-        "content/browser-polyfill-cs.js",
+        "lib/browser-polyfill.min.js",
         "content/overlay.js",
         "content/selection-ai.js"
       ],
@@ -129,7 +135,7 @@
         "file:///*"
       ],
       "js": [
-        "content/browser-polyfill-cs.js",
+        "lib/browser-polyfill.min.js",
         "content/volume-shared.js",
         "content/volume-cs.js"
       ],
@@ -146,7 +152,7 @@
         "https://*.twitter.com/*"
       ],
       "js": [
-        "content/browser-polyfill-cs.js",
+        "lib/browser-polyfill.min.js",
         "content/contentguard-cs.js"
       ],
       "run_at": "document_idle",
@@ -158,11 +164,24 @@
         "https://*/*"
       ],
       "js": [
-        "content/browser-polyfill-cs.js",
+        "lib/browser-polyfill.min.js",
         "content/elementblocker-cs.js"
       ],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/tape-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "web_accessible_resources": [
@@ -175,7 +194,14 @@
         "contentguard/takeover.js",
         "contentguard/blocked.html",
         "contentguard/blocked.css",
-        "contentguard/blocked.js"
+        "contentguard/blocked.js",
+        "popup/viewer.html",
+        "popup/viewer.js",
+        "popup/viewer.css",
+        "lib/tape.js",
+        "lib/ai-detect.js",
+        "lib/vault-tree.js",
+        "lib/browser-polyfill.min.js"
       ],
       "matches": [
         "<all_urls>"
@@ -183,12 +209,11 @@
     }
   ],
   "commands": {
-    "toggle-side-panel": {
+    "_execute_action": {
       "suggested_key": {
         "default": "Alt+Shift+4",
         "mac": "Alt+Shift+4"
-      },
-      "description": "Buka/tutup sidebar RecallFox"
+      }
     },
     "capture-page": {
       "suggested_key": {

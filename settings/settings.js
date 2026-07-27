@@ -1,5 +1,8 @@
 // settings/settings.js — Settings page logic
 // RecallFox v0.1.0
+// Chrome MV3: Import polyfill + sidebar compat.
+import '../lib/browser-polyfill.min.js';
+import { openSidebar } from '../lib/sidebar-compat.js';
 
 import {
   getVault,
@@ -69,6 +72,25 @@ async function init() {
     setChk('rf-set-prayer-sunnah', s.prayerShowSunnah !== false);
     setChk('rf-set-prayer-elapsed', s.prayerShowElapsed !== false);
     setChk('rf-set-prayer-badge', s.prayerShowBadge !== false);
+    // v3.11.7-fix (Issue #6): Adzan settings
+    setChk('rf-set-prayer-adzan-enabled', s.prayerAdzanEnabled === true);
+    const adzanVol = document.getElementById('rf-set-prayer-adzan-volume');
+    if (adzanVol) {
+      adzanVol.value = s.prayerAdzanVolume ?? 0.7;
+      const volLabel = document.getElementById('rf-adzan-vol-label');
+      if (volLabel) volLabel.textContent = adzanVol.value;
+    }
+    setVal('rf-set-prayer-adzan-sound', s.prayerAdzanSound || 'default');
+    setVal('rf-set-prayer-adzan-custom-url', s.prayerAdzanCustomUrl || '');
+    // Set prayer checkboxes
+    const adzanPrayers = Array.isArray(s.prayerAdzanPrayers) && s.prayerAdzanPrayers.length > 0
+      ? s.prayerAdzanPrayers
+      : ['Fajr','Dhuhr','Asr','Maghrib','Isha'];
+    document.querySelectorAll('.rf-adzan-prayer').forEach(cb => {
+      cb.checked = adzanPrayers.includes(cb.value);
+    });
+    // Show/hide adzan options based on enabled state
+    _updateAdzanVisibility(s.prayerAdzanEnabled === true, s.prayerAdzanSound || 'default');
   } catch (e) { console.warn('[RecallFox] settings: prayer section failed:', e); }
 
   // === Habit tracker ===
@@ -88,6 +110,9 @@ async function init() {
     document.querySelectorAll('.rf-exercise-day').forEach(cb => {
       cb.checked = exerciseDays.includes(parseInt(cb.value, 10));
     });
+    // v3.11.6: Render pintasan web ngaji & olahraga
+    renderShortcutEditor('rf-set-quran-shortcuts', s.quranShortcuts, '📖');
+    renderShortcutEditor('rf-set-exercise-shortcuts', s.exerciseShortcuts, '🏃');
   } catch (e) { console.warn('[RecallFox] settings: habit tracker section failed:', e); }
 
   // === Element Blocker (v0.8.42) ===
@@ -114,6 +139,7 @@ async function init() {
   // === Persistence ===
   try {
     setChk('rf-set-sidebar-auto', !!s.sidebarAutoOpen);
+    setVal('rf-set-sidebar-autoclose', String(s.sidebarAutoCloseMinutes || 0));  // v3.9.0 (Issue 5)
     setChk('rf-set-remember-tab', s.rememberLastTab !== false);
     setVal('rf-set-backup-interval', String(s.backupIntervalHours || 6));
   } catch (e) { console.warn('[RecallFox] settings: persistence section failed:', e); }
@@ -132,8 +158,8 @@ async function init() {
 
   // === Screenshot settings ===
   try {
-    setVal('rf-set-shot-format', s.screenshotFormat || 'png');
-    setVal('rf-set-shot-quality', s.screenshotJpegQuality || 90);
+    // v3.11.7-fix (Issue #1): Ganti format/quality → tingkat kompresi tunggal
+    setVal('rf-set-shot-compression', s.screenshotCompression || 'high');
     setVal('rf-set-shot-default-mode', s.screenshotDefaultMode || 'visible');
     setVal('rf-set-shot-max-height', s.screenshotMaxFullHeight || 16384);
     setChk('rf-set-shot-sync-full', !!s.screenshotSyncFullImage);
@@ -244,6 +270,19 @@ function updateAssistantBaseUrlVisibility() {
   row.style.display = (provider === 'custom') ? 'flex' : 'none';
 }
 
+// v3.11.7-fix (Issue #6): Helper untuk show/hide adzan options berdasarkan state
+function _updateAdzanVisibility(enabled, sound) {
+  const show = (id, show) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? 'flex' : 'none';
+  };
+  show('rf-adzan-opts', enabled);
+  show('rf-adzan-sound-opts', enabled);
+  show('rf-adzan-custom-opts', enabled && sound === 'custom');
+  show('rf-adzan-prayers-opts', enabled);
+  show('rf-adzan-test-opts', enabled);
+}
+
 function updateAssistantModelHint() {
   const provider = document.getElementById('rf-set-assistant-provider').value;
   const info = getProviderInfo(provider);
@@ -326,6 +365,11 @@ function bindEvents() {
     ['rf-set-prayer-sunnah', 'prayerShowSunnah', 'checked'],
     ['rf-set-prayer-elapsed', 'prayerShowElapsed', 'checked'],
     ['rf-set-prayer-badge', 'prayerShowBadge', 'checked'],
+    // v3.11.7-fix (Issue #6): Adzan settings
+    ['rf-set-prayer-adzan-enabled', 'prayerAdzanEnabled', 'checked'],
+    ['rf-set-prayer-adzan-volume', 'prayerAdzanVolume', 'value'],
+    ['rf-set-prayer-adzan-sound', 'prayerAdzanSound', 'value'],
+    ['rf-set-prayer-adzan-custom-url', 'prayerAdzanCustomUrl', 'value'],
     // Habit tracker
     ['rf-set-quran-enabled', 'quranEnabled', 'checked'],
     ['rf-set-quran-target', 'quranTargetPages', 'value'],
@@ -343,6 +387,7 @@ function bindEvents() {
     ['rf-set-ad-exclude-media', 'autoDiscardExcludeMedia', 'checked'],
     // Persistence
     ['rf-set-sidebar-auto', 'sidebarAutoOpen', 'checked'],
+    ['rf-set-sidebar-autoclose', 'sidebarAutoCloseMinutes', 'value'],  // v3.9.0 (Issue 5)
     ['rf-set-remember-tab', 'rememberLastTab', 'checked'],
     ['rf-set-backup-interval', 'backupIntervalHours', 'value'],
     // Clear Cache
@@ -350,9 +395,8 @@ function bindEvents() {
     ['rf-set-cc-tabonly', 'clearCacheCurrentTabOnly', 'checked'],
     ['rf-set-cc-reload', 'clearCacheReload', 'checked'],
     ['rf-set-cc-notify', 'clearCacheNotify', 'checked'],
-    // Screenshot
-    ['rf-set-shot-format', 'screenshotFormat', 'value'],
-    ['rf-set-shot-quality', 'screenshotJpegQuality', 'value'],
+    // Screenshot (v3.11.7-fix Issue #1: format+quality → compression single dropdown)
+    ['rf-set-shot-compression', 'screenshotCompression', 'value'],
     ['rf-set-shot-default-mode', 'screenshotDefaultMode', 'value'],
     ['rf-set-shot-max-height', 'screenshotMaxFullHeight', 'value'],
     ['rf-set-shot-sync-full', 'screenshotSyncFullImage', 'checked'],
@@ -453,8 +497,177 @@ function bindEvents() {
           }
         } catch (e) {}
       }
+      // v3.11.7-fix (Issue #6): Update visibility adzan options saat toggle/sound berubah
+      if (key === 'prayerAdzanEnabled') {
+        const soundEl = document.getElementById('rf-set-prayer-adzan-sound');
+        _updateAdzanVisibility(val === true, soundEl ? soundEl.value : 'default');
+      }
+      if (key === 'prayerAdzanSound') {
+        const enabledEl = document.getElementById('rf-set-prayer-adzan-enabled');
+        _updateAdzanVisibility(enabledEl ? enabledEl.checked : false, val);
+      }
+      // v3.11.7-fix (Issue #6): Save prayer checkboxes (array) — handler terpisah di bawah
     });
   });
+
+  // v3.11.7-fix (Issue #6): Adzan — event listeners khusus
+  // Volume slider — update label real-time
+  const adzanVolSlider = document.getElementById('rf-set-prayer-adzan-volume');
+  if (adzanVolSlider) {
+    const volLabel = document.getElementById('rf-adzan-vol-label');
+    adzanVolSlider.addEventListener('input', () => {
+      if (volLabel) volLabel.textContent = adzanVolSlider.value;
+    });
+  }
+  // Prayer checkboxes — save sebagai array
+  document.querySelectorAll('.rf-adzan-prayer').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const selected = [...document.querySelectorAll('.rf-adzan-prayer:checked')].map(c => c.value);
+      await saveSettings({ prayerAdzanPrayers: selected });
+      toast('✓ Tersimpan: waktu adzan');
+    });
+  });
+  // Test Adzan button — v3.11.9 (Issue #3 fix): mainkan tone LANGSUNG di settings page.
+  // Sebelumnya: pakai URL IslamicFinder yang 404 → error terus.
+  // Sekarang: pakai Web Audio API generate tone (pasti jalan, no CORS, no 404).
+  // Kalau user set custom URL, pakai Audio element dengan URL custom.
+  const testAdzanBtn = document.getElementById('rf-set-prayer-adzan-test');
+  if (testAdzanBtn) {
+    let _settingsAdzanAudio = null;
+    let _settingsAdzanCtx = null;
+    testAdzanBtn.addEventListener('click', async () => {
+      try {
+        const s = await getSettings();
+        // Stop adzan sebelumnya kalau ada
+        if (_settingsAdzanAudio) {
+          try { _settingsAdzanAudio.pause(); } catch (e) {}
+          _settingsAdzanAudio = null;
+        }
+        if (_settingsAdzanCtx) {
+          try { _settingsAdzanCtx.close(); } catch (e) {}
+          _settingsAdzanCtx = null;
+        }
+
+        const vol = Math.max(0, Math.min(1, Number(s.prayerAdzanVolume) || 0.7));
+        const sound = s.prayerAdzanSound || 'default';
+        const customUrl = s.prayerAdzanCustomUrl || '';
+
+        // Update button text supaya user tahu sedang play
+        const origText = testAdzanBtn.textContent;
+        testAdzanBtn.textContent = '⏹ Stop Adzan';
+        testAdzanBtn.style.background = '#fee2e2';
+        testAdzanBtn.style.color = '#991b1b';
+
+        const resetBtn = () => {
+          testAdzanBtn.textContent = origText;
+          testAdzanBtn.style.background = '';
+          testAdzanBtn.style.color = '';
+          _settingsAdzanAudio = null;
+          _settingsAdzanCtx = null;
+        };
+
+        if (sound === 'custom' && customUrl) {
+          // Custom URL — pakai Audio element
+          _settingsAdzanAudio = new Audio(customUrl);
+          _settingsAdzanAudio.volume = vol;
+          _settingsAdzanAudio.crossOrigin = 'anonymous';
+          _settingsAdzanAudio.onended = resetBtn;
+          _settingsAdzanAudio.onerror = () => {
+            toast('Custom URL gagal — fallback ke tone', false);
+            resetBtn();
+            _playSettingsAdzanTone(vol, false, resetBtn, ctx => _settingsAdzanCtx = ctx);
+          };
+          _settingsAdzanAudio.play().catch(e => {
+            toast('Custom URL gagal: ' + e.message + ' — fallback ke tone', false);
+            resetBtn();
+            _playSettingsAdzanTone(vol, false, resetBtn, ctx => _settingsAdzanCtx = ctx);
+          });
+        } else {
+          // Default/short — pakai Web Audio API tone
+          _playSettingsAdzanTone(vol, sound === 'short', resetBtn, ctx => _settingsAdzanCtx = ctx);
+        }
+
+        // Click lagi untuk stop (pakai flag)
+        if (!testAdzanBtn._stopBound) {
+          testAdzanBtn.addEventListener('click', (e) => {
+            // Kalau button text = "Stop Adzan", berarti sedang play → stop
+            if (testAdzanBtn.textContent.includes('Stop')) {
+              if (_settingsAdzanAudio) {
+                try { _settingsAdzanAudio.pause(); } catch (err) {}
+              }
+              if (_settingsAdzanCtx) {
+                try { _settingsAdzanCtx.close(); } catch (err) {}
+              }
+              testAdzanBtn.textContent = '🔔 Test Adzan';
+              testAdzanBtn.style.background = '';
+              testAdzanBtn.style.color = '';
+            }
+          }, true);
+          testAdzanBtn._stopBound = true;
+        }
+        toast('🔔 Adzan diputar — klik tombol lagi untuk stop');
+      } catch (e) {
+        toast('Gagal test adzan: ' + e.message, false);
+      }
+    });
+
+    // v3.11.9: Helper untuk play adzan tone di settings page
+    function _playSettingsAdzanTone(vol, isShort, onEnd, saveCtx) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) {
+          toast('Browser tidak support Web Audio API', false);
+          return;
+        }
+        const ctx = new AudioCtx();
+        saveCtx(ctx);
+        const now = ctx.currentTime;
+        const notes = isShort
+          ? [
+            { freq: 440, start: 0, dur: 1.5 },
+            { freq: 392, start: 1.5, dur: 1.0 },
+            { freq: 440, start: 2.5, dur: 1.5 },
+            { freq: 349, start: 4.0, dur: 2.0 },
+          ]
+          : [
+            { freq: 440, start: 0, dur: 1.5 },
+            { freq: 392, start: 1.5, dur: 1.0 },
+            { freq: 440, start: 2.5, dur: 1.5 },
+            { freq: 392, start: 4.0, dur: 1.0 },
+            { freq: 349, start: 5.0, dur: 1.5 },
+            { freq: 392, start: 6.5, dur: 1.0 },
+            { freq: 440, start: 7.5, dur: 3.0 },
+          ];
+        const masterGain = ctx.createGain();
+        masterGain.gain.value = vol;
+        masterGain.connect(ctx.destination);
+        for (const note of notes) {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = note.freq;
+          const start = now + note.start;
+          const end = start + note.dur;
+          gain.gain.setValueAtTime(0, start);
+          gain.gain.linearRampToValueAtTime(vol, start + 0.05);
+          gain.gain.linearRampToValueAtTime(vol * 0.7, start + note.dur * 0.7);
+          gain.gain.linearRampToValueAtTime(0, end);
+          osc.connect(gain);
+          gain.connect(masterGain);
+          osc.start(start);
+          osc.stop(end + 0.1);
+        }
+        // Auto-reset setelah selesai
+        const totalDur = notes[notes.length - 1].start + notes[notes.length - 1].dur + 0.5;
+        setTimeout(() => {
+          try { ctx.close(); } catch (e) {}
+          onEnd();
+        }, totalDur * 1000);
+      } catch (e) {
+        toast('Adzan tone failed: ' + e.message, false);
+      }
+    }
+  }
 
   // ===== Content Guardian: textarea bindings (keywords & domains) =====
   const cgKeywordsEl = document.getElementById('rf-set-cg-keywords');
@@ -998,6 +1211,32 @@ function bindEvents() {
     });
   }
 
+  // v3.11.6: Binding tombol "Tambah pintasan" untuk ngaji & olahraga
+  const quranScAddBtn = document.getElementById('rf-set-quran-shortcut-add');
+  if (quranScAddBtn) {
+    quranScAddBtn.addEventListener('click', async () => {
+      const vault = await getVault();
+      const list = Array.isArray(vault.settings.quranShortcuts) ? vault.settings.quranShortcuts : [];
+      if (list.length >= 6) { toast('Maksimal 6 pintasan'); return; }
+      list.push({ name: 'Web baru', url: 'https://', emoji: '📖' });
+      await saveSettings({ quranShortcuts: list });
+      renderShortcutEditor('rf-set-quran-shortcuts', list, '📖');
+      toast('Pintasan ditambahkan — edit lalu tekan Simpan');
+    });
+  }
+  const exerciseScAddBtn = document.getElementById('rf-set-exercise-shortcut-add');
+  if (exerciseScAddBtn) {
+    exerciseScAddBtn.addEventListener('click', async () => {
+      const vault = await getVault();
+      const list = Array.isArray(vault.settings.exerciseShortcuts) ? vault.settings.exerciseShortcuts : [];
+      if (list.length >= 6) { toast('Maksimal 6 pintasan'); return; }
+      list.push({ name: 'Web baru', url: 'https://', emoji: '🏃' });
+      await saveSettings({ exerciseShortcuts: list });
+      renderShortcutEditor('rf-set-exercise-shortcuts', list, '🏃');
+      toast('Pintasan ditambahkan — edit lalu tekan Simpan');
+    });
+  }
+
   // Prayer: lat/lng/loc inputs (number/text)
   ['rf-set-prayer-lat', 'rf-set-prayer-lng', 'rf-set-prayer-loc'].forEach(id => {
     const el = document.getElementById(id);
@@ -1520,3 +1759,104 @@ browser.runtime.onMessage.addListener((msg) => {
     });
   }
 });
+
+// v3.11.6 (Issue 2 dari Google Doc): Editor pintasan web ngaji & olahraga
+// Render list of {name, url, emoji} dengan input fields + tombol hapus + tombol simpan per-row.
+// containerId: 'rf-set-quran-shortcuts' or 'rf-set-exercise-shortcuts'
+// shortcuts: array of { name, url, emoji }
+// defaultEmoji: emoji fallback kalau field emoji kosong
+function renderShortcutEditor(containerId, shortcuts, defaultEmoji) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const list = Array.isArray(shortcuts) ? shortcuts.slice(0, 6) : [];
+  if (list.length === 0) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:8px;background:var(--surface);border-radius:6px;">Belum ada pintasan. Klik tombol di bawah untuk menambah.</div>';
+    return;
+  }
+  const settingKey = containerId.includes('quran') ? 'quranShortcuts' : 'exerciseShortcuts';
+  container.innerHTML = list.map((sc, i) => {
+    const emoji = sc.emoji || defaultEmoji;
+    const name = (sc.name || '').replace(/"/g, '&quot;');
+    const url = (sc.url || '').replace(/"/g, '&quot;');
+    return '<div class="rf-shortcut-row" data-idx="' + i + '" style="display:grid;grid-template-columns:50px 1fr 2fr auto;gap:6px;align-items:center;padding:6px;background:var(--surface);border-radius:6px;border:1px solid var(--border);">'
+      + '<input type="text" class="rf-sc-emoji" value="' + emoji + '" maxlength="4" style="width:40px;text-align:center;padding:4px;border:1px solid var(--border);border-radius:4px;font-size:14px;" title="Emoji (maks 4 karakter)">'
+      + '<input type="text" class="rf-sc-name" value="' + name + '" placeholder="Nama" style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;" title="Nama pintasan">'
+      + '<input type="url" class="rf-sc-url" value="' + url + '" placeholder="https://..." style="padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;" title="URL lengkap">'
+      + '<button type="button" class="rf-sc-del" title="Hapus pintasan ini" style="padding:4px 8px;background:var(--danger-soft);color:var(--danger);border:none;border-radius:4px;cursor:pointer;font-size:14px;">🗑</button>'
+      + '</div>';
+  }).join('');
+
+  // Bind input changes (auto-save dengan debounce)
+  container.querySelectorAll('.rf-shortcut-row').forEach(row => {
+    const idx = parseInt(row.dataset.idx, 10);
+    let saveTimer = null;
+    const scheduleSave = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(async () => {
+        const vault = await getVault();
+        const arr = Array.isArray(vault.settings[settingKey]) ? vault.settings[settingKey] : [];
+        if (idx >= arr.length) return;
+        arr[idx] = {
+          emoji: row.querySelector('.rf-sc-emoji').value.trim() || defaultEmoji,
+          name: row.querySelector('.rf-sc-name').value.trim() || 'Web',
+          url: row.querySelector('.rf-sc-url').value.trim() || 'https://'
+        };
+        await saveSettings({ [settingKey]: arr });
+        toast('Tersimpan', false);
+      }, 800);
+    };
+    row.querySelector('.rf-sc-emoji').addEventListener('input', scheduleSave);
+    row.querySelector('.rf-sc-name').addEventListener('input', scheduleSave);
+    row.querySelector('.rf-sc-url').addEventListener('input', scheduleSave);
+
+    // Bind delete button
+    row.querySelector('.rf-sc-del').addEventListener('click', async () => {
+      if (!confirm('Hapus pintasan ini?')) return;
+      const vault = await getVault();
+      const arr = Array.isArray(vault.settings[settingKey]) ? vault.settings[settingKey] : [];
+      arr.splice(idx, 1);
+      await saveSettings({ [settingKey]: arr });
+      renderShortcutEditor(containerId, arr, defaultEmoji);
+      toast('Pintasan dihapus');
+    });
+  });
+}
+
+// ============================================================
+// v3.11.7: Multi-PC Sync — Profile Manager + Sync Actions
+// ============================================================
+
+// v3.11.7-fix (Issue #5): Multi-PC Sync UI dipindah ke sidebar (RecallFox Vault).
+// Di settings page sekarang hanya ada tombol "Buka Sidebar" yang membuka sidebar
+// RecallFox + arah ke tab Alat → Sync Cloud. Fungsi initMultiPCSync, doSyncAction,
+// openSyncProfileManager, renderSyncProfileList, addProfileFromForm, testProfileFromForm
+// DIPINDAH ke popup/popup.js supaya sidebar jadi satu pintu untuk semua sync.
+async function initSidebarSyncRedirect() {
+  try {
+    const btn = document.getElementById('rf-open-sidebar-sync');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      try {
+        // Chrome MV3: pakai openSidebar() dari sidebar-compat.js (handle Firefox + Chrome).
+        const result = await openSidebar();
+        if (!result.ok) {
+          alert('Sidebar tidak didukung di browser ini. Buka sidebar RecallFox manual dari toolbar.');
+          return;
+        }
+        // Tampilkan toast pengingat
+        toast('🦊 Buka tab "Alat" → "Sync Cloud" di sidebar');
+      } catch (e) {
+        alert('Gagal membuka sidebar: ' + e.message + '\n\nBuka sidebar RecallFox manual dari toolbar Firefox, lalu pilih tab Alat → Sync Cloud.');
+      }
+    });
+  } catch (e) {
+    console.warn('[RecallFox] initSidebarSyncRedirect failed:', e);
+  }
+}
+
+// Call init on DOMContentLoaded (append to existing init)
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => setTimeout(initSidebarSyncRedirect, 200));
+} else {
+  setTimeout(initSidebarSyncRedirect, 200);
+}
