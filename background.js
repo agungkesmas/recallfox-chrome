@@ -27,6 +27,11 @@ import {
   saveSettings,
   addItem,
   getVault,
+  saveVault,
+  getScreenshotBlob,
+  deleteItem,
+  deleteBundle,
+  addNote,
   markBypass,
   isBypassed,
   getUserBlocklist,
@@ -35,6 +40,67 @@ import {
   clearUserBlocklist,
   exportAllScreenshotBlobs
 } from './lib/storage.js';
+// Chrome MV3 (v3.20.4): dynamic import() is disallowed on ServiceWorkerGlobalScope
+// by the HTML spec — see https://github.com/w3c/ServiceWorker/issues/1356.
+// All previously-lazy-loaded modules are now imported statically. This is a
+// no-op refactor for Firefox (which supports dynamic import), but a hard
+// requirement for Chrome MV3 service worker.
+import {
+  fetchPrayerTimes,
+  reverseGeocode,
+  geocode,
+  getNextPrayer,
+  formatCountdown
+} from './lib/salahtime.js';
+import {
+  isLoggedIn,
+  signInWithEmail,
+  signUpWithEmail,
+  signInWithGmail,
+  signOut,
+  testConnection as testSupabaseConnection,
+  handleOAuthCallback
+} from './lib/supabase-client.js';
+import {
+  startRealtimeSync,
+  subscribeRealtimeVault,
+  stopRealtimeSync,
+  getSupabaseStatus,
+  pushToSupabase,
+  pullFromSupabaseV33,
+  fullSync as supabaseFullSync,
+  deleteItemFromCloud,
+  deleteNoteFromCloud,
+  triggerAutoSync,
+  getOrDownloadScreenshotBlob
+} from './lib/supabase-sync.js';
+import {
+  initBackup,
+  startBackupInterval,
+  manualBackupWithTimestamp,
+  buildBackupPayload
+} from './lib/autobackup.js';
+import { clearBrowsingData } from './lib/clearcache.js';
+import { normalizeDb, getSiteVolume, setSiteVolume, extractDomain, isRestrictedUrl } from './lib/volume.js';
+import {
+  scheduleAutoSync,
+  getSyncProfiles,
+  addSyncProfile,
+  updateSyncProfile,
+  deleteSyncProfile,
+  setActiveProfile,
+  getActiveProfile,
+  pushStateToCloud,
+  pullStateFromCloud,
+  fullSync as profileFullSync,
+  testProfileConnection,
+  getSyncStatus
+} from './lib/sync-profile.js';
+import { buildPdfBlob } from './lib/pdf.js';
+import { getSunnahFastTomorrow, parseHijriString } from './lib/islamicCalendar.js';
+import { isExerciseTime, getQuranStatus } from './lib/habits.js';
+import { isAIPageFromOrigin } from './lib/ai-detect.js';
+
 // v3.7: Import untuk backup handlers
 import { encryptBackup, decryptBackup, isEncryptedBackup } from './lib/crypto.js';
 import {
@@ -78,7 +144,7 @@ browser.runtime.onInstalled.addListener(async () => {
 
   // 3. Auto-backup initialization (creates Downloads/RecallFox/ folder)
   try {
-    const { initBackup, startBackupInterval } = await import('./lib/autobackup.js');
+    
     await initBackup();
     await startBackupInterval();
   } catch (e) {
@@ -110,10 +176,10 @@ browser.runtime.onInstalled.addListener(async () => {
   // alarm mati sampai Firefox di-restart → sync tidak real-time.
   // Solusi: gated isLoggedIn() (mirror onStartup pattern).
   try {
-    const { isLoggedIn } = await import('./lib/supabase-client.js');
+    
     const loggedIn = await isLoggedIn();
     if (loggedIn) {
-      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+      
       await startRealtimeSync();
       await subscribeRealtimeVault();
       console.log('[RecallFox] onInstalled: Supabase realtime sync started (v3.13.3)');
@@ -130,7 +196,7 @@ browser.runtime.onInstalled.addListener(async () => {
   // Migration: parse [Tujuan: ...] dari body → set contextPurpose → bersihkan body.
   // Juga backfill snapshotDomain dari source.url untuk existing snapshots.
   try {
-    const { getVault, saveVault } = await import('./lib/storage.js');
+    
     const vault = await getVault();
     let migrated = 0;
     for (const item of (vault.items || [])) {
@@ -203,7 +269,7 @@ browser.runtime.onStartup.addListener(async () => {
 
   // Auto-backup interval timer
   try {
-    const { startBackupInterval } = await import('./lib/autobackup.js');
+    
     await startBackupInterval();
   } catch (e) {
     console.warn('[RecallFox] onStartup: Backup interval start failed:', e.message);
@@ -215,10 +281,10 @@ browser.runtime.onStartup.addListener(async () => {
 
   // v3.11.29: Start Supabase realtime sync kalau user sudah logged in
   try {
-    const { isLoggedIn } = await import('./lib/supabase-client.js');
+    
     const loggedIn = await isLoggedIn();
     if (loggedIn) {
-      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+      
       await startRealtimeSync();
       await subscribeRealtimeVault();
       console.log('[RecallFox] Supabase realtime sync started on startup (v3.11.33)');
@@ -500,7 +566,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'rf-snapshot') {
     // v3.16.2: Cek via isAIPageFromOrigin (dynamic dari storage.aiSites)
     try {
-      const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
+      
       const isAI = await isAIPageFromOrigin(tab.url || info.pageUrl);
       if (!isAI) {
         console.log('[RecallFox] Snapshot dibatalkan — halaman bukan AI site (cek aiSites)');
@@ -524,7 +590,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'rf-clear-cache') {
     console.log('[RecallFox] Context menu → clear cache');
     const settings = await getSettings();
-    const { clearBrowsingData } = await import('./lib/clearcache.js');
+    
     const res = await clearBrowsingData({
       dataTypes: settings.clearCacheDataTypes,
       timePeriod: settings.clearCacheTimePeriod,
@@ -1006,7 +1072,7 @@ async function saveCaptureToVault(payload) {
   // Sekarang: auto-trigger Supabase push (debounced 3s) supaya screenshot otomatis
   // masuk ke cloud + Storage bucket.
   try {
-    const { triggerAutoSync } = await import('./lib/supabase-sync.js');
+    
     triggerAutoSync();
     console.log('[RecallFox] Auto-sync triggered after screenshot save');
   } catch (e) { /* Supabase mungkin belum di-setup — silent */ }
@@ -1020,7 +1086,7 @@ async function saveCaptureAs(payload) {
   let blob, ext, mime;
 
   if (format === 'pdf') {
-    const { buildPdfBlob } = await import('./lib/pdf.js');
+    
     blob = await buildPdfBlob(dataUrl, { title: payload.title || 'RecallFox Screenshot' });
     ext = 'pdf';
     mime = 'application/pdf';
@@ -1265,7 +1331,7 @@ async function handleCommand(cmd) {
   if (cmd === 'clear-cache') {
     console.log('[RecallFox] Command → clear cache');
     const settings = await getSettings();
-    const { clearBrowsingData } = await import('./lib/clearcache.js');
+    
     const res = await clearBrowsingData({
       dataTypes: settings.clearCacheDataTypes,
       timePeriod: settings.clearCacheTimePeriod,
@@ -1282,7 +1348,7 @@ async function handleCommand(cmd) {
 
   // === Volume control commands ===
   if (cmd === 'volume-up' || cmd === 'volume-down' || cmd === 'volume-reset') {
-    const { normalizeDb, getSiteVolume, setSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
+    
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id || !tab.url || isRestrictedUrl(tab.url)) return;
 
@@ -1379,7 +1445,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const settings = await getSettings();
       if (settings.syncAutoEnabled) {
-        const { scheduleAutoSync } = await import('./lib/sync-profile.js');
+        
         scheduleAutoSync();
       }
     } catch (e) { /* silent */ }
@@ -1620,7 +1686,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.7: MANUAL_BACKUP_NOW — trigger backup manual ke Downloads/RecallFox/
   if (msg.type === 'MANUAL_BACKUP_NOW') {
     try {
-      const { manualBackupWithTimestamp } = await import('./lib/autobackup.js');
+      
       const result = await manualBackupWithTimestamp();
       // v3.8.1 (Issue #6): Jika gdriveAutoBackupOnLocalBackup aktif, kirim juga ke GDrive
       try {
@@ -1629,7 +1695,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Kirim full backup async (fire-and-forget)
           (async () => {
             try {
-              const { buildBackupPayload } = await import('./lib/autobackup.js');
+              
               const payload = await buildBackupPayload();
               payload.backupType = 'manual';
               await gdriveSendFullBackup(payload);
@@ -1659,7 +1725,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'GDRIVE_FULL_BACKUP') {
     try {
-      const { buildBackupPayload } = await import('./lib/autobackup.js');
+      
       const payload = await buildBackupPayload();
       payload.backupType = 'manual';
       const result = await gdriveSendFullBackup(payload);
@@ -1708,43 +1774,43 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ============================================================
   if (msg.type === 'SYNC_GET_PROFILES') {
     try {
-      const { getSyncProfiles } = await import('./lib/sync-profile.js');
+      
       sendResponse({ ok: true, data: await getSyncProfiles() }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_ADD_PROFILE') {
     try {
-      const { addSyncProfile } = await import('./lib/sync-profile.js');
+      
       const profile = await addSyncProfile(msg.profile);
       sendResponse({ ok: true, profile }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_UPDATE_PROFILE') {
     try {
-      const { updateSyncProfile } = await import('./lib/sync-profile.js');
+      
       const profile = await updateSyncProfile(msg.id, msg.patch);
       sendResponse({ ok: true, profile }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_DELETE_PROFILE') {
     try {
-      const { deleteSyncProfile } = await import('./lib/sync-profile.js');
+      
       const data = await deleteSyncProfile(msg.id);
       sendResponse({ ok: true, data }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_SET_ACTIVE') {
     try {
-      const { setActiveProfile } = await import('./lib/sync-profile.js');
+      
       await setActiveProfile(msg.id);
       sendResponse({ ok: true }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_PUSH') {
     try {
-      const { pushStateToCloud, getActiveProfile } = await import('./lib/sync-profile.js');
+      
       const profile = msg.profileId
-        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        ? getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
       if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await pushStateToCloud(profile);
@@ -1753,9 +1819,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'SYNC_PULL') {
     try {
-      const { pullStateFromCloud, getActiveProfile } = await import('./lib/sync-profile.js');
+      
       const profile = msg.profileId
-        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        ? getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
       if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await pullStateFromCloud(profile);
@@ -1774,9 +1840,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'SYNC_FULL') {
     try {
-      const { fullSync, getActiveProfile } = await import('./lib/sync-profile.js');
+      const fullSync = profileFullSync;
       const profile = msg.profileId
-        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        ? getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
       if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await fullSync(profile);
@@ -1794,14 +1860,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'SYNC_TEST_PROFILE') {
     try {
-      const { testProfileConnection } = await import('./lib/sync-profile.js');
+      
       const result = await testProfileConnection(msg.profile);
       sendResponse(result); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_STATUS') {
     try {
-      const { getSyncStatus } = await import('./lib/sync-profile.js');
+      
       sendResponse({ ok: true, status: await getSyncStatus() }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
@@ -1994,7 +2060,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'CLEAR_CACHE') {
     // Sent from popup/sidebar "Clear Cache" button
     const settings = await getSettings();
-    const { clearBrowsingData } = await import('./lib/clearcache.js');
+    
     const res = await clearBrowsingData({
       dataTypes: settings.clearCacheDataTypes,
       timePeriod: settings.clearCacheTimePeriod,
@@ -2006,7 +2072,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'VOLUME_SET') {
     // Set volume for current tab's domain
-    const { normalizeDb, setSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
+    
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
@@ -2019,7 +2085,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'VOLUME_GET') {
     // Get volume for current tab's domain
-    const { getSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
+    
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
@@ -2051,7 +2117,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'RESTART_BACKUP_TIMER') {
     // User changed backup interval in Settings — restart timer
     try {
-      const { startBackupInterval } = await import('./lib/autobackup.js');
+      
       await startBackupInterval();
       sendResponse({ ok: true }); return;
     } catch (e) {
@@ -2125,7 +2191,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     try {
-      const { fetchPrayerTimes } = await import('./lib/salahtime.js');
+      
       const times = await fetchPrayerTimes(s.prayerLatitude, s.prayerLongitude, {
         school: s.prayerAsrSchool || 0
       });
@@ -2148,7 +2214,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'PRAYER_REVERSE_GEOCODE') {
     // Reverse geocode coordinates to a human-readable location
-    const { reverseGeocode } = await import('./lib/salahtime.js');
+    
     try {
       const location = await reverseGeocode(msg.lat, msg.lng);
       sendResponse({ ok: true, location }); return;
@@ -2158,7 +2224,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'PRAYER_GEOCODE') {
     // Geocode an address string to coordinates
-    const { geocode } = await import('./lib/salahtime.js');
+    
     try {
       const result = await geocode(msg.address);
       sendResponse({ ok: true, ...result }); return;
@@ -2209,7 +2275,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // User audit: "Pull sync hanya transfer metadata, bukan blob gambar.
     //   Saat device lain coba copy/paste, blob lokal tidak ada → error 'no_blob'."
     try {
-      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      
       const res = await getOrDownloadScreenshotBlob(msg.id);
       sendResponse({ ok: res.ok, dataUrl: res.dataUrl, source: res.source, error: res.error });
       return;
@@ -2217,7 +2283,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       console.warn('[RecallFox] GET_SCREENSHOT_BLOB failed:', e.message);
       // Fallback ke cara lama (local-only) kalau supabase-sync gagal import
       try {
-        const { getScreenshotBlob } = await import('./lib/storage.js');
+        
         const dataUrl = await getScreenshotBlob(msg.id);
         sendResponse({ ok: true, dataUrl }); return;
       } catch (e2) {
@@ -2229,7 +2295,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Dipakai oleh popup/viewer.js untuk multi-page viewer.
   if (msg.type === 'GET_DOCUMENT_PAGES') {
     try {
-      const { getVault } = await import('./lib/storage.js');
+      
       const vault = await getVault();
       const item = (vault.items || []).find(i => i.id === msg.id);
       if (!item) {
@@ -2301,7 +2367,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     //   string (Base64)". Pattern ini sudah dipakai 4x di file ini (clipboard
     //   fallback) — sekarang konsisten.
     try {
-      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      
       const res = await getOrDownloadScreenshotBlob(msg.id);
       const dataUrl = res?.ok ? res.dataUrl : null;
       if (!dataUrl) { sendResponse({ ok: false, error: res?.error || 'no_blob' }); return; }
@@ -2348,8 +2414,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Returns: { ok: bool, message?: string, error?: string }
     try {
       // v3.11.35: Pakai lazy download — kalau blob lokal null, fetch dari cloud.
-      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
-      const { getVault } = await import('./lib/storage.js');
+      
+      
       const blobRes = await getOrDownloadScreenshotBlob(msg.id);
       const dataUrl = blobRes.dataUrl;
       if (!dataUrl) { sendResponse({ ok: false, error: blobRes.error || 'no_blob' }); return; }
@@ -2640,7 +2706,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!Array.isArray(ids) || ids.length === 0) {
         sendResponse({ ok: false, error: 'no_ids' }); return;
       }
-      const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
+      
       const vault = await getVault();
       const screenshots = [];
       for (const id of ids) {
@@ -2808,7 +2874,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!Array.isArray(ids) || ids.length === 0) {
         sendResponse({ ok: false, error: 'no_ids' }); return;
       }
-      const { deleteItem, deleteBundle, getVault } = await import('./lib/storage.js');
+      
       // Ambil vault sekali untuk cek apakah id adalah item atau bundle
       const vault = await getVault();
       const itemIdSet = new Set((vault.items || []).map(i => i.id));
@@ -2834,7 +2900,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       // Trigger sync sekali setelah semua hapus (lebih efisien daripada sync per item)
       try {
-        const { pushToSync } = await import('./lib/storage.js');
+        
         await pushToSync();
       } catch (e) { /* silent — sync opsional */ }
       sendResponse({
@@ -2949,13 +3015,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_LOGIN — login email/password
   if (msg.type === 'SUPABASE_LOGIN') {
     try {
-      const { signInWithEmail } = await import('./lib/supabase-client.js');
+      
       const res = await signInWithEmail(msg.email, msg.password);
       // v3.11.29: Start realtime sync setelah login sukses
       // v3.11.33: Also subscribe to Realtime WebSocket channel
       if (res.ok) {
         try {
-          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+          
           await startRealtimeSync();
           await subscribeRealtimeVault();
         } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
@@ -2969,13 +3035,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_SIGNUP — signup email/password baru
   if (msg.type === 'SUPABASE_SIGNUP') {
     try {
-      const { signUpWithEmail } = await import('./lib/supabase-client.js');
+      
       const res = await signUpWithEmail(msg.email, msg.password);
       // v3.11.29: Start realtime sync setelah signup sukses
       // v3.11.33: Also subscribe to Realtime WebSocket channel
       if (res.ok) {
         try {
-          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
+          
           await startRealtimeSync();
           await subscribeRealtimeVault();
         } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
@@ -2989,7 +3055,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_GMAIL — login via Gmail OAuth (redirect)
   if (msg.type === 'SUPABASE_GMAIL') {
     try {
-      const { signInWithGmail } = await import('./lib/supabase-client.js');
+      
       const res = await signInWithGmail();
       sendResponse(res); return;
     } catch (e) {
@@ -3002,10 +3068,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       // v3.11.29: Stop realtime sync sebelum logout
       try {
-        const { stopRealtimeSync } = await import('./lib/supabase-sync.js');
+        
         await stopRealtimeSync();
       } catch (e) {}
-      const { signOut } = await import('./lib/supabase-client.js');
+      
       await signOut();
       sendResponse({ ok: true }); return;
     } catch (e) {
@@ -3016,7 +3082,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_STATUS — cek login status + user info
   if (msg.type === 'SUPABASE_STATUS') {
     try {
-      const { getSupabaseStatus } = await import('./lib/supabase-sync.js');
+      
       const status = await getSupabaseStatus();
       sendResponse({ ok: true, status }); return;
     } catch (e) {
@@ -3027,7 +3093,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_PUSH — upload local state ke cloud
   if (msg.type === 'SUPABASE_PUSH') {
     try {
-      const { pushToSupabase } = await import('./lib/supabase-sync.js');
+      
       const res = await pushToSupabase();
       sendResponse(res); return;
     } catch (e) {
@@ -3041,7 +3107,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // v3.13.3 (A2 fix): Pakai pullFromSupabaseV33 — variant yang filter
       // deleted_at IS NULL server-side + hapus item lokal yang sudah di-hard-delete
       // di device lain. Variant lama (pullFromSupabase) tidak ada reconciliation.
-      const { pullFromSupabaseV33 } = await import('./lib/supabase-sync.js');
+      
       const res = await pullFromSupabaseV33();
       sendResponse(res); return;
     } catch (e) {
@@ -3052,7 +3118,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_FULL_SYNC — push + pull
   if (msg.type === 'SUPABASE_FULL_SYNC') {
     try {
-      const { fullSync } = await import('./lib/supabase-sync.js');
+      const fullSync = supabaseFullSync;
       const res = await fullSync();
       sendResponse(res); return;
     } catch (e) {
@@ -3063,7 +3129,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_TEST_CONNECTION — test koneksi ke project (tanpa login)
   if (msg.type === 'SUPABASE_TEST_CONNECTION') {
     try {
-      const { testConnection } = await import('./lib/supabase-client.js');
+      const testConnection = testSupabaseConnection;
       const res = await testConnection();
       sendResponse(res); return;
     } catch (e) {
@@ -3075,7 +3141,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.11.29: Fix — gunakan msg.itemId (bukan msg.id) supaya cocok dengan storage.js
   if (msg.type === 'SUPABASE_DELETE_ITEM') {
     try {
-      const { deleteItemFromCloud } = await import('./lib/supabase-sync.js');
+      
       const res = await deleteItemFromCloud(msg.itemId || msg.id);
       // v3.11.29: Setelah delete di cloud, trigger pull supaya device lain dapat update
       // (realtime subscription akan handle ini, tapi pull sebagai fallback)
@@ -3090,7 +3156,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.11.29: Fix — gunakan msg.noteId (bukan msg.id)
   if (msg.type === 'SUPABASE_DELETE_NOTE') {
     try {
-      const { deleteNoteFromCloud } = await import('./lib/supabase-sync.js');
+      
       const res = await deleteNoteFromCloud(msg.noteId || msg.id);
       console.log('[RecallFox] SUPABASE_DELETE_NOTE:', msg.noteId || msg.id, '→', res.ok ? 'OK' : res.error);
       sendResponse(res); return;
@@ -3103,7 +3169,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.11.29: Sekaligus trigger pull setelah push (untuk realtime sync)
   if (msg.type === 'SUPABASE_AUTO_SYNC') {
     try {
-      const { triggerAutoSync } = await import('./lib/supabase-sync.js');
+      
       triggerAutoSync();
       sendResponse({ ok: true }); return;
     } catch (e) {
@@ -3114,7 +3180,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_OAUTH_CALLBACK — handle redirect dari Gmail OAuth (parse token dari URL hash)
   if (msg.type === 'SUPABASE_OAUTH_CALLBACK') {
     try {
-      const { handleOAuthCallback } = await import('./lib/supabase-client.js');
+      
       const res = await handleOAuthCallback();
       sendResponse(res || { ok: false, error: 'no_callback_data' }); return;
     } catch (e) {
@@ -3186,7 +3252,7 @@ async function checkPrayerReminder() {
     const today = new Date().toISOString().slice(0, 10);
     if (!times || times.date !== today) {
       try {
-        const { fetchPrayerTimes } = await import('./lib/salahtime.js');
+        
         times = await fetchPrayerTimes(settings.prayerLatitude, settings.prayerLongitude, {
           school: settings.prayerAsrSchool || 0
         });
@@ -3200,13 +3266,13 @@ async function checkPrayerReminder() {
       }
     }
 
-    const { getNextPrayer, formatCountdown } = await import('./lib/salahtime.js');
+    
     const next = getNextPrayer(times.timings);
     if (!next) return;
 
     // === Puasa sunnah H-1 notification ===
     try {
-      const { getSunnahFastTomorrow, parseHijriString } = await import('./lib/islamicCalendar.js');
+      
       // Use robust parser (handles diacritics + English month name aliases)
       const hijriObj = times.hijri ? parseHijriString(times.hijri) : null;
       if (hijriObj) {
@@ -3392,7 +3458,7 @@ async function updatePrayerBadge() {
       return;
     }
 
-    const { getNextPrayer, formatCountdown } = await import('./lib/salahtime.js');
+    
     const next = getNextPrayer(times.timings);
     if (!next) {
       try {
@@ -3469,7 +3535,7 @@ async function checkExerciseReminder() {
       await saveSettings({ exerciseLastReminderKey: reminderKey });
     } else {
       // Mode interval (lama)
-      const { isExerciseTime } = await import('./lib/habits.js');
+      
       if (!isExerciseTime(settings)) return;
     }
 
@@ -3511,7 +3577,7 @@ async function checkExerciseReminder() {
       // v3.16.2: Cek AI page via isAIPageFromOrigin (dynamic dari storage.aiSites)
       let isOnAI = false;
       try {
-        const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
+        
         isOnAI = await isAIPageFromOrigin(activeUrl);
       } catch (e) {
         // Fallback: kalau ai-detect.js gagal load, anggap bukan AI
@@ -3730,7 +3796,7 @@ async function checkQuranReminder() {
     if (settings.quranLastReminderKey === reminderKey) return; // already notified today
 
     // Check if user already completed ngaji today
-    const { getQuranStatus } = await import('./lib/habits.js');
+    
     const status = await getQuranStatus(settings);
     if (status.isComplete) return; // already done, no need to remind
 
@@ -4233,7 +4299,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const { markdown, text, grandTotal } = msg;
-        const { addNote } = await import('./lib/storage.js');
+        
         const note = await addNote(markdown || text, {
           title: '🧮 RecallTape — Total: ' + (grandTotal || 0).toLocaleString('id-ID'),
           group: 'RecallTape'
