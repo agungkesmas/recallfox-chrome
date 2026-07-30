@@ -447,9 +447,16 @@
     }
 
     // Focus title input for quick editing
+    // v3.20.1: select-all supaya nama default langsung terblok — user bisa langsung
+    //   ketik untuk timpa tanpa perlu blok manual + delete.
+    //   User: "nama file ketika di pencet itu dalam kondisi terblok, sehingga bisa
+    //   langsung di rename/ ditimpa untuk diberi nama baru."
     setTimeout(() => {
       const titleInput = modal.querySelector('#rf-snap-title');
-      if (titleInput) titleInput.focus();
+      if (titleInput) {
+        titleInput.focus();
+        titleInput.select();
+      }
     }, 50);
   }
 

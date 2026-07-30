@@ -4081,7 +4081,18 @@ async function openEditorSheet(id) {
       finally { parafraseBtn.textContent = orig; parafraseBtn.disabled = false; }
     });
 
-    setTimeout(() => b.querySelector('#fTitle')?.focus(), 120);
+    // v3.20.1: Auto-select judul saat modal edit dibuka (hanya kalau lagi edit existing
+    //   item — bukan create new, karena create new input-nya kosong).
+    //   User: "nama file ketika di pencet itu dalam kondisi terblok, sehingga bisa
+    //   langsung di rename/ ditimpa untuk diberi nama baru."
+    //   NB: pakai 'it' (var lokal di scope openEditorSheet), bukan 'existing'
+    //   (tidak terdefinisi di scope ini — Firefox v3.20.1 latent bug, fixed di sini).
+    setTimeout(() => {
+      const t = b.querySelector('#fTitle');
+      if (!t) return;
+      t.focus();
+      if (it) t.select();  // select-all supaya user bisa langsung timpa judul lama
+    }, 120);
   });
 }
 async function saveEditorSheet(existing) {

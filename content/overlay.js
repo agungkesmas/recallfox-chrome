@@ -638,6 +638,16 @@
     const sizeText = fmtBytes(bytes);
     const modeLabel = mode === 'visible' ? 'Bagian terlihat' : mode === 'selection' ? 'Seleksi area' : 'Seluruh halaman';
 
+    // v3.20.1: Default filename (tanpa ekstensi) — di-pre-fill ke input nama file.
+    // User instruction: "nama file ketika di pencet itu dalam kondisi terblok,
+    //   sehingga bisa langsung di rename/ ditimpa untuk diberi nama baru."
+    //   → Input di-focus + select-all saat modal dibuka, sehingga tombol apa pun
+    //     yang user tekan langsung menimpa nama default.
+    const pageTitleForName = document.title || 'screenshot';
+    const safeNameDefault = pageTitleForName.replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
+    const tsDefault = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+    const defaultFileName = `${safeNameDefault}_${tsDefault}`;
+
     modalEl.innerHTML = `
       <div class="rf-capture-modal">
         <div class="rf-capture-modal-header">
@@ -646,6 +656,14 @@
           <button class="rf-capture-modal-close" title="Tutup">×</button>
         </div>
         <div class="rf-capture-modal-body">
+          <div class="rf-capture-modal-filename-row" style="margin-bottom:12px">
+            <label for="rf-capture-modal-filename" style="display:block;font-size:12px;font-weight:600;color:#57534e;margin-bottom:4px">📝 Nama file</label>
+            <input id="rf-capture-modal-filename" type="text"
+              value="${escapeHtmlAttr(defaultFileName)}"
+              placeholder="Ketik nama file (tanpa ekstensi)..."
+              style="width:100%;padding:9px 12px;font-size:14px;font-weight:500;border:1.5px solid #6d3df5;border-radius:8px;outline:none;box-sizing:border-box;background:#faf5ff;color:#1c1917" />
+            <div style="font-size:11px;color:#78716c;margin-top:4px">Ekstensi (.pdf / .jpg / .png) ditambahkan otomatis sesuai tombol simpan. Langsung ketik untuk menimpa nama default.</div>
+          </div>
           <div class="rf-capture-modal-preview">
             <img src="${dataUrl}" alt="Screenshot preview" />
           </div>
@@ -699,6 +717,34 @@
     `;
     document.body.appendChild(modalEl);
 
+    // v3.20.1: Auto-focus + select-all filename input saat modal dibuka.
+    // User instruction: "nama file ketika di pencet itu dalam kondisi terblok,
+    //   sehingga bisa langsung di rename/ ditimpa untuk diberi nama baru."
+    //   → Saat modal muncul, filename input langsung ter-select semua,
+    //     sehingga user tidak perlu blok manual + delete — langsung ketik untuk timpa.
+    const fileNameInput = modalEl.querySelector('#rf-capture-modal-filename');
+    if (fileNameInput) {
+      // focus + select harus di-delay supaya DOM sudah render & animasi modal selesai
+      setTimeout(() => {
+        try {
+          fileNameInput.focus();
+          fileNameInput.select();
+        } catch (e) { /* ignore */ }
+      }, 80);
+      // Re-select on focus (kalau user klik keluar lalu klik balik ke input)
+      fileNameInput.addEventListener('focus', () => {
+        setTimeout(() => { try { fileNameInput.select(); } catch (e) {} }, 0);
+      });
+      // Enter pada input filename = trigger save PNG (paling umum)
+      fileNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const savePngBtn = modalEl.querySelector('[data-action="save-png"]');
+          if (savePngBtn) savePngBtn.click();
+        }
+      });
+    }
+
     const close = () => {
       if (modalEl) {
         modalEl.remove();
@@ -743,15 +789,20 @@
 
     try {
       const pageTitle = document.title || 'screenshot';
-      const safeName = pageTitle.replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60);
-      const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
+      // v3.20.1: Ambil filename dari input user (kalau modal masih ada & input ada).
+      // Fallback ke default lama (pageTitle + timestamp) kalau input tidak ditemukan
+      // (mis. modal sudah ditutup, atau action dipanggil dari jalur lain).
+      const fileNameInputEl = document.getElementById('rf-capture-modal-filename');
+      const userFileName = fileNameInputEl && fileNameInputEl.value
+        ? sanitizeFileName(fileNameInputEl.value)
+        : `${pageTitle.replace(/[^a-z0-9\-_]+/gi, '_').slice(0, 60)}_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}`;
 
       if (action === 'save-pdf') {
         showStatus('Membuat PDF…');
         const res = await browser.runtime.sendMessage({
           type: 'SAVE_CAPTURE_AS', format: 'pdf',
           dataUrl: lastCapture.dataUrl, title: pageTitle,
-          filename: `${safeName}_${ts}.pdf`
+          filename: `${userFileName}.pdf`
         });
         if (res?.ok) showStatus('✓ PDF tersimpan ke folder Downloads');
         else showStatus('✗ Gagal: ' + (res?.error || 'unknown'), true);
@@ -762,7 +813,7 @@
         const res = await browser.runtime.sendMessage({
           type: 'SAVE_CAPTURE_AS', format: ext,
           dataUrl: lastCapture.dataUrl, title: pageTitle,
-          filename: `${safeName}_${ts}.${ext}`
+          filename: `${userFileName}.${ext}`
         });
         if (res?.ok) showStatus(`✓ ${ext.toUpperCase()} tersimpan ke folder Downloads`);
         else showStatus('✗ Gagal: ' + (res?.error || 'unknown'), true);
@@ -965,11 +1016,18 @@
 
       } else if (action === 'save-vault') {
         showStatus('Menyimpan ke vault…');
+        // v3.20.1: Pakai filename dari input sebagai title vault item (lebih meaningful
+        //   daripada "Screenshot <timestamp>"). Title vault beda dengan filename —
+        //   boleh berisi spasi & karakter unicode, jadi TIDAK di-sanitize.
+        const vaultTitle = (fileNameInputEl && fileNameInputEl.value)
+          ? fileNameInputEl.value.trim()
+          : (document.title || 'Screenshot ' + new Date().toLocaleString());
         const res = await browser.runtime.sendMessage({
           type: 'SAVE_CAPTURE_TO_VAULT',
           dataUrl: lastCapture.dataUrl, width: lastCapture.width,
           height: lastCapture.height, bytes: lastCapture.bytes, mode: lastCapture.mode,
           url: location.href, pageTitle: document.title,
+          title: vaultTitle,
           annotationNote: lastCapture.note || ''  // v3.11.26 (Issue #2): catatan anotasi
         });
         if (res?.ok) showStatus('✓ Tersimpan ke vault');
@@ -1005,6 +1063,19 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+  // v3.20.1: Helper escape untuk attribute value (single + double quote).
+  function escapeHtmlAttr(s) {
+    return escapeHtml(s).replace(/'/g, '&#39;');
+  }
+  // v3.20.1: Sanitize filename dari input user — buang karakter ilegal buat filesystem.
+  // Backslash, slash, :, *, ?, ", <, >, |, control chars → underscore.
+  function sanitizeFileName(s) {
+    return (s || '').toString()
+      .replace(/[\\\/:*?"<>|\x00-\x1f]/g, '_')
+      .replace(/^\.+/, '')
+      .trim()
+      .slice(0, 120) || 'screenshot';
   }
 
   // ===== Init =====

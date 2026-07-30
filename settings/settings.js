@@ -1846,7 +1846,7 @@ async function initSidebarSyncRedirect() {
         // Tampilkan toast pengingat
         toast('🦊 Buka tab "Alat" → "Sync Cloud" di sidebar');
       } catch (e) {
-        alert('Gagal membuka sidebar: ' + e.message + '\n\nBuka sidebar RecallFox manual dari toolbar Firefox, lalu pilih tab Alat → Sync Cloud.');
+        alert('Gagal membuka sidebar: ' + e.message + '\n\nBuka sidebar RecallFox manual dari toolbar, lalu pilih tab Alat → Sync Cloud.');
       }
     });
   } catch (e) {

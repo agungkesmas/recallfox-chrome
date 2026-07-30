@@ -957,7 +957,9 @@ async function triggerScreenshot(tab, mode) {
 
 // Save a captured image to the vault (called from modal "Save to Vault" button)
 async function saveCaptureToVault(payload) {
-  // payload: { dataUrl, width, height, bytes, mode, url, pageTitle }
+  // payload: { dataUrl, width, height, bytes, mode, url, pageTitle, title?, annotationNote? }
+  // v3.20.1: title opsional dari input filename di modal capture (lebih meaningful
+  //   daripada "pageTitle — modeLabel"). Kalau tidak dikirim, fallback ke default lama.
   let thumbnailDataUrl = '';
   try {
     thumbnailDataUrl = await generateThumbnail(payload.dataUrl, 200);
@@ -969,9 +971,14 @@ async function saveCaptureToVault(payload) {
   const modeLabel = payload.mode === 'visible' ? 'Visible' : payload.mode === 'entire' ? 'Full page' : 'Selection';
   const format = payload.dataUrl.startsWith('data:image/jpeg') ? 'jpeg' : 'png';
 
+  // v3.20.1: Pakai title dari user kalau ada; fallback ke default lama.
+  const finalTitle = (payload.title && String(payload.title).trim())
+    ? String(payload.title).trim().slice(0, 120)
+    : `${titleGuess} — ${modeLabel}`;
+
   const newItem = await addItem({
     type: 'screenshot',
-    title: `${titleGuess} — ${modeLabel}`,
+    title: finalTitle,
     body: `[Screenshot captured ${new Date().toISOString()} from ${payload.url}]`,
     tags: ['screenshot', payload.mode],
     source: {
