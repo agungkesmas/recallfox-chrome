@@ -671,12 +671,23 @@
       } else {
         const err = (res && res.error) || 'unknown error';
         console.error('[RecallFox] Sidebar error:', err);
-        // Last resort: tell user to click toolbar icon
-        showBigFlash('⚠️ Tekan tombol RecallFox (🦊) di toolbar Firefox untuk buka sidebar', '#dc2626');
+        // v3.20.5: Browser-aware fallback message.
+        // Firefox: klik tombol 🦊 di toolbar untuk toggle sidebar.
+        // Chrome: sidePanel.open() butuh user gesture — klik tombol side panel
+        //         di toolbar (Chrome 116+) atau klik kanan icon → "Open side panel".
+        const isChrome = typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL('').startsWith('chrome-extension://');
+        const msg = isChrome
+          ? '⚠️ Buka side panel RecallFox: klik tombol side panel di toolbar Chrome, atau klik kanan icon 🦊 → "Open side panel"'
+          : '⚠️ Tekan tombol RecallFox (🦊) di toolbar Firefox untuk buka sidebar';
+        showBigFlash(msg, '#dc2626');
       }
     }).catch((e) => {
       console.error('[RecallFox] Sidebar message failed:', e);
-      showBigFlash('⚠️ Tekan tombol RecallFox (🦊) di toolbar Firefox untuk buka sidebar', '#dc2626');
+      const isChrome = typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL('').startsWith('chrome-extension://');
+      const msg = isChrome
+        ? '⚠️ Buka side panel RecallFox: klik tombol side panel di toolbar Chrome, atau klik kanan icon 🦊 → "Open side panel"'
+        : '⚠️ Tekan tombol RecallFox (🦊) di toolbar Firefox untuk buka sidebar';
+      showBigFlash(msg, '#dc2626');
     });
   }
 

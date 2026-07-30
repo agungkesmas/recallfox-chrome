@@ -4,7 +4,9 @@ Port dari Firefox addon [RecallFox](https://github.com/agungkesmas/recallfox) ke
 
 ## Status
 
-🚧 **Work in Progress** — port dari Firefox v3.20.0-stable.
+✅ **Stable v3.20.5** — port dari Firefox v3.20.1-stable + 6 Chrome-MV3 parity fixes.
+
+Latest release: [v3.20.5-chrome-stable](https://github.com/agungkesmas/recallfox-chrome/releases/tag/v3.20.5-chrome-stable)
 
 ## Perbedaan dari Firefox Addon
 
@@ -76,5 +78,5 @@ Tidak butuh build step — load langsung dari folder.
 Untuk distribusi (`.zip`):
 ```bash
 cd recallfox-chrome
-zip -r recallfox-chrome-v3.20.0.zip . -x ".git/*" -x "node_modules/*"
+zip -r recallfox-chrome-v3.20.5.zip . -x ".git/*" -x "node_modules/*"
 ```
