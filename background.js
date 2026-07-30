@@ -72,13 +72,15 @@ import {
   deleteItemFromCloud,
   deleteNoteFromCloud,
   triggerAutoSync,
-  getOrDownloadScreenshotBlob
+  getOrDownloadScreenshotBlob,
+  handleRealtimeAlarm
 } from './lib/supabase-sync.js';
 import {
   initBackup,
   startBackupInterval,
   manualBackupWithTimestamp,
-  buildBackupPayload
+  buildBackupPayload,
+  handleBackupAlarm
 } from './lib/autobackup.js';
 import { clearBrowsingData } from './lib/clearcache.js';
 import { normalizeDb, getSiteVolume, setSiteVolume, extractDomain, isRestrictedUrl } from './lib/volume.js';
@@ -121,6 +123,30 @@ import {
 import { DEFAULT_ELEMENT_BLOCKER_RULES } from './lib/elementblocker.js';
 // v3.8.1: GDrive Sync (Apps Script bridge) — Issue #1, #2, #6
 import { initGDriveSync, flushNow as gdriveFlushNow, sendFullBackup as gdriveSendFullBackup, uploadScreenshot as gdriveUploadScreenshot, testConnection as gdriveTestConnection, getSyncMeta as gdriveGetMeta, getQueueLength as gdriveGetQueueLength, clearQueue as gdriveClearQueue } from './lib/gdrive-sync.js';
+
+// ===== Chrome MV3 SW helpers =====
+// URL.createObjectURL is NOT available in Chrome MV3 service worker (only in
+// Firefox SW + extension pages). For blob → download URL conversion in SW
+// context, we fall back to base64 data: URLs. btoa + TextEncoder are both
+// available in Chrome SW. See v3.20.4 changelog for the same fix in autobackup.
+async function blobToDownloadUrl(blob) {
+  if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    // Firefox SW / popup context — use efficient blob URL
+    return { url: URL.createObjectURL(blob), isBlobUrl: true };
+  }
+  // Chrome MV3 SW — fall back to data: URL
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  const base64 = btoa(binary);
+  return { url: `data:${blob.type || 'application/octet-stream'};base64,${base64}`, isBlobUrl: false };
+}
+function revokeDownloadUrl(urlInfo) {
+  if (urlInfo?.isBlobUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+    try { URL.revokeObjectURL(urlInfo.url); } catch (e) {}
+  }
+  // data: URLs don't need revocation
+}
 
 // ===== Setup context menu on install =====
 
@@ -652,7 +678,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '🚫 Element Diblokir!',
           message: `Selector "${elementInfo.selector}" ditambahkan untuk ${domain}. Elemen langsung di-hide.`,
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+          iconUrl: browser.runtime.getURL('icons/icon-96.png')
         });
       } catch (e) {}
     } else {
@@ -661,7 +687,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '⚠️ Tidak bisa block element',
           message: 'Arahkan kursor ke elemen yang mau di-block, lalu klik kanan → Block Element Ini. Refresh halaman kalau belum jalan.',
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+          iconUrl: browser.runtime.getURL('icons/icon-96.png')
         });
       } catch (e) {}
     }
@@ -695,7 +721,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
         try {
           browser.notifications.create({
             type: 'basic',
-            iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+            iconUrl: browser.runtime.getURL('icons/icon-96.png'),
             title: 'RecallTape',
             message: 'Tidak bisa membuka tape di halaman ini. Coba di halaman http/https biasa.'
           });
@@ -723,7 +749,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
           type: 'basic',
           title: '⚠️ Tidak ada URL',
           message: 'Klik kanan pada link tweet atau di halaman tweet untuk memblokir URL-nya.',
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+          iconUrl: browser.runtime.getURL('icons/icon-96.png')
         });
       } catch (e) {}
       return;
@@ -787,7 +813,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
             type: 'basic',
             title: '🚫 Tidak ada konten terdeteksi',
             message: 'Arahkan kursor ke video/tweet dulu, atau blok teks lalu klik kanan → Blokir teks terseleksi.',
-            iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+            iconUrl: browser.runtime.getURL('icons/icon-96.png')
           });
         } catch (e) {}
       }
@@ -823,21 +849,21 @@ async function notifyBlockResult(res, label, value) {
         type: 'basic',
         title: '🚫 Diblokir!',
         message: `${label.charAt(0).toUpperCase() + label.slice(1)} "${value.slice(0, 50)}${value.length > 50 ? '…' : ''}" ditambahkan ke blocklist. Konten serupa akan disembunyikan.`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+        iconUrl: browser.runtime.getURL('icons/icon-96.png')
       });
     } else if (res?.error === 'duplicate') {
       await browser.notifications.create({
         type: 'basic',
         title: 'ℹ️ Sudah diblokir',
         message: `${label} ini sudah ada di blocklist.`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+        iconUrl: browser.runtime.getURL('icons/icon-96.png')
       });
     } else {
       await browser.notifications.create({
         type: 'basic',
         title: '⚠️ Gagal blokir',
         message: `Error: ${res?.error || 'unknown'}`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg')
+        iconUrl: browser.runtime.getURL('icons/icon-96.png')
       });
     }
   } catch (e) { /* notif gagal bukan masalah */ }
@@ -1131,15 +1157,15 @@ async function saveCaptureAs(payload) {
   const finalName = `${safeName}.${ext}`;
 
   try {
-    const url = URL.createObjectURL(blob);
+    const urlInfo = await blobToDownloadUrl(blob);
     const downloadId = await browser.downloads.download({
-      url,
+      url: urlInfo.url,
       filename: `RecallFox/${finalName}`,
       saveAs: false,
       conflictAction: 'uniquify'
     });
-    // Revoke URL after a delay (download needs it to complete)
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    // Revoke URL after a delay (download needs it to complete) — no-op for data: URLs
+    setTimeout(() => revokeDownloadUrl(urlInfo), 60000);
     return { ok: true, downloadId };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -1615,10 +1641,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const blob = new Blob([content], { type: 'application/json' });
       const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
       const filename = 'recallfox-backup-' + ts + '.' + ext;
-      // Pakai downloads API
-      const url = URL.createObjectURL(blob);
+      // Pakai downloads API (Chrome MV3 SW: gunakan data: URL fallback via blobToDownloadUrl)
+      const urlInfo = await blobToDownloadUrl(blob);
       await browser.downloads.download({
-        url,
+        url: urlInfo.url,
         filename,
         saveAs: false  // langsung simpan ke Downloads
       });
@@ -2377,16 +2403,17 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const mimeType = msg.format === 'jpeg' ? 'image/jpeg' : 'image/png';
       try {
         // v3.14.9: Konversi dataUrl → Blob → objectURL (pattern dari clipboard fallback line ~2361)
+        // v3.20.5: Pakai blobToDownloadUrl helper supaya jalan di Chrome MV3 SW (URL.createObjectURL unavailable)
         const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: mimeType });
-        const objectUrl = URL.createObjectURL(blob);
+        const urlInfo = await blobToDownloadUrl(blob);
         const id = await browser.downloads.download({
-          url: objectUrl,
+          url: urlInfo.url,
           filename: `RecallFox/${safeName}_${ts}.${ext}`,
           saveAs: false,
           conflictAction: 'uniquify'
         });
-        // Revoke objectURL setelah 30s (cukup untuk download dimulai)
-        setTimeout(() => { try { URL.revokeObjectURL(objectUrl); } catch (e) {} }, 30000);
+        // Revoke objectURL setelah 30s (cukup untuk download dimulai) — no-op for data: URLs
+        setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
         sendResponse({ ok: true, downloadId: id }); return;
       } catch (e) {
         console.warn('[RecallFox] DOWNLOAD_SCREENSHOT download failed:', e.message);
@@ -2528,17 +2555,18 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // sebagai fallback (lebih reliable daripada clipboard.setImageData).
         if (awaited?.needsFallback) {
           // v3.11.22: Download screenshot sebagai file PNG (fallback kalau clipboard tidak support)
+          // v3.20.5: Pakai blobToDownloadUrl (Chrome MV3 SW fallback)
           try {
             const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-            const objectUrl = URL.createObjectURL(blob);
+            const urlInfo = await blobToDownloadUrl(blob);
             const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
             await browser.downloads.download({
-              url: objectUrl,
+              url: urlInfo.url,
               filename: filename,
               saveAs: false
             });
-            // Revoke URL after delay
-            setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+            // Revoke URL after delay — no-op for data: URLs
+            setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
             if (msg.withCaption) {
               // Copy caption ke clipboard sebagai text fallback
               try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
@@ -2555,14 +2583,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (result && result.error && result.error.includes('clipboard')) {
         try {
           const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-          const objectUrl = URL.createObjectURL(blob);
+          const urlInfo = await blobToDownloadUrl(blob);
           const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
           await browser.downloads.download({
-            url: objectUrl,
+            url: urlInfo.url,
             filename: filename,
             saveAs: false
           });
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+          setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
           if (msg.withCaption) {
             try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
           }
@@ -2638,13 +2666,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (awaited?.ok) {
           sendResponse(awaited); return;
         }
-        // Fallback: download file
+        // Fallback: download file (v3.20.5: pakai blobToDownloadUrl untuk Chrome MV3 SW)
         try {
           const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-          const objectUrl = URL.createObjectURL(blob);
+          const urlInfo = await blobToDownloadUrl(blob);
           const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
-          await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
-          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+          await browser.downloads.download({ url: urlInfo.url, filename, saveAs: false });
+          setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
           if (withCaption && textPlain) {
             try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
           }
@@ -2657,10 +2685,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Fallback: download file
       try {
         const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-        const objectUrl = URL.createObjectURL(blob);
+        const urlInfo = await blobToDownloadUrl(blob);
         const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
-        await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+        await browser.downloads.download({ url: urlInfo.url, filename, saveAs: false });
+        setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
         if (withCaption && textPlain) {
           try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
         }
@@ -3225,17 +3253,37 @@ console.log('[RecallFox] background script loaded');
 
 let prayerReminderTimer = null;
 
+// v3.20.5: Chrome MV3 service worker is terminated after ~30s of inactivity,
+// killing any setInterval callbacks. Prayer & exercise reminders MUST use
+// browser.alarms API so they fire reliably even when SW is asleep.
+// Firefox MV3 SW keeps setInterval alive longer, but alarms are also the
+// recommended pattern there (and Firefox addon v3.20.1 already uses alarms
+// for Supabase realtime + auto-discard — we're aligning with that pattern).
+const PRAYER_ALARM_NAME = 'rf-prayer-reminder';
+const EXERCISE_ALARM_NAME = 'rf-exercise-reminder';
+
 function startPrayerReminderChecker() {
-  if (prayerReminderTimer) clearInterval(prayerReminderTimer);
-  // Run every 60 seconds
-  prayerReminderTimer = setInterval(checkPrayerReminder, 60000);
-  // Also run once shortly after startup
+  // v3.20.5: Register browser.alarms for prayer + exercise reminders.
+  // Minimum periodInMinutes is 0.5 (30s) in Chrome, 1 in Firefox. We use 1.
+  // Also run once shortly after startup (best-effort via setTimeout — only
+  // fires if SW happens to be alive, which it is right after onStartup).
+  try {
+    browser.alarms.create(PRAYER_ALARM_NAME, { periodInMinutes: 1 });
+    browser.alarms.create(EXERCISE_ALARM_NAME, { periodInMinutes: 1 });
+    console.log('[RecallFox] Prayer + exercise reminder alarms created (every 1 min)');
+  } catch (e) {
+    console.warn('[RecallFox] Failed to create reminder alarms, fallback to setInterval:', e.message);
+    // Fallback: setInterval (less reliable in Chrome SW, better than nothing)
+    if (prayerReminderTimer) clearInterval(prayerReminderTimer);
+    prayerReminderTimer = setInterval(checkPrayerReminder, 60000);
+    setInterval(checkExerciseReminder, 60000);
+  }
+  // One-shot shortly after startup (best-effort)
   setTimeout(checkPrayerReminder, 5000);
-// Start badge updater too (same interval is fine)
+  // Start badge updater too (same interval is fine)
   setTimeout(updatePrayerBadge, 8000);
   // Start exercise reminder checker
   setTimeout(checkExerciseReminder, 10000);
-  setInterval(checkExerciseReminder, 60000);
   console.log('[RecallFox] Prayer reminder checker started');
 }
 
@@ -3288,7 +3336,7 @@ async function checkPrayerReminder() {
                   type: 'basic',
                   title: `${tomorrowFast.emoji} Besok Puasa ${tomorrowFast.name}`,
                   message: tomorrowFast.desc,
-                  iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                  iconUrl: browser.runtime.getURL('icons/icon-96.png'),
                   priority: 2
                 });
                 console.log('[RecallFox] Fast reminder sent:', tomorrowFast.name);
@@ -3324,7 +3372,7 @@ async function checkPrayerReminder() {
         type: 'basic',
         title: `🕌 ${next.name} segera masuk`,
         message,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 2
       });
       console.log('[RecallFox] Prayer reminder sent:', message);
@@ -3390,7 +3438,7 @@ async function checkPrayerReminder() {
                   type: 'basic',
                   title: '🕌 ' + next.name + ' telah masuk',
                   message: 'Adzan tidak bisa diputar otomatis (popup tertutup & tab aktif tidak kompatibel). Buka RecallFox untuk test adzan manual.',
-                  iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+                  iconUrl: browser.runtime.getURL('icons/icon-96.png'),
                   priority: 2
                 });
               } catch (e) {}
@@ -3596,7 +3644,7 @@ async function checkExerciseReminder() {
           message: isOnAI
             ? `Sudah ${interval} menit. Sambil nunggu AI jawab, berdiri 5 menit + regangkan badan. Baik untuk punggung & mata.`
             : `Sudah ${interval} menit duduk. Berdiri 5 menit, regangkan badan, lihat jauh ke depan. Baik untuk punggung & mata.`,
-          iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+          iconUrl: browser.runtime.getURL('icons/icon-96.png'),
           priority
         });
         console.log('[RecallFox] Exercise reminder sent (smart mode, AI tab:', isOnAI, ')');
@@ -3765,13 +3813,34 @@ browser.alarms.onAlarm.addListener((alarm) => {
     });
   }
   // v3.11.30: Realtime sync alarm — pull dari Supabase kalau ada perubahan
+  // v3.20.5: handleRealtimeAlarm sekarang di-import statically (dynamic import()
+  // di ServiceWorkerGlobalScope dilarang oleh HTML spec — broken di Chrome MV3).
   if (alarm.name === 'rf-supabase-realtime') {
     console.log('[RecallFox] Realtime alarm fired');
-    import('./lib/supabase-sync.js').then(({ handleRealtimeAlarm }) => {
+    try {
       handleRealtimeAlarm().catch(e => {
         console.warn('[RecallFox/Supabase] Realtime alarm handler error:', e.message);
       });
-    }).catch(() => {});
+    } catch (e) {
+      console.warn('[RecallFox/Supabase] Realtime alarm invoke error:', e.message);
+    }
+  }
+  // v3.20.5: Prayer + exercise reminders via alarms (Chrome MV3 SW kills setInterval).
+  if (alarm.name === PRAYER_ALARM_NAME) {
+    checkPrayerReminder().catch(e => {
+      console.warn('[RecallFox/Prayer] Alarm check error:', e.message);
+    });
+  }
+  if (alarm.name === EXERCISE_ALARM_NAME) {
+    checkExerciseReminder().catch(e => {
+      console.warn('[RecallFox/Exercise] Alarm check error:', e.message);
+    });
+  }
+  // v3.20.5: Auto-backup via alarm (Chrome MV3 SW kills setInterval — 6h interval would never fire).
+  if (alarm.name === 'rf-auto-backup') {
+    handleBackupAlarm().catch(e => {
+      console.warn('[RecallFox/Backup] Alarm handler error:', e.message);
+    });
   }
 });
 
@@ -3815,7 +3884,7 @@ async function checkQuranReminder() {
         type: 'basic',
         title: `📖 Pengingat Ngaji Quran`,
         message: `Belum ngaji hari ini. Target: ${settings.quranTargetPages || 1} halaman. ${status.streak > 0 ? `Streak: ${status.streak} hari! Jangan putus! 🔥` : 'Mulai streak hari ini!'}`,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 2
       });
       console.log('[RecallFox] Quran reminder sent');
@@ -3950,7 +4019,7 @@ async function checkContentGuard(tabId, url, tab) {
               type: 'basic',
               title: '👶 Mode Anak Aktif',
               message: 'Navigasi YouTube dialihkan ke YouTube Kids.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+              iconUrl: browser.runtime.getURL('icons/icon-96.png'),
               priority: 1
             });
           } catch (e) {}
@@ -3983,7 +4052,7 @@ async function checkContentGuard(tabId, url, tab) {
               type: 'basic',
               title: '🚫 YouTube Shorts Diblokir',
               message: 'Navigasi ke Shorts dicegah. Kembali ke beranda YouTube.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+              iconUrl: browser.runtime.getURL('icons/icon-96.png'),
               priority: 1
             });
           } catch (e) {}
@@ -4098,7 +4167,7 @@ async function redirectWithNotify(tabId, newUrl, settings, title, message) {
         type: 'basic',
         title: `🛡️ ${title}`,
         message,
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 1
       });
     } catch (e) { /* notif gagal bukan masalah */ }
@@ -4327,7 +4396,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
         type: 'basic',
         title: '🛡️ Content Guardian v0.8.21 — Klik Kanan untuk Blokir',
         message: 'Sekarang Anda bisa klik kanan pada video/tweet di YouTube/X → "🚫 Blokir Konten Ini" untuk blokir permanen. Daftar kata kunci politik & korupsi juga diperluas.',
-        iconUrl: browser.runtime.getURL('icons/icon-96.svg'),
+        iconUrl: browser.runtime.getURL('icons/icon-96.png'),
         priority: 2
       });
     }
