@@ -4,9 +4,9 @@ Port dari Firefox addon [RecallFox](https://github.com/agungkesmas/recallfox) ke
 
 ## Status
 
-✅ **Stable v3.20.5** — port dari Firefox v3.20.1-stable + 6 Chrome-MV3 parity fixes.
+✅ **Stable v3.20.7** — port dari Firefox v3.20.1-stable + 8 Chrome-MV3 parity fixes + RecallTape stability improvements.
 
-Latest release: [v3.20.5-chrome-stable](https://github.com/agungkesmas/recallfox-chrome/releases/tag/v3.20.5-chrome-stable)
+Latest release: [v3.20.7-chrome-stable](https://github.com/agungkesmas/recallfox-chrome/releases/tag/v3.20.7-chrome-stable)
 
 ## Perbedaan dari Firefox Addon
 
