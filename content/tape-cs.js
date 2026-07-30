@@ -268,6 +268,8 @@
     //   saat reassign val/pos setelah reformatAllOpLines, menyebabkan Enter handler
     //   abort setelah reformat tapi sebelum sisip separator + baris hasil →
     //   calculator "tidak stabil" + result row tidak pernah muncul).
+    // v3.20.7: Handler sekarang di-wrap try/catch oleh caller (keydown listener)
+    //   supaya error tidak crash seluruh tape UX.
     let pos = textarea.selectionStart;
     let val = textarea.value;
 
@@ -662,15 +664,25 @@
         hide();
         return;
       }
-      // v3.14.13: Auto-format saat ketik (digit → auto-prefix +, operator → auto-newline)
-      handleAutoFormatKey(e);
-      // v3.14.12: Enter = hitung otomatis (bukan =)
-      if (e.key === 'Enter' && !e.shiftKey) {
-        handleEnterKey(e);
-        // Shift+Enter = baris baru biasa (multiline note) — biarkan default
+      // v3.20.7: Wrap handlers in try/catch supaya error tidak crash seluruh keydown
+      //   listener (yang bisa menyebabkan tape "tidak stabil" — keystroke skip,
+      //   textarea value inconsistent, atau popover stuck). Error di-log ke console
+      //   tetapi UX tetap responsif.
+      try {
+        // v3.14.13: Auto-format saat ketik (digit → auto-prefix +, operator → auto-newline)
+        handleAutoFormatKey(e);
+        // v3.14.12: Enter = hitung otomatis (bukan =)
+        if (e.key === 'Enter' && !e.shiftKey) {
+          handleEnterKey(e);
+          // Shift+Enter = baris baru biasa (multiline note) — biarkan default
+        }
+        // = TIDAK ada fungsinya — Enter sudah = hitung
+        // (kalau user tekan =, biarkan default insert karakter "=" sebagai comment)
+      } catch (err) {
+        console.error('[RecallFox/Tape] keydown handler error:', err);
+        // Jangan preventDefault — biarkan default action terjadi supaya user tetap
+        // bisa ngetik (walaupun auto-format/Enter gagal untuk keystroke ini).
       }
-      // = TIDAK ada fungsinya — Enter sudah = hitung
-      // (kalau user tekan =, biarkan default insert karakter "=" sebagai comment)
     });
 
     // Double-click di baris hasil → copy nilai
@@ -690,9 +702,14 @@
     shadow.querySelector('.rft-clear').addEventListener('click', doClear);
 
     // Click outside → hide (unless pinned)
+    // v3.20.7: Pakai composedPath() untuk check apakah click terjadi di dalam shadow DOM.
+    //   e.target saja tidak reliable di cross-shadow-boundary events (kadang retarget,
+    //   kadang tidak, tergantung browser engine). composedPath() berisi full path event
+    //   termasuk element di dalam shadow DOM — jadi check `path.includes(host)` lebih akurat.
     document.addEventListener('mousedown', (e) => {
       if (!isVisible || pinned) return;
-      if (host.contains(e.target)) return;
+      const path = e.composedPath ? e.composedPath() : [e.target];
+      if (path.includes(host)) return;
       hide();
     }, true);
 
@@ -705,8 +722,11 @@
   }
 
   // ===== Message listener =====
+  // v3.20.7: OPEN_TAPE sekarang selalu show() (sebelumnya toggle() — bisa menyebabkan
+  //   tape "hilang" kalau user klik tombol 2x cepat atau message terkirim 2x). Untuk
+  //   hide, gunakan HIDE_TAPE atau klik outside / Esc.
   browser.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'OPEN_TAPE') toggle();
+    if (msg.type === 'OPEN_TAPE') show();
     else if (msg.type === 'ADD_TO_TAPE') {
       show();
       textarea.value += (textarea.value ? '\n' : '') + msg.text;
