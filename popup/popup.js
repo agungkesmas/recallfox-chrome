@@ -8578,12 +8578,19 @@ async function init() {
   // Width responsive for sidebar
   // v3.11.1 (Issue 2 fix): Tambah w-xs (≤280px) dan w-xxs (≤220px) untuk collapse lebih sempit.
   // Sebelumnya cuma w-sm (≤310px) — tidak cukup untuk sidebar super narrow.
+  // v3.20.8: Tambah w-min (≤320px) untuk Chrome Side Panel yang min-width ~300px (browser-controlled).
+  //   Firefox sidebar bisa dikecilkan sampai ~200px+ jadi w-xs/w-xxs masih relevan di Firefox.
+  //   Tapi Chrome Side Panel punya minimum width ~300px (tidak bisa di-set extension) — di
+  //   width itu, w-sm (≤360px) sudah aktif tapi belum cukup kompak. w-min (≤320px) trigger
+  //   additional collapse (smaller fonts, tighter padding) supaya sidebar terlihat tidak
+  //   "terlalu lebar" saat dikecilkan sampai mentok.
   if (document.body.classList.contains('rf-sidebar-body')) {
     const setW = () => {
       const w = window.innerWidth;
       const popup = $('#popup');
       if (!popup) return;
       popup.classList.toggle('w-sm', w <= 360);
+      popup.classList.toggle('w-min', w <= 320);  // v3.20.8: Chrome Side Panel minimum
       popup.classList.toggle('w-xs', w <= 280);
       popup.classList.toggle('w-xxs', w <= 220);
     };
