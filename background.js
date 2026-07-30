@@ -2085,11 +2085,17 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'CLEAR_CACHE') {
     // Sent from popup/sidebar "Clear Cache" button
+    // v3.20.6: Prefer msg.dataTypes + msg.timePeriod (sent by popup.js v3.20.6+).
+    // Fallback ke settings (untuk backward compat dengan popup lama / shortcut keyboard).
     const settings = await getSettings();
-    
+    const dataTypes = (Array.isArray(msg.dataTypes) && msg.dataTypes.length > 0)
+      ? msg.dataTypes
+      : (settings.clearCacheDataTypes || ['cache']);
+    const timePeriod = msg.timePeriod || settings.clearCacheTimePeriod || 'all';
+
     const res = await clearBrowsingData({
-      dataTypes: settings.clearCacheDataTypes,
-      timePeriod: settings.clearCacheTimePeriod,
+      dataTypes,
+      timePeriod,
       currentTabOnly: settings.clearCacheCurrentTabOnly,
       reload: settings.clearCacheReload,
       notify: settings.clearCacheNotify
@@ -4345,9 +4351,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }).catch(() => {});
 
         // Notification (non-blocking)
+        // v3.20.6: Tambah iconUrl (Chrome MV3 requires PNG — silently rejects if missing).
         try {
           await browser.notifications.create({
             type: 'basic',
+            iconUrl: browser.runtime.getURL('icons/icon-96.png'),
             title: '🎯 Elemen diblokir',
             message: 'Selector "' + selector.slice(0, 60) + (selector.length > 60 ? '…' : '') + '" ditambahkan ke aturan untuk ' + domain + '.'
           });

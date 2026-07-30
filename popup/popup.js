@@ -6408,13 +6408,37 @@ async function renderVolumePage(B) {
 }
 function renderCachePage(B) {
   const s = currentVault?.settings || {};
+  // v3.20.6: Pre-populate checkboxes from settings (sebelumnya selalu default 'cache' checked).
+  const savedTypes = Array.isArray(s.clearCacheDataTypes) ? s.clearCacheDataTypes : ['cache'];
   const types = ['Cache', 'Cookies', 'Riwayat', 'Local Storage', 'Downloads'];
+  const typeKey = x => x.toLowerCase().replace(' ', '_');
   B.innerHTML = '<div class="card"><h3>Tipe data</h3>'
-    + types.map((x, i) => '<label class="checkrow"><input type="checkbox" data-cache="' + x.toLowerCase().replace(' ', '_') + '"' + (i === 0 ? ' checked' : '') + '>' + x + '</label>').join('')
-    + '<label class="checkrow" style="color:var(--danger)"><input type="checkbox" data-cache="passwords">Passwords ⚠️</label></div>'
-    + '<div class="card"><h3>Periode</h3><select class="f" id="cachePeriod"><option value="all">Semua waktu</option><option value="15m">15 menit terakhir</option><option value="1h">1 jam terakhir</option><option value="24h">24 jam terakhir</option><option value="1w">1 minggu terakhir</option></select></div>'
+    + types.map((x) => {
+      const k = typeKey(x);
+      const checked = savedTypes.includes(k) ? ' checked' : '';
+      return '<label class="checkrow"><input type="checkbox" data-cache="' + k + '"' + checked + '>' + x + '</label>';
+    }).join('')
+    + '<label class="checkrow" style="color:var(--danger)"><input type="checkbox" data-cache="passwords"' + (savedTypes.includes('passwords') ? ' checked' : '') + '>Passwords ⚠️</label></div>'
+    + '<div class="card"><h3>Periode</h3><select class="f" id="cachePeriod">'
+    + [['all','Semua waktu'],['15m','15 menit terakhir'],['1h','1 jam terakhir'],['24h','24 jam terakhir'],['1w','1 minggu terakhir']]
+        .map(([v,l]) => '<option value="' + v + '"' + (s.clearCacheTimePeriod === v ? ' selected' : '') + '>' + l + '</option>').join('')
+    + '</select></div>'
     + '<button class="btn btn-d" style="width:100%" id="cacheGo">' + ICONS.trash + 'Bersihkan Sekarang</button>';
-  $('#cacheGo').addEventListener('click', () => {
+  $('#cacheGo').addEventListener('click', async () => {
+    // v3.20.6: Collect selected checkboxes + period → pass directly in CLEAR_CACHE message.
+    // Sebelumnya: kirim CLEAR_CACHE tanpa payload, background baca settings lama (default hanya 'cache'),
+    // pilihan user diabaikan. Sekarang: kirim dataTypes + timePeriod di message, background pakai
+    // nilai dari message (fallback ke settings kalau tidak ada).
+    const selectedTypes = Array.from(B.querySelectorAll('input[data-cache]:checked'))
+      .map(el => el.dataset.cache)
+      .filter(Boolean);
+    if (selectedTypes.length === 0) {
+      toast('Pilih minimal 1 tipe data untuk dibersihkan', false);
+      return;
+    }
+    const periodSel = $('#cachePeriod');
+    const selectedPeriod = periodSel ? periodSel.value : 'all';
+
     openSheet('Konfirmasi', 'Aksi ini tidak bisa dibatalkan', b => {
       b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Hapus data browsing terpilih?</span>'
         + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-d" data-c="1">Ya, bersihkan</button></div>';
@@ -6422,7 +6446,11 @@ function renderCachePage(B) {
       b.querySelector('[data-c="1"]').addEventListener('click', async () => {
         closeSheet();
         try {
-          const res = await browser.runtime.sendMessage({ type: 'CLEAR_CACHE' });
+          const res = await browser.runtime.sendMessage({
+            type: 'CLEAR_CACHE',
+            dataTypes: selectedTypes,
+            timePeriod: selectedPeriod
+          });
           if (res?.ok) toast('🗑 Cache dibersihkan ✓ · tab dimuat ulang');
           else toast('Gagal: ' + (res?.error || ''), false);
         } catch (e) { toast('Error: ' + e.message, false); }
@@ -6699,8 +6727,7 @@ async function renderGDrivePage(B) {
     + '<div class="card"><h3>🔐 Login Supabase</h3>'
     + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d">'
     + '<b>Kenapa Supabase?</b> Apps Script ribet (URL + Token + deploy). Supabase cukup <b>login email/password</b> sekali → semua data (vault, catatan, screenshot, settings) <b>otomatis sync</b> ke cloud. Screenshot full image disimpan di Supabase Storage (tidak ke-limit Apps Script 10MB).<br>'
-    + '<b>Akun default:</b> agung.kesmas@gmail.com / Recallfox@2026<br>'
-    + '<b>Setup:</b> 1) Login email/password di bawah. 2) Klik "Push ke Cloud" untuk upload state lokal. 3) Di PC lain: login sama → klik "Pull dari Cloud".'
+    + '<b>Setup:</b> 1) Login email/password di bawah (atau klik "Buat akun baru" untuk signup). 2) Klik "Push ke Cloud" untuk upload state lokal. 3) Di PC lain: login sama → klik "Pull dari Cloud".'
     + '</div>';
 
   if (supabaseStatus.loggedIn) {
@@ -6720,8 +6747,8 @@ async function renderGDrivePage(B) {
   } else {
     // Form login
     B.innerHTML += '<div style="display:flex;flex-direction:column;gap:6px">'
-      +   '<input class="f" id="rfSupaEmail" type="email" placeholder="Email (mis. agung.kesmas@gmail.com)" value="agung.kesmas@gmail.com" style="font-size:12px">'
-      +   '<input class="f" id="rfSupaPass" type="password" placeholder="Password" value="Recallfox@2026" style="font-size:12px">'
+      +   '<input class="f" id="rfSupaEmail" type="email" placeholder="Email" style="font-size:12px">'
+      +   '<input class="f" id="rfSupaPass" type="password" placeholder="Password" style="font-size:12px">'
       +   '<button class="btn btn-p" id="rfSupaLogin" style="width:100%;background:linear-gradient(135deg,#15803d,#166534)">🔐 Login</button>'
       +   '<div style="text-align:center;font-size:10px;color:var(--muted);margin:4px 0">— atau —</div>'
       +   '<button class="btn btn-g" id="rfSupaGmail" style="width:100%;background:#fff;color:#1f2937;border:1px solid #d1d5db">'

@@ -264,8 +264,12 @@
 
   function handleEnterKey(e) {
     // Cek apakah cursor di akhir baris (atau di akhir text)
-    const pos = textarea.selectionStart;
-    const val = textarea.value;
+    // v3.20.6: const → let (sebelumnya TypeError "Assignment to constant variable"
+    //   saat reassign val/pos setelah reformatAllOpLines, menyebabkan Enter handler
+    //   abort setelah reformat tapi sebelum sisip separator + baris hasil →
+    //   calculator "tidak stabil" + result row tidak pernah muncul).
+    let pos = textarea.selectionStart;
+    let val = textarea.value;
 
     // Kalau ada selection, biarkan default (Enter replace selection)
     if (textarea.selectionStart !== textarea.selectionEnd) return;

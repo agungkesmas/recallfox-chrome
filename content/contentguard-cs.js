@@ -1329,7 +1329,10 @@
         try {
           window.open(browser.runtime.getURL('settings/settings.html'), '_blank');
         } catch (err3) {
-          alert('Tidak bisa buka Settings. Buka via about:addons → RecallFox → Pengaturan.');
+          // v3.20.6: Browser-aware fallback message (Firefox: about:addons, Chrome: chrome://extensions).
+          const isChrome = typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL('').startsWith('chrome-extension://');
+          const where = isChrome ? 'chrome://extensions → RecallFox → Detail' : 'about:addons → RecallFox → Pengaturan';
+          alert('Tidak bisa buka Settings. Buka via ' + where + '.');
         }
       });
     }
