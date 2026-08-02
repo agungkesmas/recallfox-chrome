@@ -4591,58 +4591,91 @@ browser.runtime.onInstalled.addListener(async (details) => {
 // dengan jawaban AI sebelumnya untuk deteksi "nyambung atau tidak".
 // ============================================================================
 
-const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi "resume context" — ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan tanpa kehilangan konteks.
+const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi **HANDOVER REPORT** — laporan serah terima kerja yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan tanpa kehilangan konteks.
 
 Anda akan diberikan snapshot percakapan user dengan AI (urut dari tertua ke terbaru, label "👤 User:" dan "🤖 AI:").
 
-## Langkah 1 — Identifikasi ANCHOR: jawaban AI terakhir
-Cari pesan "🤖 AI:" yang PALING BAWAH (paling baru). Itu adalah **ANCHOR** — status kerja terakhir yang user mau lanjutkan.
+## Langkah 1 — Identifikasi ANCHOR: jawaban AI terakhir + pertanyaan terakhir yang memicu
 
-Baca DENGAN TELITI seluruh isi jawaban AI terakhir tersebut. Bukan cuma user question di atasnya, tapi **JAWABAN AI-nya** yang menjadi acuan utama. Jawaban AI berisi: apa yang sudah dikerjakan, kode yang sudah ditulis, solusi yang sudah diberikan, langkah selanjutnya yang disarankan.
+Cari pasangan terakhir (paling bawah): "👤 User:" + jawabannya "🤖 AI:". Itu adalah **ANCHOR** — status kerja terakhir yang user mau lanjutkan.
+
+Baca DENGAN TELITI:
+- **Pertanyaan user terakhir** → intent (apa yang user mau kerjakan saat itu)
+- **Jawaban AI terakhir** → execution context (apa yang sudah dikerjakan, kode yang ditulis, solusi yang diberikan, langkah selanjutnya yang disarankan)
+
+Keduanya adalah acuan utama. Pertanyaan user memberi tujuan, jawaban AI memberi status eksekusi.
 
 ## Langkah 2 — Deteksi rantai relevansi backward dari ANCHOR
-Mulai dari jawaban AI terakhir (anchor), cek ke belakang (ke pesan lebih lama):
-- Apakah PERCAKAPAN sebelumnya (user question + AI answer) nyambung / memperkuat konteks di jawaban AI terakhir?
-- Kalau YA → include percakapan itu, lanjut cek ke belakang lagi.
-- Kalau TIDAK → berhenti. Jangan include percakapan itu atau yang lebih lama.
 
-**PENTING — ACUAN UTAMA ADALAH JAWABAN AI, BUKAN PERTANYAAN USER:**
+Mulai dari anchor (jawaban AI terakhir), cek ke belakang (ke pasangan lebih lama):
+- Apakah pasangan sebelumnya (user question + AI answer) nyambung / memperkuat konteks di anchor?
+- Kalau YA → include sebagai penguat konteks, lanjut cek ke belakang lagi.
+- Kalau TIDAK → berhenti. Jangan include pasangan itu atau yang lebih lama.
+
+**PENTING — ACUAN UTAMA ADALAH JAWABAN AI:**
 - Pertanyaan user cuma trigger/pemicu — biasanya pendek dan tidak berisi konteks kerja.
 - Jawaban AI berisi konteks kerja sebenarnya: kode, solusi, penjelasan, langkah selanjutnya.
-- Saat cek "nyambung atau tidak", bandingkan konteks di **jawaban AI terakhir** dengan konteks di **jawaban AI sebelumnya**. Jangan bandingkan pertanyaan user saja.
+- Saat cek "nyambung atau tidak", bandingkan konteks di **jawaban AI terakhir** dengan konteks di **jawaban AI sebelumnya**.
 
 Contoh benar:
 - Jawaban AI terakhir: "Untuk testing React, pakai Vitest. Sudah setup di \`src/test/setup.ts\`..."
-  - Percakapan sebelumnya: user tanya state management, AI jawab "Pakai Zustand, sudah install di \`package.json\`" → NYAMBUNG (sama-sama React dev, saling memperkuat konteks proyek)
+  - Percakapan sebelumnya: user tanya state management, AI jawab "Pakai Zustand, sudah install di \`package.json\`" → NYAMBUNG (sama-sama React dev)
   - Percakapan sebelum itu: user tanya resep nasi goreng → TIDAK NYAMBUNG → berhenti
 
 Contoh salah (HINDARI):
 - ❌ Bandingkan pertanyaan user terakhir ("gimana test React?") dengan pertanyaan user sebelumnya ("gimana routing?") → terlihat tidak nyambung padahal sebenarnya nyambung (sama-sama React).
 - ✅ Bandingkan jawaban AI terakhir dengan jawaban AI sebelumnya → kedua jawaban tentang React dev → nyambung.
 
-Maksimal ambil 6 percakapan (12 pesan) yang nyambung dengan jawaban AI terakhir.
+Maksimal ambil 6 pasangan terakhir (12 pesan) yang nyambung dengan anchor.
 
-## Langkah 3 — Generate resume context
-Dari rantai percakapan yang relevan (hasil langkah 2), buat resume context dengan format:
+## Langkah 3 — Generate HANDOVER REPORT
 
-## 🎯 Tujuan Utama
-[Apa tujuan utama user di percakapan ini — 1-2 kalimat, berdasarkan jawaban AI terakhir]
+Buat report dengan format berikut. **HANYA INCLUDE SECTION YANG RELEVAN** — kalau sebuah section tidak ada isinya (mis. tidak ada blocker, tidak ada file yang dimodifikasi), **SKIP section tersebut sepenuhnya**. Jangan tulis "Tidak ada", "N/A", atau "None" — cukup hilangkan section-nya.
 
-## ✅ Yang Sudah Dikerjakan
-- [Poin 1 — apa yang sudah dicapai/dijawab AI, SEBANYAK yang relevan. Ambil dari JAWABAN AI, bukan pertanyaan user.]
-- [Poin 2]
-- [dst — jangan ringkas terlalu agresif, konteks penting dari jawaban AI harus tetap ada]
+\`\`\`
+# HANDOVER REPORT: [Nama Proyek / Topik Utama]
+**Session ID:** [ID Sesi/Akun Asal — ambil dari URL kalau ada, atau biarkan placeholder]
+**Date:** [Timestamp snapshot]
+**Agent ID:** [Nama AI yang dipakai — mis. ChatGPT/Claude/Gemini, atau "Unknown" kalau tidak terdeteksi]
 
-## ⏳ Yang Belum Selesai
-- [Poin 1 — apa yang masih perlu dilanjutkan, berdasarkan saran AI terakhir atau pertanyaan user yang belum terjawab]
-- [Poin 2]
-- [dst]
+## 1. Executive Summary
+(Ringkasan singkat 2-3 kalimat tentang apa yang baru saja diselesaikan dan tujuan akhir dari sesi ini.)
 
-## 📌 Konteks Penting
-[Kode, parameter, constraint, preferensi, atau detail teknis yang HARUS dibawa ke akun AI baru — supaya tidak hilang. Include code snippets penting dari JAWABAN AI, nama file, konfigurasi, dll.]
+## 2. Work Completed
+- [ ] Task A: [Deskripsi ringkas]
+- [ ] Task B: [Deskripsi ringkas]
+*(Gunakan checklist agar agent penerima tahu apa yang benar-benar done)*
 
----
-Maksimal 800 kata. Tulis dalam bahasa Indonesia. Lebih baik panjang tapi lengkap daripada pendek tapi kehilangan konteks. Kalau percakapan terlalu pendek untuk dirangkum, jawab: "Percakapan terlalu pendek untuk resume context."`;
+## 3. Work In-Progress & Next Steps
+*Bagian ini adalah instruksi eksekusi untuk agent berikutnya.*
+- **Target:** [Tujuan spesifik berikutnya]
+- **Immediate Task:** [Tugas pertama yang harus dikerjakan]
+- **Dependencies:** [File/Modul yang dibutuhkan]
+
+## 4. Technical References
+- **Files Modified:** [Path ke file yang baru diubah — WAJIB include kalau AI menyebut nama file]
+- **Crucial Context:** [Variabel/Logika penting, code snippets, nama file/konfigurasi]
+
+## 5. Blockers, Risks, & Known Issues
+- [Risiko bug, hal yang belum ditest, atau limitasi teknis]
+
+## 6. Actionable Instruction for New Agent
+(Instruksi eksplisit: "To continue, please open [FILE] and implement [FUNGSI/LOGIKA].")
+\`\`\`
+
+## Aturan Penting
+
+1. **SKIP SECTION YANG KOSONG.** Kalau tidak ada blocker → hilangkan section 5. Kalau tidak ada file yang dimodifikasi → hilangkan baris "Files Modified" di section 4 (tapi tetap tulis "Crucial Context" kalau ada konteks penting). Jangan pernah tulis "Tidak ada", "N/A", atau "None" sebagai placeholder kosong.
+
+2. **Minimal output: Executive Summary saja** kalau snapshot terlalu pendek untuk 6 section (mis. hanya 1-2 Q&A singkat). Tambah section lain hanya kalau ada konteks yang relevan.
+
+3. **WAJIB include nama file** di section "Files Modified" kalau AI di percakapan menyebut nama file (mis. \`src/test/setup.ts\`, \`package.json\`, \`vite.config.ts\`). Jangan skip dengan alasan "terlalu teknis".
+
+4. **Maksimal 800 kata.** Lebih baik panjang tapi lengkap daripada pendek tapi kehilangan konteks.
+
+5. **Bahasa Indonesia**, kecuali nama file/path/kode (biarkan apa adanya).
+
+6. Kalau percakapan terlalu pendek untuk HANDOVER REPORT (mis. cuman 1-2 Q&A singkat tanpa konteks kerja), jawab: "Percakapan terlalu pendek untuk resume context."`;
 
 const RESUME_CONTEXT_MAX_BODY_CHARS = 8000; // Truncate body sebelum kirim ke AI (hemat token)
 
