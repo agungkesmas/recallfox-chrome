@@ -614,11 +614,23 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     }
   } else if (info.menuItemId === 'rf-screenshot') {
     // Single FireShot-style entry — opens capture modal in active tab
+    // v3.20.11: JANGAN auto-save ke vault kalau overlay tidak terjangkau.
+    //   Sebelumnya: catch block → triggerScreenshot(tab, 'entire') → langsung
+    //   save ke vault tanpa modal. User complain: "screenshot yang tidak jadi
+    //   disave di vault, kamu malah save duluan". Sekarang: try inject overlay.js
+    //   + retry. Kalau masih gagal, tampilkan notifikasi error — TIDAK save apa2.
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
     } catch (e) {
-      console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
-      await triggerScreenshot(tab, 'entire');
+      console.warn('[RecallFox] overlay not reachable, trying inject + retry:', e.message);
+      try {
+        await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['lib/browser-polyfill.min.js', 'content/overlay.js'] });
+        await new Promise(r => setTimeout(r, 500));
+        await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
+      } catch (e2) {
+        console.warn('[RecallFox] overlay inject failed, screenshot cancelled:', e2.message);
+        try { browser.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('icons/icon-96.png'), title: 'RecallFox', message: 'Tidak bisa mengambil screenshot di halaman ini. Coba reload halaman lalu ulangi.' }); } catch (e3) {}
+      }
     }
   } else if (info.menuItemId === 'rf-sidebar-in-page') {
     // v3.20.9: Toggle popout sidebar di halaman aktif
@@ -1373,8 +1385,17 @@ async function handleCommand(cmd) {
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP', mode });
     } catch (e) {
-      console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
-      await triggerScreenshot(tab, mode);
+      // v3.20.11: JANGAN auto-save ke vault. Try inject overlay.js + retry.
+      //   Sebelumnya: triggerScreenshot(tab, mode) → langsung save tanpa modal.
+      console.warn('[RecallFox] overlay not reachable, trying inject + retry:', e.message);
+      try {
+        await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['lib/browser-polyfill.min.js', 'content/overlay.js'] });
+        await new Promise(r => setTimeout(r, 500));
+        await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP', mode });
+      } catch (e2) {
+        console.warn('[RecallFox] overlay inject failed, screenshot cancelled:', e2.message);
+        try { browser.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('icons/icon-96.png'), title: 'RecallFox', message: 'Tidak bisa mengambil screenshot di halaman ini. Coba reload halaman lalu ulangi.' }); } catch (e3) {}
+      }
     }
     return;
   }
@@ -2338,8 +2359,29 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
-      // Fallback to direct save (skips modal)
-      sendResponse(await triggerScreenshot(tab, mode || 'entire')); return;
+      // v3.20.11: JANGAN auto-save ke vault kalau overlay tidak terjangkau.
+      //   Sebelumnya: catch block → triggerScreenshot(tab, mode||'entire') →
+      //   langsung save ke vault tanpa modal. User complain: "screenshot yang
+      //   tidak jadi disave di vault, kamu malah save duluan. harusnya ada
+      //   trigger di modal screnshot yaitu save."
+      //   Sekarang: try inject overlay.js + retry. Kalau masih gagal, return
+      //   error — TIDAK save apa-apa ke vault.
+      console.warn('[RecallFox] overlay not reachable, trying inject + retry:', e.message);
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['lib/browser-polyfill.min.js', 'content/overlay.js']
+        });
+        await new Promise(r => setTimeout(r, 500));
+        await browser.tabs.sendMessage(tab.id, {
+          type: 'TRIGGER_CAPTURE_FROM_POPUP',
+          mode: mode
+        });
+        sendResponse({ ok: true, deferred: true }); return;
+      } catch (e2) {
+        console.warn('[RecallFox] overlay inject failed, screenshot cancelled (NO auto-save):', e2.message);
+        sendResponse({ ok: false, error: 'overlay_not_reachable', message: 'Tidak bisa mengambil screenshot di halaman ini. Coba reload halaman lalu ulangi.' }); return;
+      }
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {
