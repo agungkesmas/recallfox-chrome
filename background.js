@@ -402,6 +402,13 @@ async function setupContextMenu() {
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
+  // v3.20.9: Popout sidebar — context menu untuk toggle sidebar di halaman
+  browser.contextMenus.create({
+    id: 'rf-sidebar-in-page',
+    title: 'Tampilkan RecallFox di halaman ini (popout)',
+    contexts: ['page'],
+    documentUrlPatterns: ['http://*/*', 'https://*/*']
+  });
 
   // Clear Cache (clearcache-style) — works on all http(s) pages
   browser.contextMenus.create({
@@ -612,6 +619,24 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     } catch (e) {
       console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
       await triggerScreenshot(tab, 'entire');
+    }
+  } else if (info.menuItemId === 'rf-sidebar-in-page') {
+    // v3.20.9: Toggle popout sidebar di halaman aktif
+    try {
+      await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' });
+    } catch (e) {
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/sidebar-cs.js']
+        });
+        setTimeout(async () => {
+          try { await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }); }
+          catch (e2) { console.warn('[RecallFox] Popout sidebar toggle failed:', e2.message); }
+        }, 300);
+      } catch (e2) {
+        console.warn('[RecallFox] Popout sidebar inject failed:', e2.message);
+      }
     }
   } else if (info.menuItemId === 'rf-clear-cache') {
     console.log('[RecallFox] Context menu → clear cache');
@@ -2265,17 +2290,36 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'CAPTURE_FOR_PREVIEW') {
+    // v3.20.9: Broadcast RF_HIDE_FOR_CAPTURE to all tabs before capture.
+    // sidebar-cs.js (popout) listens for this → hides host + floater.
+    try {
+      const allTabs = await browser.tabs.query({});
+      for (const t of allTabs) {
+        browser.tabs.sendMessage(t.id, { type: 'RF_HIDE_FOR_CAPTURE' }).catch(() => {});
+      }
+    } catch (e) {}
+    // v3.20.14: Reduced delay 200→100ms (display:none is instant, no render needed)
+    await new Promise(r => setTimeout(r, 100));
     // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
-    // Caller then shows modal with PDF/JPG/PNG/Copy/Vault save options.
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
-    sendResponse(await captureFullPage(tab, { mode: msg.mode || 'entire' })); return;
+    const result = await captureFullPage(tab, { mode: msg.mode || 'entire' });
+    // v3.20.14: ALWAYS restore after capture — whether success, cancel, or error.
+    try {
+      const ts = await browser.tabs.query({});
+      for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {});
+    } catch (e) {}
+    sendResponse(result); return;
   }
   if (msg.type === 'SAVE_CAPTURE_AS') {
+    // v3.20.9: Restore popout sidebar visibility after capture
+    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
     // Save captured image to Downloads folder as PDF / JPG / PNG
     sendResponse(await saveCaptureAs(msg)); return;
   }
   if (msg.type === 'SAVE_CAPTURE_TO_VAULT') {
+    // v3.20.9: Restore popout sidebar visibility after capture
+    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
     // Save captured image to vault as screenshot item
     sendResponse(await saveCaptureToVault(msg)); return;
   }
@@ -4384,6 +4428,34 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, noteId: note.id });
       } catch (e) {
         console.error('[RecallFox] SAVE_TAPE_TO_VAULT failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  // v3.20.9: RF_FORWARD_TO_ACTIVE_TAB — forward message from content script
+  // to active tab's content script. Used by sidebar-cs.js (popout) to send
+  // OPEN_TAPE to tape-cs.js. Content scripts don't have browser.tabs access.
+  if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
+    (async () => {
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+        try {
+          await browser.tabs.sendMessage(tab.id, { type: msg.msgType });
+          sendResponse({ ok: true });
+        } catch (e) {
+          // Content script not loaded — inject then retry
+          if (msg.msgType === 'OPEN_TAPE') {
+            await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/tape-cs.js'] });
+            setTimeout(() => browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' }).catch(() => {}), 200);
+            sendResponse({ ok: true, injected: true });
+          } else {
+            sendResponse({ ok: false, error: e.message });
+          }
+        }
+      } catch (e) {
         sendResponse({ ok: false, error: e.message });
       }
     })();

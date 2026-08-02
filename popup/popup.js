@@ -5905,6 +5905,13 @@ function toolPage(k) {
 // Untuk sidebar: kirim ke tab aktif di window utama.
 // Untuk popup: kirim ke tab aktif lalu tutup popup (default behavior).
 async function openTapePopover() {
+  // v3.20.9: Jika di iframe (popout), kirim postMessage ke parent
+  // → parent kirim message ke content script di tab aktif
+  if (window !== window.top) {
+    window.parent.postMessage({ type: 'RF_OPEN_TAPE' }, '*');
+    toast('🧾 RecallTape dibuka di halaman');
+    return;
+  }
   try {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     if (tabs && tabs[0]) {
@@ -8603,6 +8610,20 @@ async function init() {
 }
 
 function bindEvents() {
+  // v3.20.9: Jika di iframe (popout), kirim activity ke parent untuk reset idle timer
+  if (window !== window.top) {
+    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart', 'input'];
+    let lastActivitySent = 0;
+    activityEvents.forEach(ev => {
+      document.addEventListener(ev, () => {
+        const now = Date.now();
+        if (now - lastActivitySent > 2000) {
+          lastActivitySent = now;
+          window.parent.postMessage({ type: 'RF_ACTIVITY' }, '*');
+        }
+      }, { passive: true });
+    });
+  }
   // Theme + header
   // v3.7.1-FIX: Set ikon untuk tombol header (sebelumnya kosong/tidak terlihat)
   $('#aiBtn').innerHTML = ICONS.spark;
@@ -8610,6 +8631,36 @@ function bindEvents() {
   $('#themeBtn').addEventListener('click', toggleTheme);
   $('#settingsBtn').addEventListener('click', () => browser.runtime.openOptionsPage());
   $('#aiBtn').addEventListener('click', aiToolsSheet);
+  // v3.20.9: Popout sidebar toggle — pakai postMessage ke parent (bukan tabs.sendMessage)
+  // Root cause: browser.tabs.sendMessage dari iframe gagal cross-origin.
+  // Fix: window.parent.postMessage({ type: 'RF_TOGGLE_POPOUT' }) → sidebar-cs.js listen → toggle()
+  const inPageBtn = $('#sidebarInPageBtn');
+  if (inPageBtn) {
+    inPageBtn.addEventListener('click', () => {
+      if (window !== window.top) {
+        // Di iframe popout — kirim postMessage ke parent
+        window.parent.postMessage({ type: 'RF_TOGGLE_POPOUT' }, '*');
+      } else {
+        // Di native sidebar/popup — kirim message ke content script di tab aktif
+        browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
+          const tab = tabs[0];
+          if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
+            toast('⚠️ Popout sidebar hanya bisa di halaman http/https');
+            return;
+          }
+          browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }).catch(() => {
+            // Fallback: inject sidebar-cs.js lalu toggle
+            browser.scripting.executeScript({
+              target: { tabId: tab.id },
+              files: ['content/sidebar-cs.js']
+            }).then(() => {
+              setTimeout(() => browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }).catch(() => {}), 300);
+            }).catch(() => toast('⚠️ Tidak bisa buka popout di halaman ini'));
+          });
+        });
+      }
+    });
+  }
   // v3.14.0: RecallTape — tombol 🧾 di header → toggle popover di tab aktif
   const tapeBtn = $('#tapeBtn');
   if (tapeBtn) tapeBtn.addEventListener('click', openTapePopover);
