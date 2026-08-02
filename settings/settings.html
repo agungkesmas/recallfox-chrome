@@ -886,6 +886,7 @@
           <option value="xai">xAI Grok</option>
           <option value="zai">z.ai (GLM-4.6)</option>
           <option value="openai">OpenAI</option>
+          <option value="omnirouter">OmniRouter (multi-provider gateway, 90+ free)</option>
           <option value="custom">Custom (OpenAI-compatible)</option>
         </select>
       </div>
@@ -942,6 +943,7 @@
           <option value="xai">xAI Grok</option>
           <option value="zai">z.ai (GLM-4.6)</option>
           <option value="openai">OpenAI</option>
+          <option value="omnirouter">OmniRouter</option>
           <option value="custom">Custom</option>
         </select>
       </div>
@@ -1012,6 +1014,38 @@
           <li>Buka <a href="https://platform.openai.com/api-keys" target="_blank">https://platform.openai.com/api-keys</a>.</li>
           <li>Create new secret key (format <code>sk-...</code>). Model: <code>gpt-4o-mini</code>.</li>
         </ol>
+
+        <h4 style="margin:12px 0 4px;color:#1c1917;">OmniRouter (multi-provider gateway, 90+ free)</h4>
+        <p style="font-size:12px;color:#57534e;margin:0 0 8px;">
+          OmniRouter = gateway OpenAI-compatible yang ngeroute request ke <b>290+ provider AI</b>
+          (90+ dengan free tier) lewat satu endpoint. Cocok kalau capek gonta-ganti API key:
+          cukup input 1 key OmniRouter, sisanya di-route otomatis (auto-fallback kalau provider
+          utama down atau quota habis). <a href="https://github.com/diegosouzapw/OmniRoute" target="_blank">GitHub repo</a> · <a href="https://omniroute.online" target="_blank">Cloud dashboard</a>.
+        </p>
+        <ol>
+          <li><b>Pilih mode jalan OmniRouter</b>:
+            <ul style="margin:4px 0 8px 20px;font-size:12px;color:#57534e;">
+              <li><b>Local (recommended untuk desktop)</b> — install OmniRouter di komputer Anda: <code>npm i -g omniroute && omniroute</code>. Endpoint default: <code>http://localhost:20128/v1</code>. Gak perlu API key kalau cuma pakai provider free (OpenCode Free, Felo).</li>
+              <li><b>Cloud</b> — daftar di <a href="https://omniroute.online" target="_blank">https://omniroute.online</a>, dapat API key dari dashboard, ganti <b>Base URL</b> ke URL cloud yang diberikan.</li>
+            </ul>
+          </li>
+          <li><b>Base URL</b>: default <code>http://localhost:20128/v1</code> (local). Ganti kalau pakai cloud atau port beda.</li>
+          <li><b>API Key</b>: isi key dari dashboard OmniRouter (cloud). Kalau local + cuma pakai provider free, boleh kosong.</li>
+          <li><b>Model</b>: default <code>auto</code> (OmniRouter pilih model terbaik otomatis). Variant lain:
+            <ul style="margin:4px 0 8px 20px;font-size:12px;color:#57534e;">
+              <li><code>auto</code> — balanced (LKGP, sticky ke last good provider)</li>
+              <li><code>auto/coding</code> — quality-first buat code generation</li>
+              <li><code>auto/fast</code> — latency terendah</li>
+              <li><code>auto/cheap</code> — termurah per token</li>
+              <li><code>auto/offline</code> — paling banyak quota headroom</li>
+              <li><code>auto/smart</code> — quality-first + 10% exploration</li>
+            </ul>
+          </li>
+          <li>Test: klik tombol <b>Test</b> di settings (kalau ada) atau langsung chat dengan Si Pandai di popup.</li>
+        </ol>
+        <p style="font-size:11px;color:#9ca3af;margin-top:6px;">
+          💡 Tip: OmniRouter cocok jadi <b>fallback</b> juga — kalau Groq/Gemini down, request otomatis ke route OmniRouter yang punya 90+ free provider. Aktifkan fallback di section atas, pilih <b>OmniRouter</b> sebagai fallback provider.
+        </p>
 
         <h4 style="margin:12px 0 4px;color:#1c1917;">Custom (OpenAI-compatible)</h4>
         <p style="font-size:12px;color:#6b7280;">

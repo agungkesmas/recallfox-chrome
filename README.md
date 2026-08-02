@@ -4,9 +4,11 @@ Port dari Firefox addon [RecallFox](https://github.com/agungkesmas/recallfox) ke
 
 ## Status
 
-✅ **Stable v3.20.8** — port dari Firefox v3.20.1-stable + 8 Chrome-MV3 parity fixes + RecallTape stability + sidebar width fix.
+✅ **Stable v3.20.19** — full parity dengan Firefox v3.20.19-stable. Port fitur: Popout Sidebar, OmniRouter provider, Relay Point (snapshot → resume context via AI), Anchor AI Answer (prompt fix — anchor utama = jawaban AI terakhir).
 
-Latest release: [v3.20.8-chrome-stable](https://github.com/agungkesmas/recallfox-chrome/releases/tag/v3.20.8-chrome-stable)
+**Download:** [recallfox-chrome-v3.20.19.zip](https://github.com/agungkesmas/recallfox-chrome/releases/download/v3.20.19-chrome-stable/recallfox-chrome-v3.20.19.zip) — extract, lalu `chrome://extensions` → Developer mode → Load unpacked.
+
+Latest release: [v3.20.19-chrome-stable](https://github.com/agungkesmas/recallfox-chrome/releases/tag/v3.20.19-chrome-stable)
 
 ## Perbedaan dari Firefox Addon
 

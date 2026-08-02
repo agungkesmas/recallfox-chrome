@@ -3559,6 +3559,15 @@ function itemSheet(id) {
       // v3.16.8 #7: Lanjutkan snapshot di AI lain — copy snapshot body + buka AI lain di tab baru
       // User bisa pindah percakapan dari satu AI ke AI lain dengan konteks yang sama.
       + (it.type === 'snapshot' ? '<button class="act" data-a="continue-ai">' + ICONS.spark + '<div>🔄 Lanjutkan di AI Lain<div class="ad">Salin snapshot + buka AI lain (Claude/Gemini/dll) di tab baru</div></div></button>' : '')
+      // v3.20.16: Relay Point — Copy Resume Context (jika sudah di-generate).
+      // Resume context = ringkasan status kerja terakhir, di-generate via OmniRouter
+      // saat snapshot diambil di AI domain. User paste ke akun AI baru untuk melanjutkan.
+      // Hanya muncul kalau it.resumeContext sudah ada — kalau belum, tampilkan tombol Generate.
+      + (it.type === 'snapshot' && it.resumeContext ? '<button class="act" data-a="copy-resume">' + ICONS.copy + '<div>📋 Copy Resume Context<div class="ad">Paste ke akun AI baru untuk melanjutkan pekerjaan</div></div></button>' : '')
+      // v3.20.16: Relay Point — Generate Resume Context (jika belum ada, atau retry).
+      // Manual trigger — berguna kalau auto-generate saat capture gagal (mis. OmniRouter
+      // belum dikonfigurasi saat itu, atau generate pertama gagal).
+      + (it.type === 'snapshot' && !it.resumeContext ? '<button class="act" data-a="gen-resume">' + ICONS.spark + '<div>🔄 Generate Resume Context<div class="ad">Buat ringkasan status kerja via OmniRouter — untuk pindah akun AI</div></div></button>' : '')
       + '<button class="act" data-a="fav">' + ICONS.star + '<div>' + (it.favorite ? 'Hapus dari favorit' : 'Jadikan favorit') + '</div></button>'
       // v3.7.2 (Issue 1): Arsipkan / Unarsipkan — item tetap tersimpan, hanya disembunyikan dari list default.
       + (it.type !== 'bundle' ? '<button class="act" data-a="archive">' + ICONS.archive + '<div>' + (it.archived ? 'Keluarkan dari arsip' : 'Arsipkan item') + '<div class="ad">Disembunyikan dari list utama tanpa dihapus</div></div></button>' : '')
@@ -3588,7 +3597,7 @@ function itemSheet(id) {
       // v3.12.0 (Fase 7): Juga tampil untuk dokumen — catatan disimpan di source.annotationNote.
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan — ikut saat copy</div></div></button>' : '')
       + '<button class="act danger" data-a="del">' + ICONS.trash + '<div>Hapus item</div></button>';
-    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
+    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', async () => {
       const k = a.dataset.a;
       if (k === 'primary') { closeSheet(); primaryAction(it.id); }
       else if (k === 'attach') { closeSheet(); openAttachModal(it.id); }
@@ -3597,6 +3606,44 @@ function itemSheet(id) {
       else if (k === 'summarize') { closeSheet(); summarizeAndInject(it.id); }
       // v3.16.8 #7: Lanjutkan snapshot di AI lain
       else if (k === 'continue-ai') { closeSheet(); continueInOtherAI(it.id); }
+      // v3.20.16: Relay Point — Copy resume context ke clipboard
+      else if (k === 'copy-resume') {
+        closeSheet();
+        if (!it.resumeContext) { toast('Resume context belum ada', false); }
+        else {
+          try {
+            await navigator.clipboard.writeText(it.resumeContext);
+            toast('📋 Resume context tersalin — paste ke akun AI baru');
+          } catch (e) {
+            // Fallback: delegate ke background (clipboard di content script context)
+            try {
+              await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: it.resumeContext });
+              toast('📋 Resume context tersalin — paste ke akun AI baru');
+            } catch (e2) { toast('⚠ Gagal menyalin resume context', false); }
+          }
+        }
+      }
+      // v3.20.16: Relay Point — Generate resume context manual (via OmniRouter)
+      else if (k === 'gen-resume') {
+        closeSheet();
+        toast('🔄 Membuat resume context via OmniRouter...');
+        try {
+          const res = await browser.runtime.sendMessage({ type: 'GENERATE_RESUME_CONTEXT', itemId: it.id });
+          if (res?.ok) {
+            await refreshVault();
+            toast('✓ Resume context siap — klik item lagi untuk copy');
+          } else {
+            const err = res?.error || 'unknown';
+            let msg = 'Gagal: ' + err;
+            if (err === 'generate_failed') msg = 'Gagal generate — cek API key OmniRouter di Pengaturan';
+            else if (err === 'snapshot_body_too_short') msg = 'Snapshot terlalu pendek untuk resume context';
+            else if (err === 'item_not_found_or_not_snapshot') msg = 'Item tidak ditemukan atau bukan snapshot';
+            toast(msg, false);
+          }
+        } catch (e) {
+          toast('Gagal: ' + e.message, false);
+        }
+      }
       else if (k === 'editbundle') { closeSheet(); openBundleEditorSheet(it.id); }
       else if (k === 'fav') { toggleFav(it.id).then(() => { closeSheet(); toast(it.favorite ? '★ Dihapus dari favorit' : '★ Jadikan favorit'); }); }
       // v3.16.0 K5: Toggle konteks aktif (auto-prepend saat inject prompt)

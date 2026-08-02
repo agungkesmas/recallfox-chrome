@@ -266,8 +266,18 @@ async function renderToppingsList() {
 function updateAssistantBaseUrlVisibility() {
   const provider = document.getElementById('rf-set-assistant-provider').value;
   const row = document.getElementById('rf-row-assistant-baseurl');
-  // Show Base URL field for 'custom' provider, hide for others (use default)
-  row.style.display = (provider === 'custom') ? 'flex' : 'none';
+  const info = getProviderInfo(provider);
+  // v3.20.15: Tampilkan Base URL field untuk 'custom' (tidak punya default)
+  // dan untuk provider dengan alwaysShowBaseUrl=true (mis. omnirouter — karena
+  // URL bisa local atau cloud tergantung install mode user).
+  const showRow = (provider === 'custom') || (info && info.alwaysShowBaseUrl);
+  row.style.display = showRow ? 'flex' : 'none';
+  // v3.20.15: Update placeholder + hint sesuai provider aktif supaya user
+  // tahu default URL yang dipakai kalau field dikosongkan.
+  const baseUrlInput = document.getElementById('rf-set-assistant-baseurl');
+  if (baseUrlInput && info && info.defaultBaseUrl) {
+    baseUrlInput.placeholder = info.defaultBaseUrl;
+  }
 }
 
 // v3.11.7-fix (Issue #6): Helper untuk show/hide adzan options berdasarkan state
@@ -300,7 +310,14 @@ function updateAssistantModelHint() {
 function updateAssistantFallbackBaseUrlVisibility() {
   const provider = document.getElementById('rf-set-assistant-fallback-provider').value;
   const row = document.getElementById('rf-row-assistant-fallback-baseurl');
-  row.style.display = (provider === 'custom') ? 'flex' : 'none';
+  const info = getProviderInfo(provider);
+  // v3.20.15: Sama dengan primary — tampilkan juga untuk omnirouter.
+  const showRow = (provider === 'custom') || (info && info.alwaysShowBaseUrl);
+  row.style.display = showRow ? 'flex' : 'none';
+  const baseUrlInput = document.getElementById('rf-set-assistant-fallback-baseurl');
+  if (baseUrlInput && info && info.defaultBaseUrl) {
+    baseUrlInput.placeholder = info.defaultBaseUrl;
+  }
 }
 
 function updateAssistantFallbackModelHint() {

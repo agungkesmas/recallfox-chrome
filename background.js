@@ -26,6 +26,7 @@ import {
   getSettings,
   saveSettings,
   addItem,
+  updateItem,
   getVault,
   saveVault,
   getScreenshotBlob,
@@ -40,6 +41,8 @@ import {
   clearUserBlocklist,
   exportAllScreenshotBlobs
 } from './lib/storage.js';
+// v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async, lokal saja)
+import { chatWithFallback, isAssistantConfigured } from './lib/assistant.js';
 // Chrome MV3 (v3.20.4): dynamic import() is disallowed on ServiceWorkerGlobalScope
 // by the HTML spec — see https://github.com/w3c/ServiceWorker/issues/1356.
 // All previously-lazy-loaded modules are now imported statically. This is a
@@ -3056,7 +3059,53 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       snapshotDomain: msg.snapshotDomain || (msg.url ? new URL(msg.url).hostname : (tab?.url ? new URL(tab.url).hostname : '')),
       snapshotMessageCount: msg.snapshotMessageCount || msg.messageCount || 0
     });
-    sendResponse(result); return;
+    sendResponse(result);
+
+    // v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async).
+    // Strategi AMAN: fire-and-forget setelah snapshot tersimpan. Tidak block save.
+    // Body >= 100 char → trigger background generate. Kalau gagal/belum configured,
+    // resumeContext = null — snapshot tetap berfungsi normal seperti sebelumnya.
+    // Resume context hanya disimpan di LOCAL storage (tidak sync ke Supabase —
+    // supaya TIDAK merusak cloud sync yang sudah jalan untuk schema lama).
+    if (result?.ok !== false && result?.id && msg.body && msg.body.trim().length >= 100) {
+      generateResumeContext(result.id, msg.body, msg.title || 'Snapshot').catch(err => {
+        console.warn('[RecallFox/RelayPoint] generateResumeContext failed:', err.message);
+      });
+    }
+    return;
+  }
+  if (msg.type === 'GENERATE_RESUME_CONTEXT') {
+    // v3.20.16: Manual trigger dari popup — user klik "Generate Resume Context"
+    // di action sheet snapshot. Berguna kalau auto-generate saat capture gagal
+    // (mis. OmniRouter belum dikonfigurasi saat itu), atau user mau retry.
+    const itemId = msg.itemId;
+    if (!itemId) { sendResponse({ ok: false, error: 'no_item_id' }); return; }
+    const vault = await getVault();
+    const item = vault.items.find(i => i.id === itemId);
+    if (!item || item.type !== 'snapshot') {
+      sendResponse({ ok: false, error: 'item_not_found_or_not_snapshot' });
+      return;
+    }
+    if (!item.body || item.body.trim().length < 100) {
+      sendResponse({ ok: false, error: 'snapshot_body_too_short' });
+      return;
+    }
+    try {
+      const resumeContext = await generateResumeContextSync(item.body, item.title || 'Snapshot');
+      if (resumeContext) {
+        await updateItem(itemId, {
+          resumeContext,
+          resumeContextAt: new Date().toISOString()
+        });
+        sendResponse({ ok: true, resumeContext });
+      } else {
+        sendResponse({ ok: false, error: 'generate_failed' });
+      }
+    } catch (e) {
+      console.error('[RecallFox/RelayPoint] manual generate failed:', e);
+      sendResponse({ ok: false, error: e.message });
+    }
+    return;
   }
   if (msg.type === 'AI_ASK_QUERY') {
     // From selection-ai.js floating button. Delegate to shared orchestrator.
@@ -4524,3 +4573,197 @@ browser.runtime.onInstalled.addListener(async (details) => {
     }
   } catch (e) { /* ignore */ }
 });
+
+// ============================================================================
+// v3.20.16–v3.20.19: Relay Point — generate resume context via OmniRouter
+// (silent, async, lokal saja). Chrome MV3 port dari Firefox v3.20.19.
+//
+// Strategi:
+//   - Auto-generate: fire-and-forget setelah CAPTURE_SNAPSHOT save.
+//     Non-blocking — snapshot sudah tersimpan, resume context update via updateItem().
+//   - Manual-generate: user klik "Generate Resume Context" di action sheet.
+//     Sync lewat GENERATE_RESUME_CONTEXT message.
+//   - Kalau OmniRouter belum dikonfigurasi atau gagal, resumeContext = null.
+//     Snapshot tetap berfungsi normal seperti sebelumnya.
+//
+// v3.20.19 (Anchor AI Answer): prompt sekarang explicit ANCHOR = jawaban AI
+// terakhir (bukan pertanyaan user). AI harus bandingkan jawaban AI terakhir
+// dengan jawaban AI sebelumnya untuk deteksi "nyambung atau tidak".
+// ============================================================================
+
+const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah asisten yang merangkum percakapan AI menjadi "resume context" — ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk melanjutkan pekerjaan tanpa kehilangan konteks.
+
+Anda akan diberikan snapshot percakapan user dengan AI (urut dari tertua ke terbaru, label "👤 User:" dan "🤖 AI:").
+
+## Langkah 1 — Identifikasi ANCHOR: jawaban AI terakhir
+Cari pesan "🤖 AI:" yang PALING BAWAH (paling baru). Itu adalah **ANCHOR** — status kerja terakhir yang user mau lanjutkan.
+
+Baca DENGAN TELITI seluruh isi jawaban AI terakhir tersebut. Bukan cuma user question di atasnya, tapi **JAWABAN AI-nya** yang menjadi acuan utama. Jawaban AI berisi: apa yang sudah dikerjakan, kode yang sudah ditulis, solusi yang sudah diberikan, langkah selanjutnya yang disarankan.
+
+## Langkah 2 — Deteksi rantai relevansi backward dari ANCHOR
+Mulai dari jawaban AI terakhir (anchor), cek ke belakang (ke pesan lebih lama):
+- Apakah PERCAKAPAN sebelumnya (user question + AI answer) nyambung / memperkuat konteks di jawaban AI terakhir?
+- Kalau YA → include percakapan itu, lanjut cek ke belakang lagi.
+- Kalau TIDAK → berhenti. Jangan include percakapan itu atau yang lebih lama.
+
+**PENTING — ACUAN UTAMA ADALAH JAWABAN AI, BUKAN PERTANYAAN USER:**
+- Pertanyaan user cuma trigger/pemicu — biasanya pendek dan tidak berisi konteks kerja.
+- Jawaban AI berisi konteks kerja sebenarnya: kode, solusi, penjelasan, langkah selanjutnya.
+- Saat cek "nyambung atau tidak", bandingkan konteks di **jawaban AI terakhir** dengan konteks di **jawaban AI sebelumnya**. Jangan bandingkan pertanyaan user saja.
+
+Contoh benar:
+- Jawaban AI terakhir: "Untuk testing React, pakai Vitest. Sudah setup di \`src/test/setup.ts\`..."
+  - Percakapan sebelumnya: user tanya state management, AI jawab "Pakai Zustand, sudah install di \`package.json\`" → NYAMBUNG (sama-sama React dev, saling memperkuat konteks proyek)
+  - Percakapan sebelum itu: user tanya resep nasi goreng → TIDAK NYAMBUNG → berhenti
+
+Contoh salah (HINDARI):
+- ❌ Bandingkan pertanyaan user terakhir ("gimana test React?") dengan pertanyaan user sebelumnya ("gimana routing?") → terlihat tidak nyambung padahal sebenarnya nyambung (sama-sama React).
+- ✅ Bandingkan jawaban AI terakhir dengan jawaban AI sebelumnya → kedua jawaban tentang React dev → nyambung.
+
+Maksimal ambil 6 percakapan (12 pesan) yang nyambung dengan jawaban AI terakhir.
+
+## Langkah 3 — Generate resume context
+Dari rantai percakapan yang relevan (hasil langkah 2), buat resume context dengan format:
+
+## 🎯 Tujuan Utama
+[Apa tujuan utama user di percakapan ini — 1-2 kalimat, berdasarkan jawaban AI terakhir]
+
+## ✅ Yang Sudah Dikerjakan
+- [Poin 1 — apa yang sudah dicapai/dijawab AI, SEBANYAK yang relevan. Ambil dari JAWABAN AI, bukan pertanyaan user.]
+- [Poin 2]
+- [dst — jangan ringkas terlalu agresif, konteks penting dari jawaban AI harus tetap ada]
+
+## ⏳ Yang Belum Selesai
+- [Poin 1 — apa yang masih perlu dilanjutkan, berdasarkan saran AI terakhir atau pertanyaan user yang belum terjawab]
+- [Poin 2]
+- [dst]
+
+## 📌 Konteks Penting
+[Kode, parameter, constraint, preferensi, atau detail teknis yang HARUS dibawa ke akun AI baru — supaya tidak hilang. Include code snippets penting dari JAWABAN AI, nama file, konfigurasi, dll.]
+
+---
+Maksimal 800 kata. Tulis dalam bahasa Indonesia. Lebih baik panjang tapi lengkap daripada pendek tapi kehilangan konteks. Kalau percakapan terlalu pendek untuk dirangkum, jawab: "Percakapan terlalu pendek untuk resume context."`;
+
+const RESUME_CONTEXT_MAX_BODY_CHARS = 8000; // Truncate body sebelum kirim ke AI (hemat token)
+
+/**
+ * v3.20.18: Parse body snapshot untuk ambil maksimal N pairs terakhir (user + AI).
+ *
+ * v3.20.17 fixed ambil 3 pairs — terlalu kaku. User bilang:
+ *   "utamakan chat terakhir untuk memeriksa chat pertama dan kedua nyambung tidak.
+ *    jika chat kedua nyambung dengan yang ketiga berarti saling menguatkan untuk
+ *    bahkan ngambil lebih dari 3 chat di atasnya misalkan masih ada yang nyambung."
+ *
+ * v3.20.18: Kirim full body snapshot (truncated ke 8000 char) ke AI. AI yang
+ * decide mana yang nyambung (chained relevance backward dari pair terakhir).
+ * Bisa ambil 3, 4, 5, atau 6 pairs terakhir tergantung kontinuitas topik.
+ *
+ * Body snapshot format (dari content.js extractConversation):
+ *   "👤 User:\n<text>\n\n🤖 AI:\n<text>\n\n👤 User:\n<text>\n\n🤖 AI:\n<text>\n\n..."
+ *
+ * Fungsi ini sekarang cuma truncate ke max chars (tidak potong pairs lagi —
+ * AI yang pilih mana yang relevan via prompt chained relevance).
+ *
+ * @param {string} body — snapshot body (full)
+ * @returns {string} — body yang sudah di-truncate ke RESUME_CONTEXT_MAX_BODY_CHARS
+ */
+function truncateBodyForResume(body) {
+  if (!body || typeof body !== 'string') return '';
+  if (body.length <= RESUME_CONTEXT_MAX_BODY_CHARS) return body;
+  // Truncate dari akhir supaya pertahankan pesan-pesan terakhir (yang paling relevan)
+  // untuk chained relevance. Tapi AI tetap butuh konteks awal untuk deteksi
+  // "apakah nyambung dari awal atau tidak". Jadi truncate dari TENGAH —
+  // keep awal (sebagian) + akhir (full).
+  //
+  // Strategi: keep 2000 char pertama (preview konteks awal) + "...[truncated, X chars middle]..." + 6000 char terakhir.
+  const headLen = 2000;
+  const tailLen = RESUME_CONTEXT_MAX_BODY_CHARS - headLen - 200; // 200 char untuk truncation marker
+  const head = body.slice(0, headLen);
+  const tail = body.slice(body.length - tailLen);
+  return head + '\n\n...[truncated, ' + (body.length - headLen - tailLen) + ' chars middle omitted — pesan terakhir tetap full di bawah]...\n\n' + tail;
+}
+
+/**
+ * Generate resume context async (fire-and-forget).
+ * Dipanggil setelah CAPTURE_SNAPSHOT save. Non-blocking.
+ * Update item via updateItem() kalau berhasil.
+ *
+ * v3.20.18: Kirim full body snapshot (truncated) ke AI. AI deteksi rantai
+ * relevansi backward dari pair terakhir — bisa ambil 3-6 pairs terakhir
+ * tergantung kontinuitas topik. Word limit 800 kata (sebelumnya 300).
+ *
+ * v3.20.19 (Anchor AI Answer): Prompt sekarang explicit ANCHOR = jawaban AI
+ * terakhir. AI harus bandingkan jawaban AI terakhir dengan jawaban AI sebelumnya.
+ *
+ * @param {string} itemId — ID snapshot item
+ * @param {string} body — snapshot body (percakapan AI, full 50 msgs)
+ * @param {string} title — snapshot title (untuk konteks)
+ */
+async function generateResumeContext(itemId, body, title) {
+  try {
+    // Cek apakah AI assistant dikonfigurasi
+    const configured = await isAssistantConfigured();
+    if (!configured) {
+      console.log('[RecallFox/RelayPoint] AI not configured — skip resume context generation');
+      return;
+    }
+
+    const resumeContext = await generateResumeContextSync(body, title);
+    if (!resumeContext) {
+      console.log('[RecallFox/RelayPoint] Resume context empty — skip save');
+      return;
+    }
+
+    // Update item dengan resume context (LOKAL saja — tidak sync ke cloud)
+    await updateItem(itemId, {
+      resumeContext,
+      resumeContextAt: new Date().toISOString()
+    });
+    console.log('[RecallFox/RelayPoint] Resume context saved for item', itemId, '(' + resumeContext.length + ' chars)');
+  } catch (err) {
+    console.warn('[RecallFox/RelayPoint] generateResumeContext error:', err.message);
+    // Jangan throw — ini fire-and-forget. Snapshot tetap tersimpan tanpa resume context.
+  }
+}
+
+/**
+ * Generate resume context sync (untuk manual trigger).
+ * Dipanggil oleh GENERATE_RESUME_CONTEXT message handler.
+ *
+ * v3.20.18: Kirim full body snapshot (truncated 8000 char) ke AI. AI deteksi
+ * rantai relevansi backward — ambil 3-6 pairs terakhir yang nyambung topik.
+ * Word limit 800 kata (sebelumnya 300 — user bilang terlalu terbatas).
+ *
+ * v3.20.19 (Anchor AI Answer): Prompt sekarang explicit ANCHOR = jawaban AI
+ * terakhir (bukan pertanyaan user). AI harus bandingkan jawaban AI terakhir
+ * dengan jawaban AI sebelumnya untuk deteksi "nyambung atau tidak".
+ *
+ * @param {string} body — snapshot body (full 50 msgs)
+ * @param {string} title — snapshot title
+ * @returns {Promise<string|null>} — resume context text, atau null kalau gagal
+ */
+async function generateResumeContextSync(body, title) {
+  // v3.20.18: Kirim full body (truncated). AI yang decide mana yang nyambung
+  // via chained relevance backward logic di system prompt.
+  const truncatedBody = truncateBodyForResume(body);
+  if (!truncatedBody) {
+    console.log('[RecallFox/RelayPoint] Body kosong — skip');
+    return null;
+  }
+
+  const messages = [
+    { role: 'system', content: RESUME_CONTEXT_SYSTEM_PROMPT },
+    { role: 'user', content: 'Judul snapshot: ' + title + '\n\nSnapshot percakapan user dengan AI (urut dari tertua ke terbaru):\n\n' + truncatedBody }
+  ];
+
+  const result = await chatWithFallback(messages);
+  const content = result?.content?.trim();
+  if (!content || content.length < 20) {
+    return null;
+  }
+  // Filter: kalau AI bilang "terlalu pendek", return null
+  if (content.toLowerCase().includes('terlalu pendek untuk resume context')) {
+    return null;
+  }
+  return content;
+}
