@@ -304,12 +304,19 @@
     // Fallback timer (30s): if user cancels capture (Esc in overlay.js),
     // background never sends RF_RESTORE → timer restores sidebar.
     if (host) host.style.display = 'none';
-    if (floaterPair) host.style.display = 'none';
+    if (floaterPair) floaterPair.style.display = 'none';  // v3.20.13: FIX — was host.style.display (bug)
 
-    // Trigger capture via background (same as sidebar native "Shot" button)
-    browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode: undefined }).catch(() => {
-      // Fallback: kirim TRIGGER_CAPTURE_FROM_POPUP ke overlay.js via background
-      browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'TRIGGER_CAPTURE_FROM_POPUP' }).catch(() => {});
+    // v3.20.13: HAPUS .catch() fallback yang kirim RF_FORWARD_TO_ACTIVE_TAB.
+    //   Sebelumnya: kalau CAPTURE_SCREENSHOT reject (common Chrome MV3
+    //   "message channel closed" error), .catch() kirim RF_FORWARD_TO_ACTIVE_TAB
+    //   → background forward TRIGGER_CAPTURE_FROM_POPUP → modal muncul 2x!
+    //   User complain: "modal screnshotnya keluar lagi tidak berapa lama.
+    //   jadi kyk dobel gitu listenernya."
+    //   Sekarang: background.js CAPTURE_SCREENSHOT handler sudah punya inject+retry
+    //   sendiri (v3.20.11). Tidak perlu fallback di sini. Kalau sendMessage reject,
+    //   just log — jangan trigger ulang.
+    browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode: undefined }).catch((e) => {
+      console.warn('[RecallFox] CAPTURE_SCREENSHOT rejected (background will handle inject+retry):', e.message);
     });
 
     // v3.20.12: Fallback restore after 30 seconds.

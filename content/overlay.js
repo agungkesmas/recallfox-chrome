@@ -327,13 +327,32 @@
   }
 
   // ===== Capture flow =====
+  // v3.20.12: Guard against duplicate triggerCapture calls.
+  // Jika modal sedang terbuka (mode picker atau preview) dan triggerCapture
+  // dipanggil lagi (e.g. dari double message send), abaikan — jangan buka modal kedua.
+  // Sebelumnya: showModePicker() hapus modal existing lalu buat baru → user lihat
+  // modal muncul lagi setelah cancel ("modal kyk dobel listener").
+  let captureInProgress = false;
+
   async function triggerCapture(forceMode) {
-    // If no mode forced, show the mode-picker dialog first
-    let mode = forceMode;
-    if (!mode || typeof mode !== 'string') {
-      mode = await showModePicker();
-      if (!mode) return; // User cancelled the picker
+    // v3.20.12: Dedup guard — kalau capture lagi jalan, skip.
+    if (captureInProgress) {
+      console.log('[RecallFox] triggerCapture dipanggil lagi tapi capture sedang berjalan — skip (dedup)');
+      return;
     }
+    // v3.20.12: Kalau modal masih terbuka (mode picker atau preview), skip juga.
+    if (modalEl) {
+      console.log('[RecallFox] triggerCapture dipanggil lagi tapi modal masih terbuka — skip (dedup)');
+      return;
+    }
+    captureInProgress = true;
+    try {
+      // If no mode forced, show the mode-picker dialog first
+      let mode = forceMode;
+      if (!mode || typeof mode !== 'string') {
+        mode = await showModePicker();
+        if (!mode) return; // User cancelled the picker
+      }
 
     // Visual feedback on the FAB
     if (fabBtn) {
@@ -388,6 +407,12 @@
     };
     restoreButton();
     showModal();
+    } finally {
+      // v3.20.12: Reset dedup guard — capture selesai (sukses atau cancel).
+      // setTimeout beri jeda 300ms supaya message retry yang masih in-flight
+      // juga ke-dedup (race condition antara resolve promise + message delivery).
+      setTimeout(() => { captureInProgress = false; }, 300);
+    }
   }
 
   function restoreButton() {
