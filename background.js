@@ -1702,6 +1702,50 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
 
+  // v3.20.22: COPY_IMAGE — relay image clipboard ke content script tab aktif.
+  // Dipakai oleh writeImageOnlyToClipboard / writeScreenshotToClipboard strategi D
+  // ketika navigator.clipboard.write gagal di iframe popout sidebar Chrome.
+  // Content script jalan di halaman web context (focused) → clipboard.write works.
+  if (msg.type === 'COPY_IMAGE') {
+    try {
+      const payload = {
+        type: 'COPY_IMAGE',
+        dataUrl: msg.dataUrl,
+        textPlain: msg.textPlain || null,
+        textHtml: msg.textHtml || null,
+        mode: msg.mode || 'image_only'
+      };
+
+      // Strategi 1: kirim ke tab aktif di window aktif
+      const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (activeTab?.id) {
+        try {
+          const res = await browser.tabs.sendMessage(activeTab.id, payload);
+          if (res?.ok) { sendResponse({ ok: true, via: 'active_tab' }); return; }
+        } catch (e) {
+          console.warn('[RecallFox/bg] COPY_IMAGE to active tab gagal:', e.message);
+        }
+      }
+
+      // Strategi 2: cari tab lain yang punya content script
+      const allTabs = await browser.tabs.query({});
+      for (const tab of allTabs) {
+        if (!tab.id || tab.id === activeTab?.id) continue;
+        const url = tab.url || '';
+        if (!url.startsWith('http') && !url.startsWith('file://')) continue;
+        try {
+          const res = await browser.tabs.sendMessage(tab.id, payload);
+          if (res?.ok) { sendResponse({ ok: true, via: 'other_tab' }); return; }
+        } catch (e) { /* skip */ }
+      }
+
+      sendResponse({ ok: false, error: 'no_content_script_available' }); return;
+    } catch (e) {
+      console.error('[RecallFox/bg] COPY_IMAGE exception:', e);
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
   // v3.7: EXPORT_BACKUP — export vault ke file (.json atau .rfvault terenkripsi)
   if (msg.type === 'EXPORT_BACKUP') {
     try {

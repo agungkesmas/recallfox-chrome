@@ -1169,6 +1169,95 @@
       }
       return true;
     }
+    // v3.20.22: COPY_IMAGE — image clipboard via content script (tab aktif).
+    // Dipanggil dari background COPY_IMAGE handler (strategi D relay) ketika
+    // navigator.clipboard.write gagal di popup/iframe sidebar Chrome.
+    // Content script jalan di halaman web context (focused) → clipboard.write works.
+    if (msg.type === 'COPY_IMAGE') {
+      (async () => {
+        try {
+          const { dataUrl, textPlain, textHtml, mode } = msg;
+          if (!dataUrl) { sendResponse({ ok: false, error: 'no_data_url' }); return; }
+
+          // Convert dataUrl → PNG blob
+          const resp = await fetch(dataUrl);
+          const blob = await resp.blob();
+          let pngBlob;
+          if (blob.type === 'image/png') {
+            pngBlob = blob;
+          } else {
+            const img = await createImageBitmap(blob);
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            canvas.getContext('2d').drawImage(img, 0, 0);
+            pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+          }
+          if (!pngBlob) { sendResponse({ ok: false, error: 'blob_conversion_failed' }); return; }
+
+          // Strategi 1: ClipboardItem image/png (+ text/html + text/plain kalau ada)
+          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+            try {
+              const clipboardData = { 'image/png': pngBlob };
+              if (textHtml) clipboardData['text/html'] = new Blob([textHtml], { type: 'text/html' });
+              if (textPlain) clipboardData['text/plain'] = new Blob([textPlain], { type: 'text/plain' });
+              const item = new ClipboardItem(clipboardData);
+              await navigator.clipboard.write([item]);
+              sendResponse({ ok: true, via: 'clipboard_item' });
+              return;
+            } catch (e) {
+              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 1 failed:', e.message);
+            }
+          }
+
+          // Strategi 2: image/png only (tanpa text)
+          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+            try {
+              const item = new ClipboardItem({ 'image/png': pngBlob });
+              await navigator.clipboard.write([item]);
+              sendResponse({ ok: true, via: 'image_only' });
+              return;
+            } catch (e) {
+              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 2 failed:', e.message);
+            }
+          }
+
+          // Strategi 3: text/html dengan <img src="dataUrl"> embedded
+          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+            try {
+              const html = '<img src="' + dataUrl + '" alt="gambar RecallFox" />';
+              const plain = textPlain || '[Gambar RecallFox]';
+              const item = new ClipboardItem({
+                'text/html': new Blob([html], { type: 'text/html' }),
+                'text/plain': new Blob([plain], { type: 'text/plain' })
+              });
+              await navigator.clipboard.write([item]);
+              sendResponse({ ok: true, via: 'html_embedded' });
+              return;
+            } catch (e) {
+              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 3 failed:', e.message);
+            }
+          }
+
+          // Strategi 4: text-only fallback
+          if (navigator.clipboard?.writeText && textPlain) {
+            try {
+              await navigator.clipboard.writeText(textPlain);
+              sendResponse({ ok: true, via: 'text_only' });
+              return;
+            } catch (e) {
+              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 4 failed:', e.message);
+            }
+          }
+
+          sendResponse({ ok: false, error: 'all_strategies_failed' });
+        } catch (e) {
+          console.error('[RecallFox/overlay] COPY_IMAGE exception:', e);
+          sendResponse({ ok: false, error: e.message });
+        }
+      })();
+      return true; // async
+    }
     // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan playback dari content script.
     // Audio tidak bisa di-play dari background service worker (MV3 restriction).
     // Background kirim PLAY_ADZAN ke content script tab aktif, di sini kita mainkan.
