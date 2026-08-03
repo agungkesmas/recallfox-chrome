@@ -488,6 +488,20 @@
     } else if (msg.type === 'INJECT_TEXT') {
       injectText(msg.text, msg.mode).then(res => sendResponse(res));
       return true; // async
+    } else if (msg.type === 'COPY_TEXT') {
+      // v3.20.21 FIX: Handler untuk copy teks via content script.
+      // Dipakai sebagai fallback ketika navigator.clipboard gagal di:
+      //   - popup extension yang tidak focused
+      //   - iframe sidebar cross-origin
+      //   - background Service Worker Chrome MV3 (tidak bisa akses clipboard)
+      // Content script jalan di context halaman web (focused document) → clipboard works.
+      copyToClipboard(msg.text || '').then(ok => {
+        sendResponse({ ok });
+      }).catch(e => {
+        console.warn('[RecallFox/content] COPY_TEXT error:', e);
+        sendResponse({ ok: false, error: e.message });
+      });
+      return true; // async
     } else if (msg.type === 'OPEN_SNAPSHOT_MODAL') {
       openSnapshotModal();
       sendResponse({ ok: true });

@@ -985,17 +985,10 @@ async function vaultBatchCopyTextAction() {
     return header + '\n' + (it.body || '');
   });
   const fullText = parts.join('\n\n---\n\n');
-  try {
-    await navigator.clipboard.writeText(fullText);
-    toast('✓ ' + items.length + ' item tersalin ke clipboard');
-  } catch (e) {
-    try {
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
-      toast('✓ ' + items.length + ' item tersalin ke clipboard');
-    } catch (e2) {
-      toast('⚠ Gagal menyalin: ' + e2.message, false);
-    }
-  }
+  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+  const ok = await copyTextWithFallback(fullText);
+  if (ok) toast('✓ ' + items.length + ' item tersalin ke clipboard');
+  else toast('⚠ Gagal menyalin (clipboard diblokir browser)', false);
 }
 
 // v3.14.9: Batch download semua gambar terpilih sebagai file terpisah.
@@ -1077,17 +1070,10 @@ async function vaultBatchCopyUrlsAction() {
     return;
   }
   const text = urls.join('\n');
-  try {
-    await navigator.clipboard.writeText(text);
-    toast('✓ ' + urls.length + ' URL gambar tersalin' + (skipped > 0 ? ' (' + skipped + ' lokal-only diabaikan)' : '') + ' — paste ke AI chat');
-  } catch (e) {
-    try {
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text });
-      toast('✓ ' + urls.length + ' URL gambar tersalin');
-    } catch (e2) {
-      toast('Gagal salin URL: ' + e2.message, false);
-    }
-  }
+  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+  const ok = await copyTextWithFallback(text);
+  if (ok) toast('✓ ' + urls.length + ' URL gambar tersalin' + (skipped > 0 ? ' (' + skipped + ' lokal-only diabaikan)' : '') + ' — paste ke AI chat');
+  else toast('Gagal salin URL (clipboard diblokir)', false);
 }
 
 // v3.14.9: Resolve image cloud URL dari item. Prioritas:
@@ -1114,17 +1100,10 @@ async function copyImageUrlToClipboard(id) {
     toast('Gambar ini tidak punya URL cloud (lokal-only). Gunakan Download atau Salin Gambar.', false);
     return;
   }
-  try {
-    await navigator.clipboard.writeText(url);
-    toast('✓ URL gambar tersalin — paste ke AI chat');
-  } catch (e) {
-    try {
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: url });
-      toast('✓ URL gambar tersalin');
-    } catch (e2) {
-      toast('Gagal salin URL: ' + e2.message, false);
-    }
-  }
+  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+  const ok = await copyTextWithFallback(url);
+  if (ok) toast('✓ URL gambar tersalin — paste ke AI chat');
+  else toast('Gagal salin URL (clipboard diblokir)', false);
 }
 
 // v3.11.36 (Sesi 2, Issue dari Google Doc): Batch copy TEKS METADATA saja (tanpa gambar)
@@ -1162,19 +1141,10 @@ async function vaultBatchCopyMetaAction() {
     if (cap.textPlain) finalText = cap.textPlain;
   }
   if (!finalText) { toast('Tidak ada metadata untuk disalin', false); return; }
-  try {
-    await navigator.clipboard.writeText(finalText);
-    toast('✓ Teks metadata ' + items.length + ' item tersalin (paste ke WA/Gemini/AI chat)');
-  } catch (e) {
-    console.warn('[RecallFox] vaultBatchCopyMetaAction failed:', e.message);
-    try {
-      // Fallback: delegate ke background (utk konteks tanpa clipboard permission)
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: finalText });
-      toast('✓ Teks metadata ' + items.length + ' item tersalin');
-    } catch (e2) {
-      toast('⚠ Gagal menyalin: ' + e2.message, false);
-    }
-  }
+  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+  const ok = await copyTextWithFallback(finalText);
+  if (ok) toast('✓ Teks metadata ' + items.length + ' item tersalin (paste ke WA/Gemini/AI chat)');
+  else toast('⚠ Gagal menyalin (clipboard diblokir browser)', false);
 }
 
 // v3.11.14: Copy bundle — gabungkan semua bundle terpilih jadi 1 teks
@@ -1214,17 +1184,10 @@ async function vaultBatchCopyBundleAction() {
     return sections.join('\n\n');
   });
   const fullText = parts.join('\n\n---\n\n');
-  try {
-    await navigator.clipboard.writeText(fullText);
-    toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
-  } catch (e) {
-    try {
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
-      toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
-    } catch (e2) {
-      toast('⚠ Gagal menyalin: ' + e2.message, false);
-    }
-  }
+  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+  const ok = await copyTextWithFallback(fullText);
+  if (ok) toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
+  else toast('⚠ Gagal menyalin (clipboard diblokir browser)', false);
 }
 
 // v3.11.14: Unarsip — keluarkan item dari arsip (untuk chip 'archive')
@@ -1367,12 +1330,10 @@ async function vaultBatchCopyAction(withCaption) {
         toast(label);
       } else {
         // Fallback: text-only
-        try {
-          await navigator.clipboard.writeText(cap.textPlain);
-          toast('✓ ' + screenshots.length + ' screenshot tersalin (text-only — gambar tidak ikut)');
-        } catch (e2) {
-          toast('Gagal copy: ' + e2.message, false);
-        }
+        // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
+        const okText = await copyTextWithFallback(cap.textPlain);
+        if (okText) toast('✓ ' + screenshots.length + ' screenshot tersalin (text-only — gambar tidak ikut)');
+        else toast('Gagal copy (clipboard diblokir)', false);
       }
     } else {
       // Image only — v3.11.38: pakai composite image (bukan screenshot pertama saja)
@@ -1463,12 +1424,10 @@ async function _vaultBatchCopyTextFallback(ids, withCaption) {
     if (i < items.length - 1) parts.push('---');
   }
   const fullText = parts.join('\n');
-  try {
-    await navigator.clipboard.writeText(fullText);
-    toast('✓ ' + items.length + ' screenshot tersalin (text-only fallback — gambar tidak ikut)');
-  } catch (e) {
-    toast('⚠ Gagal copy: ' + e.message + '. Coba buka halaman web http(s) dulu, lalu klik copy lagi.', false);
-  }
+  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+  const ok = await copyTextWithFallback(fullText);
+  if (ok) toast('✓ ' + items.length + ' screenshot tersalin (text-only fallback — gambar tidak ikut)');
+  else toast('⚠ Gagal copy. Coba buka halaman web http(s) dulu, lalu klik copy lagi.', false);
 }
 
 // v3.11.13 (Sesi 12): Batch delete screenshot — bersih-bersih vault gampang.
@@ -2041,6 +2000,33 @@ function bindItemClicks() {
         }
         return;
       }
+      // v3.20.21 FIX: Tombol "Salin ↵" / "Sisipkan ↵" untuk prompt/context/snapshot
+      // Sebelumnya: cta-pill generik (tanpa data-* attribute) → klik jatuh ke primaryAction()
+      // yang selalu inject. User expect: kalau tombol bilang "Salin" → copy ke clipboard.
+      // Sekarang: deteksi cta-pill klik, kalau label "Salin" → copy, kalau "Sisipkan" → inject.
+      const ctaPill = e.target.closest('.cta-pill');
+      if (ctaPill && !ctaPill.dataset.linkAction && !ctaPill.dataset.bundleAction && !ctaPill.dataset.shotAction) {
+        e.stopPropagation();
+        const it = findItem(el.dataset.id);
+        if (!it) return;
+        const label = (ctaPill.textContent || '').trim();
+        // v3.20.21: Kalau tombol bilang "Salin" ATAU bukan di halaman AI → copy ke clipboard
+        // Kalau "Sisipkan" DAN di halaman AI → inject ke textarea AI
+        const isCopyIntent = label.toLowerCase().indexOf('salin') >= 0 || !currentAiDomain;
+        if (isCopyIntent) {
+          // Copy body teks item ke clipboard (prompt/context/snapshot)
+          const text = it.body || '';
+          if (!text) { toast('Item ini tidak punya teks untuk disalin', false); return; }
+          copyTextWithFallback(text).then(success => {
+            if (success) {
+              incrementUseCount(it.id);
+              toast('📋 Teks disalin (' + text.length + ' karakter)');
+            }
+          });
+          return;
+        }
+        // Fall through ke primaryAction (inject)
+      }
       if (e.target.closest('.morebtn')) return;
       primaryAction(el.dataset.id);
     });
@@ -2087,24 +2073,74 @@ async function primaryAction(id) {
   }
 }
 
+// v3.20.21 FIX: Helper salin teks ke clipboard dengan fallback berlapis.
+//
+// Root cause yang diperbaiki:
+// 1. navigator.clipboard.writeText() gagal di iframe sidebar (cross-origin, document tidak focused)
+// 2. navigator.clipboard.writeText() di background Service Worker Chrome MV3 selalu gagal
+//    (SW tidak punya document context)
+// 3. Background kirim { type: 'COPY_TEXT' } ke content script, tapi tidak ada listener
+//
+// Strategi fallback (urutan):
+//   A. navigator.clipboard.writeText() — modern API, works di popup yang focused
+//   B. document.execCommand('copy') via <textarea> tersembunyi — works di iframe/sidebar
+//   C. background.sendMessage({ type: 'COPY_TO_CLIPBOARD' }) → content script aktif
+//      (background SW tidak bisa langsung akses clipboard di Chrome MV3)
+async function copyTextWithFallback(text) {
+  if (!text) return false;
+
+  // A. navigator.clipboard.writeText() — modern API
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) {
+    console.warn('[RecallFox] clipboard.writeText gagal, fallback ke execCommand:', e.message);
+  }
+
+  // B. execCommand('copy') via textarea tersembunyi — fallback untuk iframe sidebar
+  //    (Chrome membatasi navigator.clipboard di iframe cross-origin yang tidak focused)
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    if (ok) return true;
+  } catch (e2) {
+    console.warn('[RecallFox] execCommand copy gagal, fallback ke background:', e2.message);
+  }
+
+  // C. Fallback terakhir: minta background untuk kirim perintah copy ke content script
+  //    di tab aktif (background SW Chrome MV3 tidak bisa navigator.clipboard.writeText)
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text });
+    if (res && res.ok) return true;
+    console.warn('[RecallFox] background COPY_TO_CLIPBOARD gagal:', res?.error);
+  } catch (e3) {
+    console.warn('[RecallFox] sendMessage COPY_TO_CLIPBOARD exception:', e3.message);
+  }
+
+  return false;
+}
+
 // v3.6: Helper untuk salin URL Link ke clipboard (bukan buka link)
 async function copyLinkToClipboard(it) {
   if (!it) return;
   const url = it.linkUrl || it.body || '';
   if (!url) { toast('Link ini tidak punya URL', false); return; }
-  try {
-    await navigator.clipboard.writeText(url);
+  const ok = await copyTextWithFallback(url);
+  if (ok) {
     await incrementUseCount(it.id);
     toast('📋 URL disalin: ' + url.slice(0, 40) + (url.length > 40 ? '…' : ''));
-  } catch (e) {
-    // Fallback: pakai background script
-    try {
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: url });
-      await incrementUseCount(it.id);
-      toast('📋 URL disalin');
-    } catch (e2) {
-      toast('⚠ Gagal salin: ' + e2.message, false);
-    }
+  } else {
+    toast('⚠ Gagal salin URL (clipboard diblokir browser)', false);
   }
 }
 
@@ -2197,35 +2233,21 @@ async function doInject(body, itemId) {
       toast('⚡ Disisipkan' + (currentAiDomain ? ' ke ' + currentAiDomain.name : '') + (estTokens > 500 ? ' (~' + estTokens + ' token)' : ''));
       if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
     } else {
-      // v3.7.1-FIX: Benar-benar salin ke clipboard, bukan cuma pesan toast
-      try {
-        await navigator.clipboard.writeText(body);
-        toast('📋 Disalin ke clipboard');
-      } catch (clipErr) {
-        try {
-          await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: body });
-          toast('📋 Disalin ke clipboard');
-        } catch (e2) {
-          toast('⚠ Gagal menyisipkan dan menyalin', false);
-        }
-      }
+      // v3.20.21 FIX: Pakai copyTextWithFallback (execCommand + background fallback)
+      // Sebelumnya: navigator.clipboard.writeText langsung → gagal di iframe sidebar
+      const ok = await copyTextWithFallback(body);
+      if (ok) toast('📋 Disalin ke clipboard');
+      else toast('⚠ Gagal menyisipkan dan menyalin', false);
       if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 900);
     }
   } catch (e) {
-    // v3.7.1-FIX: Saat inject gagal total, fallback ke clipboard
-    try {
-      await navigator.clipboard.writeText(body);
-      if (itemId) await incrementUseCount(itemId);
+    // v3.20.21 FIX: Pakai copyTextWithFallback saat inject exception
+    const ok = await copyTextWithFallback(body);
+    if (itemId) await incrementUseCount(itemId);
+    if (ok) {
       toast('📋 Disalin ke clipboard');
-    } catch (clipErr) {
-      try {
-        await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: body });
-        if (itemId) await incrementUseCount(itemId);
-        toast('📋 Disalin ke clipboard');
-      } catch (e2) {
-        if (itemId) await incrementUseCount(itemId);
-        toast('⚠ Gagal: ' + e.message, false);
-      }
+    } else {
+      toast('⚠ Gagal: ' + e.message, false);
     }
   }
   await refreshVault();
@@ -2288,9 +2310,13 @@ async function continueInOtherAI(itemId) {
     btn.addEventListener('click', async () => {
       const url = btn.dataset.url;
       try {
-        // Copy snapshot body to clipboard
-        await navigator.clipboard.writeText(it.body);
-        toast('📋 Snapshot disalin. Tab AI akan dibuka — paste (Ctrl+V) ke chat.');
+        // v3.20.21: Pakai copyTextWithFallback (clipboard.writeText + execCommand + bg fallback)
+        const ok = await copyTextWithFallback(it.body);
+        if (ok) {
+          toast('📋 Snapshot disalin. Tab AI akan dibuka — paste (Ctrl+V) ke chat.');
+        } else {
+          toast('⚠ Gagal salin snapshot, tapi tab AI tetap dibuka', false);
+        }
         // Open AI in new tab
         await browser.tabs.create({ url: url });
         sheet.remove();
@@ -2356,18 +2382,13 @@ async function injectBundle(id) {
     allParts.unshift('## ' + (bundle.inlinePromptItemId ? (bundle.name || 'Prompt Inline') : 'Prompt Cepat') + ' [Prompt]\n' + bundle.inlinePrompt.trim());
   }
   const fullText = allParts.join('\n\n---\n\n');
-  try {
-    await navigator.clipboard.writeText(fullText);
+  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+  const ok = await copyTextWithFallback(fullText);
+  if (ok) {
     for (const i of items) await incrementUseCount(i.id);
     toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
-  } catch (e) {
-    try {
-      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
-      for (const i of items) await incrementUseCount(i.id);
-      toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
-    } catch (e2) {
-      toast('⚠ Gagal menyalin bundle', false);
-    }
+  } else {
+    toast('⚠ Gagal menyalin bundle (clipboard diblokir)', false);
   }
   if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
 }
@@ -2959,17 +2980,14 @@ function openImageModalViewer(item, pages) {
           flashButtonFeedback(btn, '✗ Kosong', false);
           return;
         }
-        // Text-only: langsung navigator.clipboard.writeText (tidak pakai writeScreenshotToClipboard
-        // karena tidak ada image yang perlu di-clip).
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(textPlain);
+        // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+        const okText = await copyTextWithFallback(textPlain);
+        if (okText) {
           showViewerToast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)', true);
           flashButtonFeedback(btn, '✓ Tersalin!', true);
         } else {
-          // Fallback: delegate ke background
-          await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: textPlain });
-          showViewerToast('✓ Teks metadata tersalin', true);
-          flashButtonFeedback(btn, '✓ Tersalin!', true);
+          showViewerToast('Gagal salin teks (clipboard diblokir)', false);
+          flashButtonFeedback(btn, '✗ Error', false);
         }
       } catch (e) {
         console.error('[RecallFox] Salin Teks Metadata exception:', e);
@@ -3611,16 +3629,10 @@ function itemSheet(id) {
         closeSheet();
         if (!it.resumeContext) { toast('Resume context belum ada', false); }
         else {
-          try {
-            await navigator.clipboard.writeText(it.resumeContext);
-            toast('📋 Resume context tersalin — paste ke akun AI baru');
-          } catch (e) {
-            // Fallback: delegate ke background (clipboard di content script context)
-            try {
-              await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: it.resumeContext });
-              toast('📋 Resume context tersalin — paste ke akun AI baru');
-            } catch (e2) { toast('⚠ Gagal menyalin resume context', false); }
-          }
+          // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+          const ok = await copyTextWithFallback(it.resumeContext);
+          if (ok) toast('📋 Resume context tersalin — paste ke akun AI baru');
+          else toast('⚠ Gagal menyalin resume context', false);
         }
       }
       // v3.20.16: Relay Point — Generate resume context manual (via OmniRouter)
@@ -3971,8 +3983,8 @@ async function copyScreenshotToClipboard(id, withCaption) {
             a.click();
             a.remove();
             toast('✓ Gambar di-download + keterangan disalin (clipboard tidak support)');
-            // Tetap copy text
-            try { await navigator.clipboard.writeText(cap.textPlain); } catch (e) {}
+            // v3.20.21: Tetap copy text pakai fallback
+            try { await copyTextWithFallback(cap.textPlain); } catch (e) {}
           } catch (e) {
             toast('Gagal salin: ' + (result.error || e.message), false);
           }
@@ -4021,8 +4033,10 @@ async function copyScreenshotMetaToClipboard(id) {
     // dataUrl = null → textPlain tetap lengkap (📸/📄, Sumber, Waktu, Mode, 📝 Catatan)
     const cap = isDoc ? buildDocumentCaption(item, null) : buildScreenshotCaption(item, null);
     if (!cap.textPlain) { toast('Tidak ada metadata untuk disalin', false); return; }
-    await navigator.clipboard.writeText(cap.textPlain);
-    toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)');
+    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
+    const ok = await copyTextWithFallback(cap.textPlain);
+    if (ok) toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)');
+    else toast('Gagal salin teks (clipboard diblokir)', false);
   } catch (e) {
     console.warn('[RecallFox] copyScreenshotMetaToClipboard failed:', e.message);
     toast('Gagal salin teks: ' + e.message, false);
@@ -5694,10 +5708,12 @@ function openNoteEditor(noteId) {
   $('#nCopy').addEventListener('click', async () => {
     // v3.13.0 (Issue #4): Salin innerText dari contenteditable — preserve format
     // (bold/list/heading → newline + bullet di plain text). Sebelumnya: n.body (HTML mentah).
+    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
     try {
       const textToCopy = ta.innerText || stripHtmlForPreview(n.body || '');
-      await navigator.clipboard.writeText(textToCopy);
-      toast('📋 Catatan disalin');
+      const ok = await copyTextWithFallback(textToCopy);
+      if (ok) toast('📋 Catatan disalin');
+      else toast('Gagal salin (clipboard diblokir)', false);
     } catch (e) { toast('Gagal salin', false); }
   });
   $('#nDone').addEventListener('click', async () => {
@@ -7017,12 +7033,10 @@ async function renderGDrivePage(B) {
   $('#rfGdCopyUrl').addEventListener('click', async () => {
     const url = ($('#rfGdUrl').value || '').trim();
     if (!url) { toast('URL masih kosong. Isi dulu, lalu Copy.', false); return; }
-    try {
-      await navigator.clipboard.writeText(url);
-      toast('📋 URL disalin. Paste di PC lain di field URL yang sama.');
-    } catch (e) {
-      toast('Gagal copy URL: ' + e.message, false);
-    }
+    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
+    const ok = await copyTextWithFallback(url);
+    if (ok) toast('📋 URL disalin. Paste di PC lain di field URL yang sama.');
+    else toast('Gagal copy URL (clipboard diblokir)', false);
   });
 
   // v3.11.7-fix (Issue #3): Lock/Unlock token
@@ -7083,12 +7097,10 @@ async function renderGDrivePage(B) {
     const tokenInput = $('#rfGdToken');
     const token = tokenInput?.value || '';
     if (!token) { toast('Token masih kosong. Klik 🎲 Generate dulu.', false); return; }
-    try {
-      await navigator.clipboard.writeText(token);
-      toast('📋 Token disalin. Paste ke AUTH_TOKEN di Code.gs.');
-    } catch (e) {
-      toast('Gagal copy: ' + e.message, false);
-    }
+    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
+    const ok = await copyTextWithFallback(token);
+    if (ok) toast('📋 Token disalin. Paste ke AUTH_TOKEN di Code.gs.');
+    else toast('Gagal copy (clipboard diblokir)', false);
   });
 
   // Test koneksi
@@ -7834,9 +7846,12 @@ async function renderAskAiPage(B) {
         copyWrap.style.marginTop = '8px';
         copyWrap.innerHTML = '<button class="btn btn-g" id="askAiCopy" style="width:100%">📋 Salin jawaban</button>';
         resultEl.appendChild(copyWrap);
-        $('#askAiCopy').addEventListener('click', () => {
+        $('#askAiCopy').addEventListener('click', async () => {
           const text = resultEl.querySelector('.rf-ai-answer')?.innerText || '';
-          navigator.clipboard.writeText(text).then(() => toast('📋 Jawaban disalin'));
+          // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
+          const ok = await copyTextWithFallback(text);
+          if (ok) toast('📋 Jawaban disalin');
+          else toast('Gagal salin (clipboard diblokir)', false);
         });
       }
     } catch (e) {

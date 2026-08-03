@@ -1128,6 +1128,47 @@
       // msg.mode can be 'entire' | 'visible' | 'selection' | undefined (show picker)
       triggerCapture(msg.mode);
     }
+    // v3.20.21 FIX: COPY_TEXT fallback — overlay.js ada di SEMUA halaman http(s),
+    // jadi ini fallback paling reliable untuk copy via content script.
+    // Dipanggil dari background COPY_TO_CLIPBOARD handler ketika navigator.clipboard
+    // di popup/iframe sidebar gagal.
+    if (msg.type === 'COPY_TEXT') {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = msg.text || '';
+        ta.style.position = 'fixed';
+        ta.style.top = '-9999px';
+        ta.style.left = '-9999px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        ta.setSelectionRange(0, ta.value.length);
+        let ok = false;
+        try {
+          // Prefer modern API kalau halaman focused & punya permission
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(msg.text || '').then(() => {
+              ta.remove();
+              sendResponse({ ok: true });
+            }).catch(() => {
+              const r = document.execCommand('copy');
+              ta.remove();
+              sendResponse({ ok: r });
+            });
+            return true; // async
+          }
+        } catch (e) {}
+        // Fallback: execCommand
+        ok = document.execCommand('copy');
+        ta.remove();
+        sendResponse({ ok });
+      } catch (e) {
+        console.warn('[RecallFox/overlay] COPY_TEXT error:', e.message);
+        sendResponse({ ok: false, error: e.message });
+      }
+      return true;
+    }
     // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan playback dari content script.
     // Audio tidak bisa di-play dari background service worker (MV3 restriction).
     // Background kirim PLAY_ADZAN ke content script tab aktif, di sini kita mainkan.

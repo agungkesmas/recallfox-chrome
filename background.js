@@ -1652,21 +1652,52 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
 
-  // v3.6: COPY_TO_CLIPBOARD — fallback untuk popup yang tidak punya akses clipboard
-  // (mis. di window popup kecil yang navigator.clipboard undefined)
+  // v3.20.21 FIX: COPY_TO_CLIPBOARD — fallback clipboard untuk popup/sidebar iframe.
+  //
+  // Root cause di Chrome MV3:
+  //   - navigator.clipboard.writeText() di background Service Worker Chrome MV3
+  //     SELALU gagal (SW tidak punya document context, tidak bisa focus)
+  //   - Sebelumnya: code di sini panggil navigator.clipboard langsung → diam-diam gagal
+  //
+  // Strategi baru:
+  //   1. Kirim { type: 'COPY_TEXT' } ke content script di tab aktif
+  //      (overlay.js ada di SEMUA halaman http(s) — paling reliable)
+  //   2. Kalau tab aktif adalah halaman internal (chrome://, about:blank), coba tab
+  //      lain yang ada content script-nya
+  //   3. Kalau semua gagal, return error — popup sudah harusnya pakai execCommand
+  //      fallback sendiri sebelum kirim ke sini
   if (msg.type === 'COPY_TO_CLIPBOARD') {
     try {
-      await navigator.clipboard.writeText(msg.text || '');
-      sendResponse({ ok: true }); return;
-    } catch (e) {
-      // Fallback: pakai content script di active tab
-      try {
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-        if (tab?.id) {
-          await browser.tabs.sendMessage(tab.id, { type: 'COPY_TEXT', text: msg.text });
-          sendResponse({ ok: true }); return;
+      const text = msg.text || '';
+      if (!text) { sendResponse({ ok: false, error: 'empty_text' }); return; }
+
+      // Strategi 1: tab aktif di window aktif
+      const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
+      if (activeTab?.id) {
+        try {
+          const res = await browser.tabs.sendMessage(activeTab.id, { type: 'COPY_TEXT', text });
+          if (res?.ok) { sendResponse({ ok: true }); return; }
+        } catch (e) {
+          console.warn('[RecallFox/bg] COPY_TEXT ke active tab gagal:', e.message);
         }
-      } catch (e2) {}
+      }
+
+      // Strategi 2: cari tab lain yang punya content script overlay.js
+      const allTabs = await browser.tabs.query({});
+      for (const tab of allTabs) {
+        if (!tab.id || tab.id === activeTab?.id) continue;
+        const url = tab.url || '';
+        // Skip internal pages
+        if (!url.startsWith('http') && !url.startsWith('file://')) continue;
+        try {
+          const res = await browser.tabs.sendMessage(tab.id, { type: 'COPY_TEXT', text });
+          if (res?.ok) { sendResponse({ ok: true }); return; }
+        } catch (e) { /* tab mungkin tidak punya content script, skip */ }
+      }
+
+      sendResponse({ ok: false, error: 'no_content_script_available' }); return;
+    } catch (e) {
+      console.error('[RecallFox/bg] COPY_TO_CLIPBOARD exception:', e);
       sendResponse({ ok: false, error: e.message }); return;
     }
   }
