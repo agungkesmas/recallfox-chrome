@@ -989,10 +989,17 @@ async function vaultBatchCopyTextAction() {
     return header + '\n' + (it.body || '');
   });
   const fullText = parts.join('\n\n---\n\n');
-  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-  const ok = await copyTextWithFallback(fullText);
-  if (ok) toast('✓ ' + items.length + ' item tersalin ke clipboard');
-  else toast('⚠ Gagal menyalin (clipboard diblokir browser)', false);
+  try {
+    await navigator.clipboard.writeText(fullText);
+    toast('✓ ' + items.length + ' item tersalin ke clipboard');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
+      toast('✓ ' + items.length + ' item tersalin ke clipboard');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin: ' + e2.message, false);
+    }
+  }
 }
 
 // v3.14.9: Batch download semua gambar terpilih sebagai file terpisah.
@@ -1074,10 +1081,17 @@ async function vaultBatchCopyUrlsAction() {
     return;
   }
   const text = urls.join('\n');
-  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-  const ok = await copyTextWithFallback(text);
-  if (ok) toast('✓ ' + urls.length + ' URL gambar tersalin' + (skipped > 0 ? ' (' + skipped + ' lokal-only diabaikan)' : '') + ' — paste ke AI chat');
-  else toast('Gagal salin URL (clipboard diblokir)', false);
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('✓ ' + urls.length + ' URL gambar tersalin' + (skipped > 0 ? ' (' + skipped + ' lokal-only diabaikan)' : '') + ' — paste ke AI chat');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text });
+      toast('✓ ' + urls.length + ' URL gambar tersalin');
+    } catch (e2) {
+      toast('Gagal salin URL: ' + e2.message, false);
+    }
+  }
 }
 
 // v3.14.9: Resolve image cloud URL dari item. Prioritas:
@@ -1104,10 +1118,17 @@ async function copyImageUrlToClipboard(id) {
     toast('Gambar ini tidak punya URL cloud (lokal-only). Gunakan Download atau Salin Gambar.', false);
     return;
   }
-  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-  const ok = await copyTextWithFallback(url);
-  if (ok) toast('✓ URL gambar tersalin — paste ke AI chat');
-  else toast('Gagal salin URL (clipboard diblokir)', false);
+  try {
+    await navigator.clipboard.writeText(url);
+    toast('✓ URL gambar tersalin — paste ke AI chat');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: url });
+      toast('✓ URL gambar tersalin');
+    } catch (e2) {
+      toast('Gagal salin URL: ' + e2.message, false);
+    }
+  }
 }
 
 // v3.11.36 (Sesi 2, Issue dari Google Doc): Batch copy TEKS METADATA saja (tanpa gambar)
@@ -1145,10 +1166,19 @@ async function vaultBatchCopyMetaAction() {
     if (cap.textPlain) finalText = cap.textPlain;
   }
   if (!finalText) { toast('Tidak ada metadata untuk disalin', false); return; }
-  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-  const ok = await copyTextWithFallback(finalText);
-  if (ok) toast('✓ Teks metadata ' + items.length + ' item tersalin (paste ke WA/Gemini/AI chat)');
-  else toast('⚠ Gagal menyalin (clipboard diblokir browser)', false);
+  try {
+    await navigator.clipboard.writeText(finalText);
+    toast('✓ Teks metadata ' + items.length + ' item tersalin (paste ke WA/Gemini/AI chat)');
+  } catch (e) {
+    console.warn('[RecallFox] vaultBatchCopyMetaAction failed:', e.message);
+    try {
+      // Fallback: delegate ke background (utk konteks tanpa clipboard permission)
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: finalText });
+      toast('✓ Teks metadata ' + items.length + ' item tersalin');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin: ' + e2.message, false);
+    }
+  }
 }
 
 // v3.11.14: Copy bundle — gabungkan semua bundle terpilih jadi 1 teks
@@ -1188,10 +1218,17 @@ async function vaultBatchCopyBundleAction() {
     return sections.join('\n\n');
   });
   const fullText = parts.join('\n\n---\n\n');
-  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-  const ok = await copyTextWithFallback(fullText);
-  if (ok) toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
-  else toast('⚠ Gagal menyalin (clipboard diblokir browser)', false);
+  try {
+    await navigator.clipboard.writeText(fullText);
+    toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
+      toast('✓ ' + bundles.length + ' bundle tersalin ke clipboard');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin: ' + e2.message, false);
+    }
+  }
 }
 
 // v3.11.14: Unarsip — keluarkan item dari arsip (untuk chip 'archive')
@@ -1334,10 +1371,12 @@ async function vaultBatchCopyAction(withCaption) {
         toast(label);
       } else {
         // Fallback: text-only
-        // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
-        const okText = await copyTextWithFallback(cap.textPlain);
-        if (okText) toast('✓ ' + screenshots.length + ' screenshot tersalin (text-only — gambar tidak ikut)');
-        else toast('Gagal copy (clipboard diblokir)', false);
+        try {
+          await navigator.clipboard.writeText(cap.textPlain);
+          toast('✓ ' + screenshots.length + ' screenshot tersalin (text-only — gambar tidak ikut)');
+        } catch (e2) {
+          toast('Gagal copy: ' + e2.message, false);
+        }
       }
     } else {
       // Image only — v3.11.38: pakai composite image (bukan screenshot pertama saja)
@@ -1428,10 +1467,12 @@ async function _vaultBatchCopyTextFallback(ids, withCaption) {
     if (i < items.length - 1) parts.push('---');
   }
   const fullText = parts.join('\n');
-  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-  const ok = await copyTextWithFallback(fullText);
-  if (ok) toast('✓ ' + items.length + ' screenshot tersalin (text-only fallback — gambar tidak ikut)');
-  else toast('⚠ Gagal copy. Coba buka halaman web http(s) dulu, lalu klik copy lagi.', false);
+  try {
+    await navigator.clipboard.writeText(fullText);
+    toast('✓ ' + items.length + ' screenshot tersalin (text-only fallback — gambar tidak ikut)');
+  } catch (e) {
+    toast('⚠ Gagal copy: ' + e.message + '. Coba buka halaman web http(s) dulu, lalu klik copy lagi.', false);
+  }
 }
 
 // v3.11.13 (Sesi 12): Batch delete screenshot — bersih-bersih vault gampang.
@@ -1870,8 +1911,9 @@ async function handleAiAutoGroup() {
 
     // v3.20.28: Tampilkan preview modal dengan struktur yang diusulkan AI.
     // User bisa confirm atau cancel. Sebelumnya: langsung apply tanpa preview.
+    // v3.20.29: Pass stats juga untuk info subfolder di summary.
     closeMagicFolderModal();
-    showMagicFolderPreviewModal(result.groups, items);
+    showMagicFolderPreviewModal(result.groups, items, result.stats);
   } catch (e) {
     closeMagicFolderModal();
     toast('⚠ Gagal: ' + e.message, false);
@@ -1890,42 +1932,85 @@ function showMagicFolderProgressModal(itemCount) {
       <div class="rf-magicfolder-progress">
         <div class="rf-magicfolder-spinner"></div>
         <h3>🪄 Magic Folder sedang berpikir...</h3>
-        <p>AI menganalisis ${itemCount} item di Vault Anda untuk menentukan struktur folder optimal.</p>
-        <p class="rf-magicfolder-hint">AI bebas menentukan jumlah folder, nama, dan kriteria pengelompokan yang paling masuk akal.</p>
+        <p>AI menganalisis ${itemCount} item di Vault Anda untuk menentukan struktur folder optimal (boleh dengan subfolder).</p>
+        <p class="rf-magicfolder-hint">AI membaca konteks setiap item secara teliti, lalu mengelompokkan berdasarkan pola yang paling kuat.</p>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
 }
 
-// v3.20.28: Preview modal — tampilkan struktur folder yang diusulkan AI
-function showMagicFolderPreviewModal(groups, allItems) {
+// v3.20.29: Preview modal — checkbox per folder + nested subfolder display + reasoning.
+// User bisa pilih folder mana yang mau dibuat (centang/uncentang).
+// Folder yang di-uncheck tidak dibuat, item-nya tetap di tempat asal.
+function showMagicFolderPreviewModal(groups, allItems, stats) {
   closeMagicFolderModal();
 
-  // Hitung item yang tidak ke-assign (untuk info)
+  // v3.20.29: Flatten groups untuk display — setiap folder dapat ID unik (path-based).
+  // Mis. "0" = top folder index 0, "0.1" = subfolder index 1 di top folder 0.
+  const flatFolders = [];
+  function flatten(fs, parentPath) {
+    fs.forEach((f, i) => {
+      const path = parentPath ? `${parentPath}.${i}` : `${i}`;
+      flatFolders.push({
+        path,
+        name: f.name,
+        reasoning: f.reasoning || '',
+        itemIds: f.itemIds,
+        children: f.children || [],
+        depth: parentPath ? parentPath.split('.').length : 0,
+        parentPath: parentPath || null
+      });
+      if (f.children && f.children.length > 0) {
+        flatten(f.children, path);
+      }
+    });
+  }
+  flatten(groups, null);
+
+  // v3.20.29: Item yang tidak ke-assign (untuk info).
   const assignedIds = new Set();
-  groups.forEach(g => g.itemIds.forEach(id => assignedIds.add(id)));
+  flatFolders.forEach(f => f.itemIds.forEach(id => assignedIds.add(id)));
   const unassignedCount = allItems.filter(it => !assignedIds.has(it.id)).length;
 
-  const groupsHtml = groups.map((g, i) => {
-    const itemCount = g.itemIds.length;
+  // v3.20.29: Render folder tree dengan checkbox + reasoning + item pills.
+  function renderFolderRow(f) {
+    const isSub = f.depth > 0;
+    const indent = isSub ? 'margin-left:' + (f.depth * 20) + 'px;' : '';
+    const icon = isSub ? '📂' : '📁';
+    const itemCount = f.itemIds.length;
+    const itemPills = f.itemIds.slice(0, 5).map(id => {
+      const it = allItems.find(x => x.id === id);
+      return it ? `<span class="rf-magicfolder-item-pill">${esc((it.title || 'Untitled').slice(0, 25))}</span>` : '';
+    }).join('');
+    const morePill = itemCount > 5 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${itemCount - 5}</span>` : '';
+    const reasoningHtml = f.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(f.reasoning)}</div>` : '';
+    const subfolderHint = f.children.length > 0 ? `<span class="rf-magicfolder-sub-hint">${f.children.length} subfolder</span>` : '';
+
     return `
-      <div class="rf-magicfolder-group">
+      <div class="rf-magicfolder-group ${isSub ? 'rf-magicfolder-sub' : ''}" data-folder-path="${f.path}" style="${indent}">
         <div class="rf-magicfolder-group-hd">
-          <span class="rf-magicfolder-folder-icon">📁</span>
-          <span class="rf-magicfolder-folder-name">${esc(g.name)}</span>
+          <label class="rf-magicfolder-check-wrap">
+            <input type="checkbox" class="rf-magicfolder-check" data-folder-path="${f.path}" checked />
+            <span class="rf-magicfolder-check-mark"></span>
+          </label>
+          <span class="rf-magicfolder-folder-icon">${icon}</span>
+          <span class="rf-magicfolder-folder-name">${esc(f.name)}</span>
           <span class="rf-magicfolder-folder-count">${itemCount} item</span>
+          ${subfolderHint}
         </div>
-        <div class="rf-magicfolder-folder-items">
-          ${g.itemIds.slice(0, 5).map(id => {
-            const it = allItems.find(x => x.id === id);
-            return it ? `<span class="rf-magicfolder-item-pill">${esc((it.title || 'Untitled').slice(0, 30))}</span>` : '';
-          }).join('')}
-          ${itemCount > 5 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${itemCount - 5} lainnya</span>` : ''}
-        </div>
+        ${reasoningHtml}
+        ${itemPills || morePill ? `<div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>` : ''}
       </div>
     `;
-  }).join('');
+  }
+
+  const foldersHtml = flatFolders.map(renderFolderRow).join('');
+
+  // v3.20.29: Summary dengan info subfolder.
+  const subfolderInfo = stats?.hasSubfolders ? ` · ${stats.totalFolders} folder total (${stats.totalTopLevel} top-level + subfolder)` : '';
+  const summaryText = `AI mengusulkan <b>${stats?.totalTopLevel || groups.length} top-level folder</b>${subfolderInfo} untuk <b>${assignedIds.size} item</b>` +
+    (unassignedCount > 0 ? `<span class="rf-magicfolder-unassigned">(${unassignedCount} item tidak masuk folder mana pun)</span>` : '');
 
   const modal = document.createElement('div');
   modal.id = 'rf-magicfolder-modal';
@@ -1937,19 +2022,60 @@ function showMagicFolderPreviewModal(groups, allItems) {
         <button class="rf-magicfolder-close" id="rfMagicFolderCancel" title="Batal">×</button>
       </div>
       <div class="rf-magicfolder-body">
-        <p class="rf-magicfolder-summary">
-          AI mengusulkan <b>${groups.length} folder</b> untuk <b>${assignedIds.size} item</b>
-          ${unassignedCount > 0 ? `<span class="rf-magicfolder-unassigned">(${unassignedCount} item tidak masuk folder mana pun)</span>` : ''}
-        </p>
-        <div class="rf-magicfolder-groups">${groupsHtml}</div>
+        <p class="rf-magicfolder-summary">${summaryText}</p>
+        <div class="rf-magicfolder-select-all-row">
+          <label class="rf-magicfolder-check-wrap rf-magicfolder-select-all">
+            <input type="checkbox" id="rfMagicFolderSelectAll" checked />
+            <span class="rf-magicfolder-check-mark"></span>
+            <span>Pilih semua</span>
+          </label>
+          <span class="rf-magicfolder-hint-inline">Centang folder yang ingin dibuat. Yang tidak diceklis tidak akan dibuat.</span>
+        </div>
+        <div class="rf-magicfolder-groups">${foldersHtml}</div>
       </div>
       <div class="rf-magicfolder-ft">
         <button class="btn btn-g" id="rfMagicFolderCancelBtn">Batal</button>
-        <button class="btn btn-p" id="rfMagicFolderConfirm">✓ Terapkan Struktur</button>
+        <button class="btn btn-p" id="rfMagicFolderConfirm">✓ Buat Folder Terpilih</button>
       </div>
     </div>
   `;
   document.body.appendChild(modal);
+
+  // v3.20.29: Wire "Select all" checkbox.
+  const selectAll = document.getElementById('rfMagicFolderSelectAll');
+  selectAll.addEventListener('change', (e) => {
+    document.querySelectorAll('.rf-magicfolder-check').forEach(cb => {
+      cb.checked = e.target.checked;
+    });
+  });
+
+  // v3.20.29: Wire individual checkbox — update "select all" state.
+  document.querySelectorAll('.rf-magicfolder-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const allCbs = document.querySelectorAll('.rf-magicfolder-check');
+      const allChecked = Array.from(allCbs).every(c => c.checked);
+      selectAll.checked = allChecked;
+      // v3.20.29: Kalau parent di-uncheck, uncheck semua subfolder juga.
+      const path = cb.dataset.folderPath;
+      if (!cb.checked) {
+        document.querySelectorAll('.rf-magicfolder-check').forEach(otherCb => {
+          if (otherCb.dataset.folderPath.startsWith(path + '.')) {
+            otherCb.checked = false;
+          }
+        });
+      } else {
+        // v3.20.29: Kalau subfolder di-check, check parent juga.
+        const parts = path.split('.');
+        for (let i = parts.length - 1; i > 0; i--) {
+          const parentPath = parts.slice(0, i).join('.');
+          const parentCb = document.querySelector(`.rf-magicfolder-check[data-folder-path="${parentPath}"]`);
+          if (parentCb && !parentCb.checked) {
+            parentCb.checked = true;
+          }
+        }
+      }
+    });
+  });
 
   // Wire cancel buttons
   const cancel = () => closeMagicFolderModal();
@@ -1963,25 +2089,56 @@ function showMagicFolderPreviewModal(groups, allItems) {
     if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Menerapkan...'; }
     if (cancelBtn) cancelBtn.disabled = true;
 
-    const applyResult = await applyMagicFolderGroups(groups);
+    // v3.20.29: Kumpulkan folder yang di-check (path set).
+    const checkedPaths = new Set();
+    document.querySelectorAll('.rf-magicfolder-check:checked').forEach(cb => {
+      checkedPaths.add(cb.dataset.folderPath);
+    });
+
+    // v3.20.29: Filter groups — hanya folder yang di-check (recursive).
+    function filterChecked(fs, parentPath) {
+      const result = [];
+      fs.forEach((f, i) => {
+        const path = parentPath ? `${parentPath}.${i}` : `${i}`;
+        if (!checkedPaths.has(path)) return;
+        const filtered = { ...f };
+        if (f.children && f.children.length > 0) {
+          filtered.children = filterChecked(f.children, path);
+        } else {
+          delete filtered.children;
+        }
+        result.push(filtered);
+      });
+      return result;
+    }
+    const selectedGroups = filterChecked(groups, null);
+
+    if (selectedGroups.length === 0) {
+      toast('⚠ Pilih minimal 1 folder untuk dibuat', false);
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Buat Folder Terpilih'; }
+      if (cancelBtn) cancelBtn.disabled = false;
+      return;
+    }
+
+    const applyResult = await applyMagicFolderGroups(selectedGroups);
     if (applyResult.ok) {
       closeMagicFolderModal();
       toast(`✓ ${applyResult.groupsCreated} folder dibuat, ${applyResult.itemsMoved} item dipindahkan`);
       // Step 3: DOM sync — refresh vault + chips + list
-      // Ini bekerja di popup, sidebar native, DAN popout sidebar (iframe)
-      // karena popup.js berjalan di semua context tersebut.
       await refreshVault();
       renderChips();
       renderList();
     } else {
       toast('⚠ Gagal menerapkan: ' + (applyResult.error || 'unknown'), false);
-      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Terapkan Struktur'; }
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Buat Folder Terpilih'; }
       if (cancelBtn) cancelBtn.disabled = false;
     }
   });
 }
 
-// v3.20.28: Apply groups ke vault — dengan strict rollback guardrail
+// v3.20.29: Apply groups ke vault — support nested subfolder + strict rollback guardrail.
+// Hanya folder yang sudah di-filter (di-check) yang masuk ke sini.
+// Parent folder dibuat dulu, dapat ID, lalu subfolder dibuat dengan parentId = parent ID.
 async function applyMagicFolderGroups(groups) {
   if (!Array.isArray(groups) || groups.length === 0) {
     return { ok: false, error: 'Groups tidak valid' };
@@ -1998,22 +2155,43 @@ async function applyMagicFolderGroups(groups) {
     const groupType = (currentChip === 'all' || currentChip === 'archive') ? 'prompt' : currentChip;
     const expandedIds = [];
 
-    for (const g of groups) {
-      const group = createGroup(g.name, groupType);
+    // v3.20.29: Recursive apply — parent dulu, lalu children dengan parentId.
+    async function applyFolder(folder, parentFolderId) {
+      const group = createGroup(folder.name, groupType);
+      if (parentFolderId) {
+        setParentId(group, parentFolderId);
+      }
+      if (folder.reasoning) {
+        if (!group.source) group.source = {};
+        group.source.magicFolderReasoning = folder.reasoning;
+        group.source.magicFolder = true;
+      }
       await addItem(group);
       expandedIds.push(group.id);
       groupsCreated++;
 
-      for (const itemId of g.itemIds) {
+      // Pindahkan item langsung ke folder ini
+      for (const itemId of folder.itemIds) {
         const item = vaultBefore.items.find(i => i.id === itemId);
         if (item) {
-          // Update item: set parentId ke folder baru
           const updates = {};
           setParentId(updates, group.id);
           await updateItem(itemId, updates);
           itemsMoved++;
         }
       }
+
+      // v3.20.29: Recursive — apply subfolder dengan parentId = group.id
+      if (folder.children && folder.children.length > 0) {
+        for (const child of folder.children) {
+          await applyFolder(child, group.id);
+        }
+      }
+    }
+
+    // Apply semua top-level folder (parentFolderId = null)
+    for (const g of groups) {
+      await applyFolder(g, null);
     }
 
     // Expand folder-folder baru supaya user langsung lihat isinya
@@ -2205,33 +2383,6 @@ function bindItemClicks() {
         }
         return;
       }
-      // v3.20.21 FIX: Tombol "Salin ↵" / "Sisipkan ↵" untuk prompt/context/snapshot
-      // Sebelumnya: cta-pill generik (tanpa data-* attribute) → klik jatuh ke primaryAction()
-      // yang selalu inject. User expect: kalau tombol bilang "Salin" → copy ke clipboard.
-      // Sekarang: deteksi cta-pill klik, kalau label "Salin" → copy, kalau "Sisipkan" → inject.
-      const ctaPill = e.target.closest('.cta-pill');
-      if (ctaPill && !ctaPill.dataset.linkAction && !ctaPill.dataset.bundleAction && !ctaPill.dataset.shotAction) {
-        e.stopPropagation();
-        const it = findItem(el.dataset.id);
-        if (!it) return;
-        const label = (ctaPill.textContent || '').trim();
-        // v3.20.21: Kalau tombol bilang "Salin" ATAU bukan di halaman AI → copy ke clipboard
-        // Kalau "Sisipkan" DAN di halaman AI → inject ke textarea AI
-        const isCopyIntent = label.toLowerCase().indexOf('salin') >= 0 || !currentAiDomain;
-        if (isCopyIntent) {
-          // Copy body teks item ke clipboard (prompt/context/snapshot)
-          const text = it.body || '';
-          if (!text) { toast('Item ini tidak punya teks untuk disalin', false); return; }
-          copyTextWithFallback(text).then(success => {
-            if (success) {
-              incrementUseCount(it.id);
-              toast('📋 Teks disalin (' + text.length + ' karakter)');
-            }
-          });
-          return;
-        }
-        // Fall through ke primaryAction (inject)
-      }
       if (e.target.closest('.morebtn')) return;
       primaryAction(el.dataset.id);
     });
@@ -2278,74 +2429,80 @@ async function primaryAction(id) {
   }
 }
 
-// v3.20.21 FIX: Helper salin teks ke clipboard dengan fallback berlapis.
-//
-// Root cause yang diperbaiki:
-// 1. navigator.clipboard.writeText() gagal di iframe sidebar (cross-origin, document tidak focused)
-// 2. navigator.clipboard.writeText() di background Service Worker Chrome MV3 selalu gagal
-//    (SW tidak punya document context)
-// 3. Background kirim { type: 'COPY_TEXT' } ke content script, tapi tidak ada listener
-//
-// Strategi fallback (urutan):
-//   A. navigator.clipboard.writeText() — modern API, works di popup yang focused
-//   B. document.execCommand('copy') via <textarea> tersembunyi — works di iframe/sidebar
-//   C. background.sendMessage({ type: 'COPY_TO_CLIPBOARD' }) → content script aktif
-//      (background SW tidak bisa langsung akses clipboard di Chrome MV3)
-async function copyTextWithFallback(text) {
-  if (!text) return false;
-
-  // A. navigator.clipboard.writeText() — modern API
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (e) {
-    console.warn('[RecallFox] clipboard.writeText gagal, fallback ke execCommand:', e.message);
-  }
-
-  // B. execCommand('copy') via textarea tersembunyi — fallback untuk iframe sidebar
-  //    (Chrome membatasi navigator.clipboard di iframe cross-origin yang tidak focused)
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
-    document.body.appendChild(ta);
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    if (ok) return true;
-  } catch (e2) {
-    console.warn('[RecallFox] execCommand copy gagal, fallback ke background:', e2.message);
-  }
-
-  // C. Fallback terakhir: minta background untuk kirim perintah copy ke content script
-  //    di tab aktif (background SW Chrome MV3 tidak bisa navigator.clipboard.writeText)
-  try {
-    const res = await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text });
-    if (res && res.ok) return true;
-    console.warn('[RecallFox] background COPY_TO_CLIPBOARD gagal:', res?.error);
-  } catch (e3) {
-    console.warn('[RecallFox] sendMessage COPY_TO_CLIPBOARD exception:', e3.message);
-  }
-
-  return false;
-}
-
 // v3.6: Helper untuk salin URL Link ke clipboard (bukan buka link)
+// v3.20.21: Port multi-level fallback dari Chrome v3.21.6 (commit 7b8eef1) +
+// tambah fallback COPY_TEXT ke content script tab aktif.
+// Root cause popout sidebar: navigator.clipboard.writeText di iframe sidebar.html
+// bisa gagal karena iframe tidak focused atau Permissions Policy clipboard-write
+// disallow. Fallback chain:
+//   1. navigator.clipboard.writeText (modern API, paling cepat)
+//   2. background COPY_TO_CLIPBOARD (background service worker)
+//   3. RF_FORWARD_TO_ACTIVE_TAB COPY_TEXT (content script di top-level page)
+//   4. textarea + execCommand('copy') di popup context (last resort)
 async function copyLinkToClipboard(it) {
   if (!it) return;
   const url = it.linkUrl || it.body || '';
   if (!url) { toast('Link ini tidak punya URL', false); return; }
-  const ok = await copyTextWithFallback(url);
+  const ok = await _copyTextWithFallback(url);
   if (ok) {
     await incrementUseCount(it.id);
     toast('📋 URL disalin: ' + url.slice(0, 40) + (url.length > 40 ? '…' : ''));
-  } else {
-    toast('⚠ Gagal salin URL (clipboard diblokir browser)', false);
+  }
+}
+
+// v3.20.21: Helper internal untuk copy text dengan 4-level fallback chain.
+// Dipakai oleh copyLinkToClipboard (dan bisa dipakai fungsi copy lain juga).
+// Return true kalau berhasil, false kalau gagal semua.
+async function _copyTextWithFallback(text) {
+  if (!text) return false;
+
+  // Level 1: navigator.clipboard.writeText (modern API)
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e1) {
+    console.warn('[RecallFox] Clipboard L1 fail:', e1.message);
+  }
+
+  // Level 2: background COPY_TO_CLIPBOARD
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text });
+    if (res?.ok) return true;
+    console.warn('[RecallFox] Clipboard L2 fail:', res?.error || 'unknown');
+  } catch (e2) {
+    console.warn('[RecallFox] Clipboard L2 exception:', e2.message);
+  }
+
+  // Level 3: RF_FORWARD_TO_ACTIVE_TAB COPY_TEXT (content script di top-level page)
+  // Content script di top-level document selalu punya focus → clipboard API reliable.
+  // Penting untuk popout sidebar yang jalan di iframe (cross-origin ke parent page).
+  try {
+    const res = await browser.runtime.sendMessage({
+      type: 'RF_FORWARD_TO_ACTIVE_TAB',
+      msgType: 'COPY_TEXT',
+      text
+    });
+    if (res?.ok) return true;
+    console.warn('[RecallFox] Clipboard L3 fail:', res?.error || 'unknown');
+  } catch (e3) {
+    console.warn('[RecallFox] Clipboard L3 exception:', e3.message);
+  }
+
+  // Level 4: textarea + execCommand('copy') di popup context (last resort)
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return true;
+  } catch (e4) {
+    console.warn('[RecallFox] Clipboard L4 fail:', e4.message);
+    toast('⚠ Gagal salin: ' + (e4.message || 'clipboard tidak tersedia'), false);
+    return false;
   }
 }
 
@@ -2438,21 +2595,35 @@ async function doInject(body, itemId) {
       toast('⚡ Disisipkan' + (currentAiDomain ? ' ke ' + currentAiDomain.name : '') + (estTokens > 500 ? ' (~' + estTokens + ' token)' : ''));
       if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
     } else {
-      // v3.20.21 FIX: Pakai copyTextWithFallback (execCommand + background fallback)
-      // Sebelumnya: navigator.clipboard.writeText langsung → gagal di iframe sidebar
-      const ok = await copyTextWithFallback(body);
-      if (ok) toast('📋 Disalin ke clipboard');
-      else toast('⚠ Gagal menyisipkan dan menyalin', false);
+      // v3.7.1-FIX: Benar-benar salin ke clipboard, bukan cuma pesan toast
+      try {
+        await navigator.clipboard.writeText(body);
+        toast('📋 Disalin ke clipboard');
+      } catch (clipErr) {
+        try {
+          await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: body });
+          toast('📋 Disalin ke clipboard');
+        } catch (e2) {
+          toast('⚠ Gagal menyisipkan dan menyalin', false);
+        }
+      }
       if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 900);
     }
   } catch (e) {
-    // v3.20.21 FIX: Pakai copyTextWithFallback saat inject exception
-    const ok = await copyTextWithFallback(body);
-    if (itemId) await incrementUseCount(itemId);
-    if (ok) {
+    // v3.7.1-FIX: Saat inject gagal total, fallback ke clipboard
+    try {
+      await navigator.clipboard.writeText(body);
+      if (itemId) await incrementUseCount(itemId);
       toast('📋 Disalin ke clipboard');
-    } else {
-      toast('⚠ Gagal: ' + e.message, false);
+    } catch (clipErr) {
+      try {
+        await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: body });
+        if (itemId) await incrementUseCount(itemId);
+        toast('📋 Disalin ke clipboard');
+      } catch (e2) {
+        if (itemId) await incrementUseCount(itemId);
+        toast('⚠ Gagal: ' + e.message, false);
+      }
     }
   }
   await refreshVault();
@@ -2515,13 +2686,9 @@ async function continueInOtherAI(itemId) {
     btn.addEventListener('click', async () => {
       const url = btn.dataset.url;
       try {
-        // v3.20.21: Pakai copyTextWithFallback (clipboard.writeText + execCommand + bg fallback)
-        const ok = await copyTextWithFallback(it.body);
-        if (ok) {
-          toast('📋 Snapshot disalin. Tab AI akan dibuka — paste (Ctrl+V) ke chat.');
-        } else {
-          toast('⚠ Gagal salin snapshot, tapi tab AI tetap dibuka', false);
-        }
+        // Copy snapshot body to clipboard
+        await navigator.clipboard.writeText(it.body);
+        toast('📋 Snapshot disalin. Tab AI akan dibuka — paste (Ctrl+V) ke chat.');
         // Open AI in new tab
         await browser.tabs.create({ url: url });
         sheet.remove();
@@ -2587,13 +2754,18 @@ async function injectBundle(id) {
     allParts.unshift('## ' + (bundle.inlinePromptItemId ? (bundle.name || 'Prompt Inline') : 'Prompt Cepat') + ' [Prompt]\n' + bundle.inlinePrompt.trim());
   }
   const fullText = allParts.join('\n\n---\n\n');
-  // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-  const ok = await copyTextWithFallback(fullText);
-  if (ok) {
+  try {
+    await navigator.clipboard.writeText(fullText);
     for (const i of items) await incrementUseCount(i.id);
     toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
-  } else {
-    toast('⚠ Gagal menyalin bundle (clipboard diblokir)', false);
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
+      for (const i of items) await incrementUseCount(i.id);
+      toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin bundle', false);
+    }
   }
   if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
 }
@@ -3185,14 +3357,17 @@ function openImageModalViewer(item, pages) {
           flashButtonFeedback(btn, '✗ Kosong', false);
           return;
         }
-        // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-        const okText = await copyTextWithFallback(textPlain);
-        if (okText) {
+        // Text-only: langsung navigator.clipboard.writeText (tidak pakai writeScreenshotToClipboard
+        // karena tidak ada image yang perlu di-clip).
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(textPlain);
           showViewerToast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)', true);
           flashButtonFeedback(btn, '✓ Tersalin!', true);
         } else {
-          showViewerToast('Gagal salin teks (clipboard diblokir)', false);
-          flashButtonFeedback(btn, '✗ Error', false);
+          // Fallback: delegate ke background
+          await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: textPlain });
+          showViewerToast('✓ Teks metadata tersalin', true);
+          flashButtonFeedback(btn, '✓ Tersalin!', true);
         }
       } catch (e) {
         console.error('[RecallFox] Salin Teks Metadata exception:', e);
@@ -3834,10 +4009,16 @@ function itemSheet(id) {
         closeSheet();
         if (!it.resumeContext) { toast('Resume context belum ada', false); }
         else {
-          // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-          const ok = await copyTextWithFallback(it.resumeContext);
-          if (ok) toast('📋 Resume context tersalin — paste ke akun AI baru');
-          else toast('⚠ Gagal menyalin resume context', false);
+          try {
+            await navigator.clipboard.writeText(it.resumeContext);
+            toast('📋 Resume context tersalin — paste ke akun AI baru');
+          } catch (e) {
+            // Fallback: delegate ke background (clipboard di content script context)
+            try {
+              await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: it.resumeContext });
+              toast('📋 Resume context tersalin — paste ke akun AI baru');
+            } catch (e2) { toast('⚠ Gagal menyalin resume context', false); }
+          }
         }
       }
       // v3.20.16: Relay Point — Generate resume context manual (via OmniRouter)
@@ -4188,8 +4369,8 @@ async function copyScreenshotToClipboard(id, withCaption) {
             a.click();
             a.remove();
             toast('✓ Gambar di-download + keterangan disalin (clipboard tidak support)');
-            // v3.20.21: Tetap copy text pakai fallback
-            try { await copyTextWithFallback(cap.textPlain); } catch (e) {}
+            // Tetap copy text
+            try { await navigator.clipboard.writeText(cap.textPlain); } catch (e) {}
           } catch (e) {
             toast('Gagal salin: ' + (result.error || e.message), false);
           }
@@ -4238,10 +4419,8 @@ async function copyScreenshotMetaToClipboard(id) {
     // dataUrl = null → textPlain tetap lengkap (📸/📄, Sumber, Waktu, Mode, 📝 Catatan)
     const cap = isDoc ? buildDocumentCaption(item, null) : buildScreenshotCaption(item, null);
     if (!cap.textPlain) { toast('Tidak ada metadata untuk disalin', false); return; }
-    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar + Chrome MV3 SW)
-    const ok = await copyTextWithFallback(cap.textPlain);
-    if (ok) toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)');
-    else toast('Gagal salin teks (clipboard diblokir)', false);
+    await navigator.clipboard.writeText(cap.textPlain);
+    toast('✓ Teks metadata tersalin (paste ke WA/Gemini/AI chat)');
   } catch (e) {
     console.warn('[RecallFox] copyScreenshotMetaToClipboard failed:', e.message);
     toast('Gagal salin teks: ' + e.message, false);
@@ -4351,13 +4530,11 @@ async function openEditorSheet(id) {
     //   item — bukan create new, karena create new input-nya kosong).
     //   User: "nama file ketika di pencet itu dalam kondisi terblok, sehingga bisa
     //   langsung di rename/ ditimpa untuk diberi nama baru."
-    //   NB: pakai 'it' (var lokal di scope openEditorSheet), bukan 'existing'
-    //   (tidak terdefinisi di scope ini — Firefox v3.20.1 latent bug, fixed di sini).
     setTimeout(() => {
       const t = b.querySelector('#fTitle');
       if (!t) return;
       t.focus();
-      if (it) t.select();  // select-all supaya user bisa langsung timpa judul lama
+      if (existing) t.select();  // select-all supaya user bisa langsung timpa judul lama
     }, 120);
   });
 }
@@ -5913,12 +6090,12 @@ function openNoteEditor(noteId) {
   $('#nCopy').addEventListener('click', async () => {
     // v3.13.0 (Issue #4): Salin innerText dari contenteditable — preserve format
     // (bold/list/heading → newline + bullet di plain text). Sebelumnya: n.body (HTML mentah).
-    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
+    // v3.20.21: Pakai _copyTextWithFallback supaya copy jalan di popout sidebar iframe
+    // (navigator.clipboard.writeText bisa gagal di iframe yang tidak focused).
     try {
       const textToCopy = ta.innerText || stripHtmlForPreview(n.body || '');
-      const ok = await copyTextWithFallback(textToCopy);
+      const ok = await _copyTextWithFallback(textToCopy);
       if (ok) toast('📋 Catatan disalin');
-      else toast('Gagal salin (clipboard diblokir)', false);
     } catch (e) { toast('Gagal salin', false); }
   });
   $('#nDone').addEventListener('click', async () => {
@@ -6172,8 +6349,127 @@ function toolPage(k) {
 // v3.14.0: RecallTape — trigger popover di tab aktif via content script.
 // Untuk sidebar: kirim ke tab aktif di window utama.
 // Untuk popup: kirim ke tab aktif lalu tutup popup (default behavior).
+// v3.20.23: Helper untuk buka halaman pengaturan dengan fallback berlapis.
+//
+// Root cause yang diperbaiki (lanjutan dari v3.20.22 yang masih gagal di lapangan):
+//
+// 1. browser.runtime.openOptionsPage() di Firefox bisa resolve tanpa error TAPI
+//    no-op (tab tidak terbuka) di context tertentu:
+//      - Iframe extension page (popout sidebar via sidebar-cs.js)
+//      - Native sidebar (sidebar_action di manifest Firefox)
+//      - Popup yang akan close dalam ms setelah call
+//
+// 2. v3.20.22 cuma pakai try/catch — padahal bug Firefox ini tidak throw error,
+//    promise resolve OK tapi tidak ada efek. User bilang "tombol mati" karena
+//    tidak ada feedback apa-apa.
+//
+// 3. Deteksi `window !== window.top` untuk iframe kurang lengkap — native sidebar
+//    Firefox punya `window === window.top` TAPI openOptionsPage() tetap no-op.
+//
+// Strategi baru (3 lapis + verifikasi):
+//   A. Coba tabs.create() duluan (paling reliable di semua context — buka tab
+//      baru dengan URL eksplisit settings/settings.html)
+//   B. Verifikasi tab baru benar-benar terbuka dengan query tabs sebelum/sesudah
+//   C. Kalau tabs.create throw atau tab tidak muncul dalam 2 detik, fallback ke
+//      openOptionsPage() (kadang works di top-level popup context)
+//   D. Kalau semua gagal, toast error jelas ke user (bukan diam-diam)
+//
+// Feedback jelas: toast "⚙️ Membuka pengaturan…" muncul saat klik, lalu toast
+// sukses "✓ Pengaturan terbuka di tab baru" setelah verifikasi.
+async function openSettings() {
+  const settingsUrl = browser.runtime.getURL('settings/settings.html');
+  const inIframe = (window !== window.top);
+  const inSidebar = document.body?.classList.contains('rf-sidebar-body') === true;
+
+  // Toast loading — supaya user tahu klik terdaftar
+  toast('⚙️ Membuka pengaturan…');
+
+  // A. Snapshot tabs sebelum untuk verifikasi
+  let tabsBefore = [];
+  try {
+    tabsBefore = await browser.tabs.query({ url: settingsUrl });
+  } catch (e) {
+    // Query dengan URL filter kadang gagal di permission ketat — ignore
+  }
+
+  // B. Strategi 1: tabs.create (paling reliable di iframe + native sidebar)
+  try {
+    const tab = await browser.tabs.create({ url: settingsUrl });
+    if (tab && tab.id) {
+      // Verifikasi: cek tab baru muncul dalam 1.5 detik
+      const verified = await new Promise(resolve => {
+        const start = Date.now();
+        const check = async () => {
+          try {
+            const tabsNow = await browser.tabs.query({ url: settingsUrl });
+            // Tab baru = tab yang id-nya belum ada di tabsBefore
+            const isNew = tabsNow.some(t => !tabsBefore.some(b => b.id === t.id));
+            if (isNew) return resolve(true);
+          } catch (e) {}
+          if (Date.now() - start > 1500) return resolve(false);
+          setTimeout(check, 150);
+        };
+        setTimeout(check, 150);
+      });
+
+      if (verified) {
+        toast('✓ Pengaturan terbuka di tab baru');
+        return;
+      }
+      // Tidak terverifikasi tapi tab object ada — anggap sukses
+      console.warn('[RecallFox] openSettings: tab created but verification timeout — assuming success');
+      return;
+    }
+  } catch (e) {
+    console.warn('[RecallFox] openSettings: tabs.create failed:', e.message);
+  }
+
+  // C. Strategi 2 (fallback): openOptionsPage — kadang works di top-level popup
+  if (!inIframe) {
+    try {
+      await browser.runtime.openOptionsPage();
+      // Verifikasi sama
+      const verified = await new Promise(resolve => {
+        const start = Date.now();
+        const check = async () => {
+          try {
+            const tabsNow = await browser.tabs.query({ url: settingsUrl });
+            const isNew = tabsNow.some(t => !tabsBefore.some(b => b.id === t.id));
+            if (isNew) return resolve(true);
+          } catch (e) {}
+          if (Date.now() - start > 1500) return resolve(false);
+          setTimeout(check, 150);
+        };
+        setTimeout(check, 150);
+      });
+      if (verified) {
+        toast('✓ Pengaturan terbuka di tab baru');
+        return;
+      }
+    } catch (e2) {
+      console.warn('[RecallFox] openSettings: openOptionsPage also failed:', e2.message);
+    }
+  }
+
+  // D. Strategi 3 (last resort): kirim ke background untuk inject via content script
+  //    di tab aktif — content script bisa window.open() dari halaman web context
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'RF_OPEN_SETTINGS_VIA_BG' });
+    if (res?.ok) {
+      toast('✓ Pengaturan terbuka di tab baru');
+      return;
+    }
+  } catch (e3) {
+    console.warn('[RecallFox] openSettings: background fallback failed:', e3.message);
+  }
+
+  // Semua gagal — kasih user tahu
+  console.error('[RecallFox] openSettings: ALL STRATEGIES FAILED');
+  toast('⚠️ Tidak bisa buka pengaturan. Coba: klik kanan ikon RecallFox → Options, atau buka langsung moz-extension://<id>/settings/settings.html', false);
+}
+
 async function openTapePopover() {
-  // v3.20.9: Jika di iframe (popout), kirim postMessage ke parent
+  // v3.20.8: Jika di iframe (popout), kirim postMessage ke parent
   // → parent kirim message ke content script di tab aktif
   if (window !== window.top) {
     window.parent.postMessage({ type: 'RF_OPEN_TAPE' }, '*');
@@ -6683,7 +6979,7 @@ async function renderVolumePage(B) {
 }
 function renderCachePage(B) {
   const s = currentVault?.settings || {};
-  // v3.20.6: Pre-populate checkboxes from settings (sebelumnya selalu default 'cache' checked).
+  // v3.20.2: Pre-populate checkboxes from settings (sebelumnya selalu default 'cache' checked).
   const savedTypes = Array.isArray(s.clearCacheDataTypes) ? s.clearCacheDataTypes : ['cache'];
   const types = ['Cache', 'Cookies', 'Riwayat', 'Local Storage', 'Downloads'];
   const typeKey = x => x.toLowerCase().replace(' ', '_');
@@ -6700,7 +6996,7 @@ function renderCachePage(B) {
     + '</select></div>'
     + '<button class="btn btn-d" style="width:100%" id="cacheGo">' + ICONS.trash + 'Bersihkan Sekarang</button>';
   $('#cacheGo').addEventListener('click', async () => {
-    // v3.20.6: Collect selected checkboxes + period → pass directly in CLEAR_CACHE message.
+    // v3.20.2: Collect selected checkboxes + period → pass directly in CLEAR_CACHE message.
     // Sebelumnya: kirim CLEAR_CACHE tanpa payload, background baca settings lama (default hanya 'cache'),
     // pilihan user diabaikan. Sekarang: kirim dataTypes + timePeriod di message, background pakai
     // nilai dari message (fallback ke settings kalau tidak ada).
@@ -6754,7 +7050,8 @@ function renderToolStubPage(B, k, name) {
   B.innerHTML = '<div class="card" style="text-align:center;padding:26px 16px"><div style="font-size:30px;margin-bottom:8px">' + (name || '🛠').split(' ')[0] + '</div>'
     + '<div style="font-size:12.5px;color:var(--text-2);line-height:1.55;max-width:250px;margin:0 auto 14px">' + (desc[k] || '') + '</div>'
     + '<button class="btn btn-p" id="goSettings">Buka di Pengaturan</button></div>';
-  $('#goSettings').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#goSettings').addEventListener('click', () => openSettings());
 }
 
 // v3.11.1 (Issue 4): Halaman "Kelola Situs AI"
@@ -7238,10 +7535,12 @@ async function renderGDrivePage(B) {
   $('#rfGdCopyUrl').addEventListener('click', async () => {
     const url = ($('#rfGdUrl').value || '').trim();
     if (!url) { toast('URL masih kosong. Isi dulu, lalu Copy.', false); return; }
-    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
-    const ok = await copyTextWithFallback(url);
-    if (ok) toast('📋 URL disalin. Paste di PC lain di field URL yang sama.');
-    else toast('Gagal copy URL (clipboard diblokir)', false);
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('📋 URL disalin. Paste di PC lain di field URL yang sama.');
+    } catch (e) {
+      toast('Gagal copy URL: ' + e.message, false);
+    }
   });
 
   // v3.11.7-fix (Issue #3): Lock/Unlock token
@@ -7302,10 +7601,12 @@ async function renderGDrivePage(B) {
     const tokenInput = $('#rfGdToken');
     const token = tokenInput?.value || '';
     if (!token) { toast('Token masih kosong. Klik 🎲 Generate dulu.', false); return; }
-    // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
-    const ok = await copyTextWithFallback(token);
-    if (ok) toast('📋 Token disalin. Paste ke AUTH_TOKEN di Code.gs.');
-    else toast('Gagal copy (clipboard diblokir)', false);
+    try {
+      await navigator.clipboard.writeText(token);
+      toast('📋 Token disalin. Paste ke AUTH_TOKEN di Code.gs.');
+    } catch (e) {
+      toast('Gagal copy: ' + e.message, false);
+    }
   });
 
   // Test koneksi
@@ -7923,7 +8224,8 @@ async function renderBackupPage(B) {
   });
 
   // Buka settings
-  $('#rfGoSettings').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#rfGoSettings').addEventListener('click', () => openSettings());
 }
 
 // v3.7: Halaman Tanya AI — UI lengkap dengan quick prompts + chat
@@ -7997,7 +8299,8 @@ async function renderAskAiPage(B) {
 
   // === Bind events ===
   if (!aiConfigured) {
-    $('#askAiSetup').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#askAiSetup').addEventListener('click', () => openSettings());
   }
 
   // Quick prompt click → isi textarea
@@ -8017,7 +8320,8 @@ async function renderAskAiPage(B) {
   // Send question
   $('#askAiSend').addEventListener('click', async () => {
     if (!aiConfigured) {
-      browser.runtime.openOptionsPage();
+      // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+      openSettings();
       return;
     }
     const q = $('#askAiInput').value.trim();
@@ -8051,12 +8355,9 @@ async function renderAskAiPage(B) {
         copyWrap.style.marginTop = '8px';
         copyWrap.innerHTML = '<button class="btn btn-g" id="askAiCopy" style="width:100%">📋 Salin jawaban</button>';
         resultEl.appendChild(copyWrap);
-        $('#askAiCopy').addEventListener('click', async () => {
+        $('#askAiCopy').addEventListener('click', () => {
           const text = resultEl.querySelector('.rf-ai-answer')?.innerText || '';
-          // v3.20.21: Pakai copyTextWithFallback (handle iframe sidebar)
-          const ok = await copyTextWithFallback(text);
-          if (ok) toast('📋 Jawaban disalin');
-          else toast('Gagal salin (clipboard diblokir)', false);
+          navigator.clipboard.writeText(text).then(() => toast('📋 Jawaban disalin'));
         });
       }
     } catch (e) {
@@ -8076,7 +8377,8 @@ async function renderAskAiPage(B) {
   // Tanya tentang tab aktif
   $('#askAiSendTab').addEventListener('click', async () => {
     if (!aiConfigured) {
-      browser.runtime.openOptionsPage();
+      // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+      openSettings();
       return;
     }
     try {
@@ -8852,19 +9154,12 @@ async function init() {
   // Width responsive for sidebar
   // v3.11.1 (Issue 2 fix): Tambah w-xs (≤280px) dan w-xxs (≤220px) untuk collapse lebih sempit.
   // Sebelumnya cuma w-sm (≤310px) — tidak cukup untuk sidebar super narrow.
-  // v3.20.8: Tambah w-min (≤320px) untuk Chrome Side Panel yang min-width ~300px (browser-controlled).
-  //   Firefox sidebar bisa dikecilkan sampai ~200px+ jadi w-xs/w-xxs masih relevan di Firefox.
-  //   Tapi Chrome Side Panel punya minimum width ~300px (tidak bisa di-set extension) — di
-  //   width itu, w-sm (≤360px) sudah aktif tapi belum cukup kompak. w-min (≤320px) trigger
-  //   additional collapse (smaller fonts, tighter padding) supaya sidebar terlihat tidak
-  //   "terlalu lebar" saat dikecilkan sampai mentok.
   if (document.body.classList.contains('rf-sidebar-body')) {
     const setW = () => {
       const w = window.innerWidth;
       const popup = $('#popup');
       if (!popup) return;
       popup.classList.toggle('w-sm', w <= 360);
-      popup.classList.toggle('w-min', w <= 320);  // v3.20.8: Chrome Side Panel minimum
       popup.classList.toggle('w-xs', w <= 280);
       popup.classList.toggle('w-xxs', w <= 220);
     };
@@ -8877,13 +9172,14 @@ async function init() {
 }
 
 function bindEvents() {
-  // v3.20.9: Jika di iframe (popout), kirim activity ke parent untuk reset idle timer
+  // v3.20.7: Jika di iframe (popout), kirim activity ke parent untuk reset idle timer
   if (window !== window.top) {
     const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart', 'input'];
     let lastActivitySent = 0;
     activityEvents.forEach(ev => {
       document.addEventListener(ev, () => {
         const now = Date.now();
+        // Throttle — kirim max 1x per 2 detik
         if (now - lastActivitySent > 2000) {
           lastActivitySent = now;
           window.parent.postMessage({ type: 'RF_ACTIVITY' }, '*');
@@ -8896,14 +9192,16 @@ function bindEvents() {
   $('#aiBtn').innerHTML = ICONS.spark;
   $('#settingsBtn').innerHTML = ICONS.gear;
   $('#themeBtn').addEventListener('click', toggleTheme);
-  $('#settingsBtn').addEventListener('click', () => browser.runtime.openOptionsPage());
+  // v3.20.22: Pakai openSettings() helper dengan fallback (iframe-safe)
+  $('#settingsBtn').addEventListener('click', () => openSettings());
   $('#aiBtn').addEventListener('click', aiToolsSheet);
-  // v3.20.9: Popout sidebar toggle — pakai postMessage ke parent (bukan tabs.sendMessage)
-  // Root cause: browser.tabs.sendMessage dari iframe gagal cross-origin.
+  // v3.20.7: Popout sidebar toggle — pakai postMessage ke parent (bukan tabs.sendMessage)
+  // Root cause: browser.tabs.sendMessage dari iframe gagal di Firefox (cross-origin context).
   // Fix: window.parent.postMessage({ type: 'RF_TOGGLE_POPOUT' }) → sidebar-cs.js listen → toggle()
   const inPageBtn = $('#sidebarInPageBtn');
   if (inPageBtn) {
     inPageBtn.addEventListener('click', () => {
+      // Cek apakah kita di iframe (popout) atau native sidebar/popup
       if (window !== window.top) {
         // Di iframe popout — kirim postMessage ke parent
         window.parent.postMessage({ type: 'RF_TOGGLE_POPOUT' }, '*');
@@ -8916,13 +9214,19 @@ function bindEvents() {
             return;
           }
           browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }).catch(() => {
-            // Fallback: inject sidebar-cs.js lalu toggle
+            // Fallback: inject content script
             browser.scripting.executeScript({
               target: { tabId: tab.id },
               files: ['content/sidebar-cs.js']
             }).then(() => {
-              setTimeout(() => browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }).catch(() => {}), 300);
-            }).catch(() => toast('⚠️ Tidak bisa buka popout di halaman ini'));
+              setTimeout(() => {
+                browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' }).catch(() => {
+                  toast('⚠️ Tidak bisa buka popout di halaman ini');
+                });
+              }, 300);
+            }).catch(() => {
+              toast('⚠️ Tidak bisa buka popout di halaman ini');
+            });
           });
         });
       }

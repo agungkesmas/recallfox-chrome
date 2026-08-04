@@ -980,3 +980,84 @@ body.rf-sidebar-body .sheet.show{transform:translate(-50%,0)}
   background: var(--surface-2, #fafaf9);
 }
 .rf-magicfolder-ft .btn { min-width: 90px; }
+
+/* v3.20.29: Magic Folder modal — checkbox + subfolder + reasoning */
+.rf-magicfolder-select-all-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; margin-bottom: 10px;
+  background: var(--surface-2, #fafaf9);
+  border-radius: 8px;
+  border: 1px solid var(--border, #e7e5e4);
+}
+.rf-magicfolder-select-all {
+  display: flex; align-items: center; gap: 6px;
+  cursor: pointer; font-size: 12.5px; font-weight: 600;
+  color: var(--text, #1c1917);
+}
+.rf-magicfolder-hint-inline {
+  font-size: 11px; color: var(--muted, #a8a29e);
+  font-style: italic;
+}
+.rf-magicfolder-check-wrap {
+  display: inline-flex; align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.rf-magicfolder-check-wrap input[type="checkbox"] {
+  position: absolute; opacity: 0; width: 18px; height: 18px;
+  cursor: pointer; margin: 0;
+}
+.rf-magicfolder-check-mark {
+  display: inline-block;
+  width: 18px; height: 18px;
+  border: 2px solid var(--border, #d6d3d1);
+  border-radius: 4px;
+  background: var(--surface, #fff);
+  position: relative;
+  transition: all .15s ease;
+}
+.rf-magicfolder-check-wrap input:checked + .rf-magicfolder-check-mark {
+  background: var(--primary, #6366f1);
+  border-color: var(--primary, #6366f1);
+}
+.rf-magicfolder-check-wrap input:checked + .rf-magicfolder-check-mark::after {
+  content: '✓';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: bold;
+  line-height: 1;
+}
+.rf-magicfolder-check-wrap input:focus + .rf-magicfolder-check-mark {
+  box-shadow: 0 0 0 3px var(--ring, rgba(99,102,241,.2));
+}
+.rf-magicfolder-sub {
+  border-left: 2px solid var(--primary-soft, rgba(99,102,241,.3));
+}
+.rf-magicfolder-sub .rf-magicfolder-folder-icon { font-size: 14px; }
+.rf-magicfolder-sub .rf-magicfolder-folder-name { font-size: 12.5px; font-weight: 500; }
+.rf-magicfolder-reasoning {
+  margin: 4px 0 6px 26px;
+  padding: 6px 10px;
+  background: var(--surface, #fff);
+  border-left: 3px solid var(--primary, #6366f1);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-2, #57534e);
+  line-height: 1.4;
+  font-style: italic;
+}
+.rf-magicfolder-sub-hint {
+  font-size: 10px;
+  color: var(--primary, #6366f1);
+  background: var(--primary-soft, rgba(99,102,241,.1));
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+.rf-magicfolder-group.rf-magicfolder-sub {
+  background: var(--surface, #fff);
+  border-style: dashed;
+}
