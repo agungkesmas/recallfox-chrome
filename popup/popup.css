@@ -1095,3 +1095,91 @@ body.rf-sidebar-body .sheet.show{transform:translate(-50%,0)}
   border-color: var(--primary, rgba(99,102,241,.3)) !important;
   color: var(--primary, #6366f1) !important;
 }
+
+/* v3.20.31: Collapsible "Ketik ide struktur sendiri" section */
+.rf-magicfolder-instr-details {
+  margin: 10px 0;
+  border: 1px solid var(--border, #e7e5e4);
+  border-radius: 8px;
+  background: var(--surface-2, #fafaf9);
+  overflow: hidden;
+}
+.rf-magicfolder-instr-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text, #1c1917);
+  list-style: none;
+  user-select: none;
+}
+.rf-magicfolder-instr-summary::-webkit-details-marker { display: none; }
+.rf-magicfolder-instr-summary:hover {
+  background: var(--surface, #fff);
+}
+.rf-magicfolder-instr-chev {
+  font-size: 11px;
+  color: var(--muted, #a8a29e);
+  transition: transform .15s ease;
+  flex-shrink: 0;
+}
+.rf-magicfolder-instr-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary, #6366f1);
+  background: var(--primary-soft, rgba(99,102,241,.12));
+  padding: 2px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--primary, rgba(99,102,241,.3));
+}
+.rf-magicfolder-instr-body {
+  padding: 0 14px 14px;
+}
+.rf-magicfolder-instr-hint {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--text-2, #57534e);
+  line-height: 1.5;
+  font-style: italic;
+}
+.rf-magicfolder-instr-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px;
+  border: 1px solid var(--border, #d6d3d1);
+  border-radius: 6px;
+  background: var(--surface, #fff);
+  color: var(--text, #1c1917);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.rf-magicfolder-instr-textarea:focus {
+  outline: none;
+  border-color: var(--primary, #6366f1);
+  box-shadow: 0 0 0 3px var(--ring, rgba(99,102,241,.2));
+}
+.rf-magicfolder-instr-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.rf-magicfolder-instr-actions .btn {
+  min-width: 80px;
+  font-size: 11.5px;
+  padding: 6px 12px;
+}
+.rf-magicfolder-instr-active-label {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--primary, #6366f1);
+  font-weight: 600;
+}

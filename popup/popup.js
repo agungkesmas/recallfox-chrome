@@ -1878,16 +1878,20 @@ async function handleAddGroup() {
 //   - Apply logic: move existing folders via setParentId (bukan cuma items)
 
 let _magicFolderRegenerateCount = 0;  // v3.20.30: state untuk regenerate
+let _magicFolderUserInstruction = '';  // v3.20.31: state untuk user instruction
 
 async function handleAiAutoGroup() {
   if (!currentVault?.items?.length) { toast('Vault kosong', false); return; }
 
   // v3.20.30: Reset regenerate count saat mulai dari tombol Auto.
+  // v3.20.31: Reset user instruction juga — mulai fresh.
   _magicFolderRegenerateCount = 0;
+  _magicFolderUserInstruction = '';
   await _runMagicFolderProposal();
 }
 
 // v3.20.30: Internal — run proposal dengan regenerate count saat ini.
+// v3.20.31: Juga pass userInstruction ke aiAutoGroup.
 async function _runMagicFolderProposal() {
   // v3.20.30: Pass FULL items (loose + in-folder + folders) supaya aiAutoGroup
   // bisa detect existing folders. aiAutoGroup sendiri yang filter loose items.
@@ -1911,8 +1915,10 @@ async function _runMagicFolderProposal() {
   try {
     const { chatWithFallback } = await import('../lib/assistant.js');
     // v3.20.30: Pass options.regenerate supaya AI kasih struktur alternatif.
+    // v3.20.31: Pass options.userInstruction supaya AI ikuti ide user.
     const result = await aiAutoGroup(allItems, chatWithFallback, {
-      regenerate: _magicFolderRegenerateCount
+      regenerate: _magicFolderRegenerateCount,
+      userInstruction: _magicFolderUserInstruction
     });
     if (!result.ok) {
       closeMagicFolderModal();
@@ -1937,10 +1943,15 @@ async function _runMagicFolderProposal() {
 }
 
 // v3.20.28: Progress modal — tampilkan saat AI sedang menganalisis
+// v3.20.31: Tampilkan badge kalau user instruction aktif.
 function showMagicFolderProgressModal(itemCount, regenerateCount) {
   closeMagicFolderModal();  // pastikan tidak ada modal sebelumnya
-  const regenLabel = regenerateCount > 0
+  const hasInstruction = _magicFolderUserInstruction.trim().length > 0;
+  const regenLabel = (regenerateCount > 0 && !hasInstruction)
     ? `<p class="rf-magicfolder-regen-label">🔄 Percobaan ke-${regenerateCount + 1} — AI mencari struktur alternatif</p>`
+    : '';
+  const instrLabel = hasInstruction
+    ? `<p class="rf-magicfolder-instr-active-label">📌 AI mengikuti instruksi struktur yang kamu ketik</p>`
     : '';
   const modal = document.createElement('div');
   modal.id = 'rf-magicfolder-modal';
@@ -1953,10 +1964,47 @@ function showMagicFolderProgressModal(itemCount, regenerateCount) {
         <p>AI membaca konteks ${itemCount} item loose untuk menemukan tema utama dan menyusun struktur folder spesifik.</p>
         <p class="rf-magicfolder-hint">AI bebas menentukan nama folder yang spesifik menggambarkan isi, boleh dengan subfolder, dan bisa pindahkan folder existing.</p>
         ${regenLabel}
+        ${instrLabel}
       </div>
     </div>
   `;
   document.body.appendChild(modal);
+}
+
+// v3.20.31: Render collapsible "Ketik ide struktur sendiri" section.
+// Default: collapsed (hidden textarea). Buka kalau user klik header.
+// Kalau _magicFolderUserInstruction ada isinya, section auto-expand + tampilkan badge "aktif".
+function _renderUserInstructionSection() {
+  const hasInstruction = _magicFolderUserInstruction.trim().length > 0;
+  const expandedAttr = hasInstruction ? 'open' : '';
+  const activeBadge = hasInstruction
+    ? '<span class="rf-magicfolder-instr-badge">📌 Instruksi aktif</span>'
+    : '';
+  return `
+    <details class="rf-magicfolder-instr-details" ${expandedAttr}>
+      <summary class="rf-magicfolder-instr-summary">
+        <span class="rf-magicfolder-instr-chev">▸</span>
+        <span>💡 Ketik ide struktur folder sendiri</span>
+        ${activeBadge}
+      </summary>
+      <div class="rf-magicfolder-instr-body">
+        <p class="rf-magicfolder-instr-hint">
+          Ketik ide struktur folder yang kamu bayangkan. AI akan ikuti kerangka kamu
+          tapi tetap baca konteks item untuk nama folder yang pas.
+        </p>
+        <textarea
+          id="rfMagicFolderInstrText"
+          class="rf-magicfolder-instr-textarea"
+          rows="4"
+          placeholder="Contoh: Bikin folder: Frontend (React, Vue), Backend (Node, Express), Lainnya. Atau: Kelompokkan berdasarkan workflow — Planning, Development, Testing."
+        >${esc(_magicFolderUserInstruction)}</textarea>
+        <div class="rf-magicfolder-instr-actions">
+          <button class="btn btn-g rf-magicfolder-instr-clear" id="rfMagicFolderInstrClear" title="Hapus instruksi">🗑️ Hapus</button>
+          <button class="btn btn-p rf-magicfolder-instr-apply" id="rfMagicFolderInstrApply" title="Perbarui usulan dengan ide kamu">🪄 Perbarui Usulan</button>
+        </div>
+      </div>
+    </details>
+  `;
 }
 
 // v3.20.30: Preview modal — checkbox + subfolder + reasoning + existing folders + regenerate button.
@@ -2081,6 +2129,7 @@ function showMagicFolderPreviewModal(groups, allItems, stats, unmovedFolderIds) 
             🔄 Usulan Lain
           </button>
         </div>
+        ${_renderUserInstructionSection()}
         <div class="rf-magicfolder-groups">${foldersHtml}</div>
       </div>
       <div class="rf-magicfolder-ft">
@@ -2132,6 +2181,52 @@ function showMagicFolderPreviewModal(groups, allItems, stats, unmovedFolderIds) 
     _magicFolderRegenerateCount++;
     await _runMagicFolderProposal();
   });
+
+  // v3.20.31: Wire "Perbarui Usulan" button — baca textarea, set userInstruction, re-call.
+  const instrApplyBtn = document.getElementById('rfMagicFolderInstrApply');
+  if (instrApplyBtn) {
+    instrApplyBtn.addEventListener('click', async () => {
+      const textarea = document.getElementById('rfMagicFolderInstrText');
+      const text = (textarea?.value || '').trim();
+      if (!text) {
+        toast('⚠ Ketik ide struktur folder dulu', false);
+        return;
+      }
+      if (text.length < 3) {
+        toast('⚠ Ide terlalu pendek — ketik minimal 3 karakter', false);
+        return;
+      }
+      _magicFolderUserInstruction = text;
+      // Reset regenerate count — ini proposal baru dengan instruksi user.
+      _magicFolderRegenerateCount = 0;
+      if (instrApplyBtn) { instrApplyBtn.disabled = true; instrApplyBtn.textContent = '⏳ Memperbarui...'; }
+      await _runMagicFolderProposal();
+    });
+  }
+
+  // v3.20.31: Wire "Hapus" button — clear userInstruction, re-call proposal fresh.
+  const instrClearBtn = document.getElementById('rfMagicFolderInstrClear');
+  if (instrClearBtn) {
+    instrClearBtn.addEventListener('click', async () => {
+      _magicFolderUserInstruction = '';
+      _magicFolderRegenerateCount = 0;
+      const textarea = document.getElementById('rfMagicFolderInstrText');
+      if (textarea) textarea.value = '';
+      if (instrClearBtn) { instrClearBtn.disabled = true; instrClearBtn.textContent = '⏳...'; }
+      await _runMagicFolderProposal();
+    });
+  }
+
+  // v3.20.31: Update chevron rotation saat details toggle.
+  const instrDetails = document.querySelector('.rf-magicfolder-instr-details');
+  if (instrDetails) {
+    const chev = instrDetails.querySelector('.rf-magicfolder-instr-chev');
+    const updateChev = () => {
+      if (chev) chev.textContent = instrDetails.open ? '▾' : '▸';
+    };
+    updateChev();  // initial
+    instrDetails.addEventListener('toggle', updateChev);
+  }
 
   // Wire cancel buttons
   const cancel = () => closeMagicFolderModal();
