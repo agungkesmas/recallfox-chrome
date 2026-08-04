@@ -62,7 +62,8 @@ import {
   signInWithGmail,
   signOut,
   testConnection as testSupabaseConnection,
-  handleOAuthCallback
+  handleOAuthCallback,
+  proactiveRefresh
 } from './lib/supabase-client.js';
 import {
   startRealtimeSync,
@@ -4088,11 +4089,42 @@ browser.alarms.onAlarm.addListener((alarm) => {
       console.warn('[RecallFox/Backup] Alarm handler error:', e.message);
     });
   }
+  // v3.20.27: Proactive token refresh — keep session alive indefinitely.
+  // Uses statically-imported proactiveRefresh (Chrome MV3 SW forbids dynamic import()).
+  if (alarm.name === 'rf-supabase-refresh') {
+    console.log('[RecallFox/Supabase] Proactive refresh alarm fired');
+    try {
+      proactiveRefresh().catch(e => {
+        console.warn('[RecallFox/Supabase] Proactive refresh error:', e.message);
+      });
+    } catch (e) {
+      console.warn('[RecallFox/Supabase] Proactive refresh invoke error:', e.message);
+    }
+  }
 });
 
 // v0.9.2: PANGGIL DI TOP LEVEL — supaya jalan setiap kali background script load,
 // bukan hanya saat onInstalled/onStartup fire
 startAutoDiscardChecker();
+
+// v3.20.27: Proactive Supabase token refresh — keep session alive indefinitely.
+// Industry standard: refresh access_token BEFORE it expires (1 hour lifetime),
+// so refresh_token gets rotated and its expiry gets extended. Without this,
+// user gets logged out after ~1 day of inactivity (refresh_token expires).
+//
+// Chrome MV3: alarms wake up the service worker even after it's been terminated.
+// Alarm fires every 45 minutes. proactiveRefresh() calls getSession() which
+// checks if token is within 5-min window of expiry and refreshes if needed.
+// If user isn't logged in, proactiveRefresh returns false (no-op).
+function startProactiveTokenRefresh() {
+  console.log('[RecallFox/Supabase] Starting proactive token refresh alarm (every 45 min)');
+  try {
+    browser.alarms.create('rf-supabase-refresh', { periodInMinutes: 45 });
+  } catch (e) {
+    console.warn('[RecallFox/Supabase] Failed to create refresh alarm:', e.message);
+  }
+}
+startProactiveTokenRefresh();
 
 // ===== Ngaji / Quran reminder =====
 
