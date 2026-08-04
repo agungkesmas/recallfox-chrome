@@ -1825,39 +1825,219 @@ async function handleAddGroup() {
   }
 }
 
-// ===== handleAiAutoGroup: AI grouping otomatis =====
+// ===== handleAiAutoGroup: AI grouping otomatis (Magic Folder) =====
+// v3.20.28: Fix payload + AI reasoning + preview modal + strict rollback guardrail.
+//
+// Step 1 (payload fix): ada di lib/vault-tree.js aiAutoGroup() — sekarang pass
+//   array of {role, content} bukan string.
+// Step 2 (AI reasoning): system prompt di aiAutoGroup() dirubah supaya AI bebas
+//   menentukan struktur folder optimal.
+// Step 3 (DOM sync): setelah apply, refreshVault() + renderChips() + renderList()
+//   dipanggil — ini bekerja di popup, sidebar native, DAN popout sidebar (iframe)
+//   karena popup.js berjalan di semua context tersebut.
+// Step 4 (strict rollback): snapshot vault sebelum apply, rollback kalau gagal.
+//   Tidak touch item yang sudah di-folder lain (hanya move item ungrouped).
 async function handleAiAutoGroup() {
   if (!currentVault?.items?.length) { toast('Vault kosong', false); return; }
-  const items = currentVault.items.filter(i => !isGroupItem(i));
+  const items = currentVault.items.filter(i => !isGroupItem(i) && !i.archived);
   if (items.length < 2) { toast('Butuh minimal 2 item untuk grouping', false); return; }
-  toast('\uD83E\uDD16 AI menganalisis ' + items.length + ' item...');
+
+  // Cek AI configured
+  const { isAssistantConfigured } = await import('../lib/assistant.js');
+  if (!(await isAssistantConfigured())) {
+    toast('⚠ Setup AI Assistant dulu di Pengaturan → AI Assistant', false);
+    return;
+  }
+
+  // v3.20.28: Tampilkan progress modal (bukan toast saja) supaya user tahu
+  // AI sedang bekerja. Modal ini juga mencegah double-click.
+  showMagicFolderProgressModal(items.length);
+
   try {
     const { chatWithFallback } = await import('../lib/assistant.js');
     const result = await aiAutoGroup(items, chatWithFallback);
     if (!result.ok) {
-      toast('Gagal: ' + result.error, false);
+      closeMagicFolderModal();
+      const errMap = {
+        'too_few_items': 'Item terlalu sedikit untuk dikelompokkan',
+        'no_chat_fn': 'AI function tidak tersedia',
+        'no_valid_json_in_response': 'AI tidak return JSON valid. Coba lagi.',
+        'no_valid_groups_in_response': 'AI tidak mengusulkan folder valid. Coba lagi.'
+      };
+      toast('⚠ ' + (errMap[result.error] || result.error), false);
       return;
     }
+
+    // v3.20.28: Tampilkan preview modal dengan struktur yang diusulkan AI.
+    // User bisa confirm atau cancel. Sebelumnya: langsung apply tanpa preview.
+    closeMagicFolderModal();
+    showMagicFolderPreviewModal(result.groups, items);
+  } catch (e) {
+    closeMagicFolderModal();
+    toast('⚠ Gagal: ' + e.message, false);
+    console.error('[RecallFox/MagicFolder] handleAiAutoGroup failed:', e);
+  }
+}
+
+// v3.20.28: Progress modal — tampilkan saat AI sedang menganalisis
+function showMagicFolderProgressModal(itemCount) {
+  closeMagicFolderModal();  // pastikan tidak ada modal sebelumnya
+  const modal = document.createElement('div');
+  modal.id = 'rf-magicfolder-modal';
+  modal.className = 'rf-magicfolder-overlay';
+  modal.innerHTML = `
+    <div class="rf-magicfolder-dialog">
+      <div class="rf-magicfolder-progress">
+        <div class="rf-magicfolder-spinner"></div>
+        <h3>🪄 Magic Folder sedang berpikir...</h3>
+        <p>AI menganalisis ${itemCount} item di Vault Anda untuk menentukan struktur folder optimal.</p>
+        <p class="rf-magicfolder-hint">AI bebas menentukan jumlah folder, nama, dan kriteria pengelompokan yang paling masuk akal.</p>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+// v3.20.28: Preview modal — tampilkan struktur folder yang diusulkan AI
+function showMagicFolderPreviewModal(groups, allItems) {
+  closeMagicFolderModal();
+
+  // Hitung item yang tidak ke-assign (untuk info)
+  const assignedIds = new Set();
+  groups.forEach(g => g.itemIds.forEach(id => assignedIds.add(id)));
+  const unassignedCount = allItems.filter(it => !assignedIds.has(it.id)).length;
+
+  const groupsHtml = groups.map((g, i) => {
+    const itemCount = g.itemIds.length;
+    return `
+      <div class="rf-magicfolder-group">
+        <div class="rf-magicfolder-group-hd">
+          <span class="rf-magicfolder-folder-icon">📁</span>
+          <span class="rf-magicfolder-folder-name">${esc(g.name)}</span>
+          <span class="rf-magicfolder-folder-count">${itemCount} item</span>
+        </div>
+        <div class="rf-magicfolder-folder-items">
+          ${g.itemIds.slice(0, 5).map(id => {
+            const it = allItems.find(x => x.id === id);
+            return it ? `<span class="rf-magicfolder-item-pill">${esc((it.title || 'Untitled').slice(0, 30))}</span>` : '';
+          }).join('')}
+          ${itemCount > 5 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${itemCount - 5} lainnya</span>` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const modal = document.createElement('div');
+  modal.id = 'rf-magicfolder-modal';
+  modal.className = 'rf-magicfolder-overlay';
+  modal.innerHTML = `
+    <div class="rf-magicfolder-dialog">
+      <div class="rf-magicfolder-hd">
+        <h3>🪄 Struktur Folder Diusulkan AI</h3>
+        <button class="rf-magicfolder-close" id="rfMagicFolderCancel" title="Batal">×</button>
+      </div>
+      <div class="rf-magicfolder-body">
+        <p class="rf-magicfolder-summary">
+          AI mengusulkan <b>${groups.length} folder</b> untuk <b>${assignedIds.size} item</b>
+          ${unassignedCount > 0 ? `<span class="rf-magicfolder-unassigned">(${unassignedCount} item tidak masuk folder mana pun)</span>` : ''}
+        </p>
+        <div class="rf-magicfolder-groups">${groupsHtml}</div>
+      </div>
+      <div class="rf-magicfolder-ft">
+        <button class="btn btn-g" id="rfMagicFolderCancelBtn">Batal</button>
+        <button class="btn btn-p" id="rfMagicFolderConfirm">✓ Terapkan Struktur</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // Wire cancel buttons
+  const cancel = () => closeMagicFolderModal();
+  document.getElementById('rfMagicFolderCancel').addEventListener('click', cancel);
+  document.getElementById('rfMagicFolderCancelBtn').addEventListener('click', cancel);
+
+  // Wire confirm button
+  document.getElementById('rfMagicFolderConfirm').addEventListener('click', async () => {
+    const confirmBtn = document.getElementById('rfMagicFolderConfirm');
+    const cancelBtn = document.getElementById('rfMagicFolderCancelBtn');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Menerapkan...'; }
+    if (cancelBtn) cancelBtn.disabled = true;
+
+    const applyResult = await applyMagicFolderGroups(groups);
+    if (applyResult.ok) {
+      closeMagicFolderModal();
+      toast(`✓ ${applyResult.groupsCreated} folder dibuat, ${applyResult.itemsMoved} item dipindahkan`);
+      // Step 3: DOM sync — refresh vault + chips + list
+      // Ini bekerja di popup, sidebar native, DAN popout sidebar (iframe)
+      // karena popup.js berjalan di semua context tersebut.
+      await refreshVault();
+      renderChips();
+      renderList();
+    } else {
+      toast('⚠ Gagal menerapkan: ' + (applyResult.error || 'unknown'), false);
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Terapkan Struktur'; }
+      if (cancelBtn) cancelBtn.disabled = false;
+    }
+  });
+}
+
+// v3.20.28: Apply groups ke vault — dengan strict rollback guardrail
+async function applyMagicFolderGroups(groups) {
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return { ok: false, error: 'Groups tidak valid' };
+  }
+
+  // Step 4: Snapshot vault sebelum — untuk rollback kalau gagal
+  const vaultBefore = await getVault();
+  const vaultBeforeJson = JSON.stringify(vaultBefore);
+
+  let groupsCreated = 0;
+  let itemsMoved = 0;
+
+  try {
     const groupType = (currentChip === 'all' || currentChip === 'archive') ? 'prompt' : currentChip;
-    for (const g of result.groups) {
+    const expandedIds = [];
+
+    for (const g of groups) {
       const group = createGroup(g.name, groupType);
       await addItem(group);
-      expandedGroupIds.push(group.id);
+      expandedIds.push(group.id);
+      groupsCreated++;
+
       for (const itemId of g.itemIds) {
-        const item = currentVault.items.find(i => i.id === itemId);
-        if (item) setParentId(item, group.id);
+        const item = vaultBefore.items.find(i => i.id === itemId);
+        if (item) {
+          // Update item: set parentId ke folder baru
+          const updates = {};
+          setParentId(updates, group.id);
+          await updateItem(itemId, updates);
+          itemsMoved++;
+        }
       }
     }
-    // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat grup
-    if (currentChip === 'all' || currentChip === 'archive') {
-      currentChip = groupType;
-    }
-    await refreshVault();
-    renderChips();
-    toast('🤖 ' + result.groups.length + ' grup dibuat');
+
+    // Expand folder-folder baru supaya user langsung lihat isinya
+    expandedGroupIds.push(...expandedIds);
+
+    return { ok: true, groupsCreated, itemsMoved };
   } catch (e) {
-    toast('Gagal: ' + e.message, false);
+    // Step 4: Strict rollback — restore vault ke state sebelum
+    console.error('[RecallFox/MagicFolder] Apply gagal, rollback...', e);
+    try {
+      const restored = JSON.parse(vaultBeforeJson);
+      await saveVault(restored);
+      console.log('[RecallFox/MagicFolder] Rollback berhasil — vault restored');
+    } catch (rollbackErr) {
+      console.error('[RecallFox/MagicFolder] Rollback GAGAL:', rollbackErr);
+    }
+    return { ok: false, error: e.message || 'Gagal apply structure folder' };
   }
+}
+
+// v3.20.28: Close modal helper
+function closeMagicFolderModal() {
+  const modal = document.getElementById('rf-magicfolder-modal');
+  if (modal) modal.remove();
 }
 
 function renderList() {
