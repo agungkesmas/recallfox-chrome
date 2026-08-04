@@ -17,7 +17,7 @@ import { AI_TOOLS, REGION_LABELS } from '../lib/ai-tools.js';
 import { getProviderInfo } from '../lib/assistant.js';
 import { getAllToppings, BUILTIN_TOPPINGS } from '../lib/toppings.js';
 // v3.20.25: Import Paket Link
-import { readLinkPackFile, hasImportedPack, importLinkPack } from '../lib/link-pack.js';
+import { readLinkPackFile, hasImportedPack, importLinkPack, getTypeLabel, getTypeIcon } from '../lib/link-pack.js';
 
 let currentVault = null;
 
@@ -1987,26 +1987,62 @@ function showLinkPackPreviewModal(pack, opts) {
   const folderColorBadge = pack.folder.color
     ? `<span class="rf-linkpack-color" style="background:${escapeHtml(pack.folder.color)}"></span>`
     : '';
-  const itemsHtml = pack.items.map((it, i) => `
+
+  // v3.20.26: Multi-type support — render item berdasarkan type
+  const isMultiType = pack.schemaVersion === 2 || (pack.items || []).some(it => it.type !== 'link');
+
+  // Hitung type counts untuk summary
+  const typeCounts = {};
+  (pack.items || []).forEach(it => {
+    typeCounts[it.type] = (typeCounts[it.type] || 0) + 1;
+  });
+  const summaryParts = Object.entries(typeCounts).map(([t, c]) => `${getTypeIcon(t)} ${c} ${t}`);
+  const summaryText = summaryParts.join(' · ');
+
+  const itemsHtml = pack.items.map((it, i) => {
+    const icon = getTypeIcon(it.type);
+    const typeLabel = getTypeLabel(it.type);
+    let detail = '';
+    if (it.type === 'link') {
+      detail = `<span class="rf-linkpack-item-url">${escapeHtml(it.url)}</span>`;
+    } else if (it.type === 'prompt' || it.type === 'context' || it.type === 'note' || it.type === 'snapshot') {
+      // Tampilkan preview body (80 char pertama)
+      const bodyPreview = (it.body || '').slice(0, 80).replace(/\n/g, ' ');
+      detail = `<span class="rf-linkpack-item-body">${escapeHtml(bodyPreview)}${(it.body || '').length > 80 ? '…' : ''}</span>`;
+      // Tampilkan contextPurpose kalau ada
+      if (it.contextPurpose) {
+        detail += ` <span class="rf-linkpack-item-badge">${escapeHtml(it.contextPurpose)}</span>`;
+      }
+      // Tampilkan color kalau note
+      if (it.color && it.color !== 'default') {
+        detail += ` <span class="rf-linkpack-item-badge">${escapeHtml(it.color)}</span>`;
+      }
+    }
+    return `
     <li class="rf-linkpack-item">
       <span class="rf-linkpack-item-idx">${i + 1}.</span>
-      <span class="rf-linkpack-item-title">🔗 ${escapeHtml(it.title)}</span>
-      <span class="rf-linkpack-item-url">${escapeHtml(it.url)}</span>
+      <span class="rf-linkpack-item-title">${icon} ${escapeHtml(it.title)}</span>
+      ${detail}
     </li>
-  `).join('');
+  `;
+  }).join('');
 
   const importLabel = asCopy ? 'Import sebagai Salinan' : 'Import Paket';
+  const modalTitle = isMultiType ? 'Import Paket' : 'Import Paket Link';
+  const itemsTitle = isMultiType
+    ? `Item yang akan ditambahkan (${pack.items.length}): ${summaryText}`
+    : `Link yang akan ditambahkan (${pack.items.length}):`;
 
   container.innerHTML = `
     <div class="rf-linkpack-modal" role="dialog" aria-modal="true">
       <div class="rf-linkpack-modal-inner">
         <div class="rf-linkpack-modal-hd">
-          <h3>📦 Import Paket Link</h3>
+          <h3>📦 ${escapeHtml(modalTitle)}</h3>
         </div>
         <div class="rf-linkpack-modal-body">
           <div class="rf-linkpack-meta">
             <div><span class="rf-linkpack-label">Nama Paket:</span> <b>${escapeHtml(pack.name)}</b></div>
-            <div><span class="rf-linkpack-label">Versi:</span> ${escapeHtml(pack.version)}</div>
+            <div><span class="rf-linkpack-label">Versi:</span> ${escapeHtml(pack.version)} <span class="rf-linkpack-schema">schema v${pack.schemaVersion}</span></div>
             ${pack.description ? `<div><span class="rf-linkpack-label">Deskripsi:</span> ${escapeHtml(pack.description)}</div>` : ''}
             <div><span class="rf-linkpack-label">Pack ID:</span> <code>${escapeHtml(pack.packId)}</code></div>
           </div>
@@ -2015,7 +2051,7 @@ function showLinkPackPreviewModal(pack, opts) {
             <div class="rf-linkpack-folder-name">${folderColorBadge}📁 ${escapeHtml(folderNameDisplay)}</div>
           </div>
           <div class="rf-linkpack-items">
-            <div class="rf-linkpack-section-title">Link yang akan ditambahkan (${pack.items.length}):</div>
+            <div class="rf-linkpack-section-title">${escapeHtml(itemsTitle)}</div>
             <ul class="rf-linkpack-list">${itemsHtml}</ul>
           </div>
         </div>
@@ -2041,7 +2077,16 @@ function showLinkPackPreviewModal(pack, opts) {
     const result = await importLinkPack(pack, { asCopy });
     if (result.ok) {
       container.style.display = 'none'; container.innerHTML = '';
-      showToast('✓ Paket "' + pack.name + '" berhasil diimpor (' + result.itemCount + ' link).', true);
+      // v3.20.26: Toast yang lebih informatif — tampilkan type counts
+      const tc = result.typeCounts || {};
+      const parts = [];
+      if (tc.link) parts.push(`${tc.link} link`);
+      if (tc.prompt) parts.push(`${tc.prompt} prompt`);
+      if (tc.context) parts.push(`${tc.context} konteks`);
+      if (tc.note) parts.push(`${tc.note} catatan`);
+      if (tc.snapshot) parts.push(`${tc.snapshot} snapshot`);
+      const summary = parts.join(', ') || result.itemCount + ' item';
+      showToast('✓ Paket "' + pack.name + '" berhasil diimpor (' + summary + ').', true);
       // Reload vault data supaya statistik update
       try { currentVault = await getVault(); } catch (e) {}
     } else {
