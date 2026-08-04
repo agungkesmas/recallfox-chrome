@@ -1061,3 +1061,37 @@ body.rf-sidebar-body .sheet.show{transform:translate(-50%,0)}
   background: var(--surface, #fff);
   border-style: dashed;
 }
+
+/* v3.20.30: Regenerate button + folder pill + regen label */
+.rf-magicfolder-regenerate-btn {
+  margin-left: auto;
+  padding: 6px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid var(--primary, #6366f1);
+  background: var(--primary-soft, rgba(99,102,241,.1));
+  color: var(--primary, #6366f1);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all .15s ease;
+  white-space: nowrap;
+}
+.rf-magicfolder-regenerate-btn:hover:not(:disabled) {
+  background: var(--primary, #6366f1);
+  color: #fff;
+}
+.rf-magicfolder-regenerate-btn:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+.rf-magicfolder-regen-label {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--primary, #6366f1);
+  font-weight: 600;
+}
+.rf-magicfolder-folder-pill {
+  background: var(--primary-soft, rgba(99,102,241,.08)) !important;
+  border-color: var(--primary, rgba(99,102,241,.3)) !important;
+  color: var(--primary, #6366f1) !important;
+}
