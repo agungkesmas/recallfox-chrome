@@ -90,6 +90,10 @@ let editorToppings = [];
 // v3.17.1: Tree/grouping state
 let expandedGroupIds = [];  // v3.18.0: group IDs yang expanded (persisted ke vault.settings)
 let draggedItemId = null;   // v3.18.0: item ID yang sedang di-drag
+// v3.20.24: Dedupe Set untuk lazy reverse geocode — track item ID yang sedang
+// di-reverse geocode di background, supaya tidak kirim request berkali-kali
+// untuk item yang sama dalam satu render cycle.
+const _pendingReverseGeocode = new Set();
 // v3.19.0: File manager features
 let vaultSortMode = localStorage.getItem('rf_vault_sort') || 'recent';
 let activeTagFilter = null;
@@ -1618,8 +1622,29 @@ function renderItemHtml(it, indent, connector) {
   const connectorSpan = connector ? '<span style="font-size:10px;color:var(--muted);flex-shrink:0;width:24px">' + connector + '</span>' : '';
   // v3.19.1: Display GPS location dari PWA capture (source.location).
   // Schema: { lat, lng, accuracy, address, capturedAt } — kompatibel dengan PWA v1.8.0.
+  // v3.20.24: Kalau loc ada + lat/lng ada TAPI address kosong, trigger reverse
+  // geocode async di background. Setelah selesai, patch vault item + re-render.
+  // Fix issue: "di bagian media, lokasi yang kebaca adalah titik koordinat untuk
+  // foto yang baru di take, bukan nama jalan" — terjadi kalau PWA gagal reverse
+  // geocode saat capture (Nominatim timeout) atau item lama sebelum fitur ini.
   const loc = it.source?.location;
   const locationBadge = loc ? ' \u00B7 <span title="' + esc(loc.address || (loc.lat + ', ' + loc.lng)) + '" style="font-size:10px;color:var(--green)">\uD83D\uDCCD ' + esc((loc.address || (loc.lat?.toFixed(4) + ', ' + loc.lng?.toFixed(4))).slice(0, 30)) + '</span>' : '';
+  // v3.20.24: Lazy reverse geocode — fire-and-forget, no await (tidak block render)
+  if (loc && loc.lat != null && loc.lng != null && !loc.address) {
+    // Dedupe: jangan reverse geocode item yang sama berkali-kali dalam satu render cycle
+    if (!_pendingReverseGeocode.has(it.id)) {
+      _pendingReverseGeocode.add(it.id);
+      browser.runtime.sendMessage({
+        type: 'REVERSE_GEOCODE_LOCATION',
+        itemId: it.id,
+        lat: loc.lat,
+        lng: loc.lng
+      }).catch(() => {}).finally(() => {
+        // Allow retry setelah 5 menit (kalau gagal, bisa coba lagi nanti)
+        setTimeout(() => _pendingReverseGeocode.delete(it.id), 300000);
+      });
+    }
+  }
   // v1.8.1: Voice notes DIHAPUS — user bilang "batasan mb, tidak terpakai".
   return '<div class="item" data-id="' + it.id + '" tabindex="0" draggable="true"' + indentStyle + '>'
     + batchCheckboxHtml

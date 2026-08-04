@@ -2380,10 +2380,40 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'PRAYER_GEOCODE') {
     // Geocode an address string to coordinates
-    
+
     try {
       const result = await geocode(msg.address);
       sendResponse({ ok: true, ...result }); return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+  if (msg.type === 'REVERSE_GEOCODE_LOCATION') {
+    // v3.20.24: Reverse geocode lat/lng → address, then patch vault item's
+    // source.location.address supaya badge "📍 alamat" muncul (bukan koordinat).
+    // Dipanggil dari popup.js renderItemHtml kalau item punya source.location
+    // dengan lat/lng tapi address kosong (mis. PWA gagal reverse geocode saat
+    // capture karena Nominatim timeout, atau item lama sebelum fitur ini).
+    // Fire-and-forget — popup re-render vault setelah patch sukses.
+    try {
+      const address = await reverseGeocode(msg.lat, msg.lng);
+      if (address && msg.itemId) {
+        // Patch vault item: set source.location.address + source.location.capturedAt (kalau belum)
+        const vault = await getVault();
+        const idx = vault.items.findIndex(i => i.id === msg.itemId);
+        if (idx >= 0 && vault.items[idx].source?.location) {
+          vault.items[idx].source.location.address = address;
+          if (!vault.items[idx].source.location.capturedAt) {
+            vault.items[idx].source.location.capturedAt = new Date().toISOString();
+          }
+          vault.items[idx].updatedAt = new Date().toISOString();
+          await saveVault(vault);
+          console.log('[RecallFox] REVERSE_GEOCODE_LOCATION: patched item', msg.itemId, '→', address.slice(0, 60));
+          // Notify UI untuk re-render
+          browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+        }
+      }
+      sendResponse({ ok: true, address }); return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
     }
