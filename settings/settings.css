@@ -602,3 +602,221 @@ body {
   color: var(--muted, #a8a29e);
   font-size: 12px;
 }
+
+/* ============================================================
+   v3.20.25: Import Paket Link — modal + preview styles
+   ============================================================ */
+
+.rf-linkpack-preview {
+  /* container kosong — modal diisi dinamis */
+}
+
+.rf-linkpack-modal {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 12, 10, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+}
+
+.rf-linkpack-modal-inner {
+  background: var(--surface, #ffffff);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  max-width: 560px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rf-linkpack-modal-hd {
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--border, #e7e5e4);
+}
+.rf-linkpack-modal-hd h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text, #1c1917);
+}
+
+.rf-linkpack-modal-body {
+  padding: 16px 22px;
+  overflow-y: auto;
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2, #44403c);
+}
+
+.rf-linkpack-modal-ft {
+  padding: 14px 22px;
+  border-top: 1px solid var(--border, #e7e5e4);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: var(--surface-2, #fafaf9);
+}
+
+.rf-linkpack-meta {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: var(--surface-2, #fafaf9);
+  border-radius: 8px;
+  border: 1px solid var(--border, #e7e5e4);
+}
+.rf-linkpack-meta > div {
+  margin-bottom: 4px;
+}
+.rf-linkpack-meta > div:last-child {
+  margin-bottom: 0;
+}
+.rf-linkpack-label {
+  display: inline-block;
+  min-width: 90px;
+  color: var(--muted, #a8a29e);
+  font-size: 12px;
+}
+.rf-linkpack-meta code {
+  background: var(--surface, #fff);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid var(--border, #e7e5e4);
+}
+
+.rf-linkpack-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted, #a8a29e);
+  margin-bottom: 6px;
+  margin-top: 14px;
+}
+.rf-linkpack-section-title:first-child {
+  margin-top: 0;
+}
+
+.rf-linkpack-folder-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--primary-soft, rgba(99, 102, 241, 0.08));
+  border: 1px solid var(--primary, rgba(99, 102, 241, 0.25));
+  border-radius: 8px;
+  font-weight: 600;
+  color: var(--text, #1c1917);
+  font-size: 13px;
+}
+.rf-linkpack-color {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(0,0,0,0.15);
+  flex-shrink: 0;
+}
+
+.rf-linkpack-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border, #e7e5e4);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+}
+.rf-linkpack-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, #e7e5e4);
+  font-size: 12px;
+}
+.rf-linkpack-item:last-child {
+  border-bottom: none;
+}
+.rf-linkpack-item-idx {
+  flex-shrink: 0;
+  width: 22px;
+  color: var(--muted, #a8a29e);
+  font-size: 11px;
+  text-align: right;
+}
+.rf-linkpack-item-title {
+  flex-shrink: 0;
+  font-weight: 500;
+  color: var(--text, #1c1917);
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rf-linkpack-item-url {
+  flex: 1;
+  color: var(--muted, #a8a29e);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+}
+
+.rf-linkpack-errors {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--danger, #b91c1c);
+  font-size: 12px;
+}
+.rf-linkpack-errors li {
+  margin-bottom: 4px;
+}
+
+.rf-linkpack-hint {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--surface-2, #fafaf9);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text-2, #44403c);
+}
+
+/* Buttons — reuse rf-btn if defined, else fallback */
+.rf-linkpack-modal-ft .rf-btn {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.15s, opacity 0.15s;
+}
+.rf-linkpack-modal-ft .rf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.rf-linkpack-modal-ft .rf-btn-secondary {
+  background: var(--surface-2, #f5f5f4);
+  color: var(--text-2, #44403c);
+  border-color: var(--border, #e7e5e4);
+}
+.rf-linkpack-modal-ft .rf-btn-secondary:hover:not(:disabled) {
+  background: var(--hover, #ebe9e6);
+}
+.rf-linkpack-modal-ft .rf-btn-primary {
+  background: var(--primary, #6366f1);
+  color: #fff;
+}
+.rf-linkpack-modal-ft .rf-btn-primary:hover:not(:disabled) {
+  background: var(--primary-dark, #4f46e5);
+}

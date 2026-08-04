@@ -16,6 +16,8 @@ import { getAllTags } from '../lib/search.js';
 import { AI_TOOLS, REGION_LABELS } from '../lib/ai-tools.js';
 import { getProviderInfo } from '../lib/assistant.js';
 import { getAllToppings, BUILTIN_TOPPINGS } from '../lib/toppings.js';
+// v3.20.25: Import Paket Link
+import { readLinkPackFile, hasImportedPack, importLinkPack } from '../lib/link-pack.js';
 
 let currentVault = null;
 
@@ -1393,6 +1395,21 @@ function bindEvents() {
     document.getElementById('rf-set-import-file').click();
   });
   document.getElementById('rf-set-import-file').addEventListener('change', handleImportFile);
+
+  // v3.20.25: Import Paket Link
+  const linkpackBtn = document.getElementById('rf-set-import-linkpack');
+  const linkpackFile = document.getElementById('rf-linkpack-file');
+  if (linkpackBtn) {
+    linkpackBtn.addEventListener('click', () => {
+      if (linkpackFile) {
+        linkpackFile.value = ''; // reset supaya bisa re-pick file yang sama
+        linkpackFile.click();
+      }
+    });
+  }
+  if (linkpackFile) {
+    linkpackFile.addEventListener('change', handleLinkPackFile);
+  }
 }
 
 async function exportBackup(encrypted) {
@@ -1876,4 +1893,187 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => setTimeout(initSidebarSyncRedirect, 200));
 } else {
   setTimeout(initSidebarSyncRedirect, 200);
+}
+
+// ============================================================
+// v3.20.25: Import Paket Link — handler + UI preview/modal
+// ============================================================
+
+async function handleLinkPackFile(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  // Baca + validasi manifest
+  const result = await readLinkPackFile(file);
+  if (!result.ok) {
+    showLinkPackError('Manifest tidak valid:', result.errors);
+    return;
+  }
+
+  const pack = result.pack;
+
+  // Cek duplikasi
+  const alreadyImported = await hasImportedPack(pack.packId);
+  if (alreadyImported) {
+    showLinkPackDuplicateModal(pack);
+  } else {
+    showLinkPackPreviewModal(pack, { asCopy: false });
+  }
+}
+
+function showLinkPackError(title, errors) {
+  const container = document.getElementById('rf-linkpack-preview');
+  if (!container) {
+    alert(title + '\n\n' + errors.join('\n'));
+    return;
+  }
+  const errList = errors.map(er => '<li>' + escapeHtml(er) + '</li>').join('');
+  container.innerHTML = `
+    <div class="rf-linkpack-modal" role="dialog" aria-modal="true">
+      <div class="rf-linkpack-modal-inner">
+        <div class="rf-linkpack-modal-hd">
+          <h3>⚠️ ${escapeHtml(title)}</h3>
+        </div>
+        <div class="rf-linkpack-modal-body">
+          <p>File tidak bisa diimpor karena:</p>
+          <ul class="rf-linkpack-errors">${errList}</ul>
+        </div>
+        <div class="rf-linkpack-modal-ft">
+          <button class="rf-btn rf-btn-secondary" id="rf-linkpack-close-error">Tutup</button>
+        </div>
+      </div>
+    </div>
+  `;
+  container.style.display = 'block';
+  const closeBtn = document.getElementById('rf-linkpack-close-error');
+  if (closeBtn) closeBtn.addEventListener('click', () => { container.style.display = 'none'; container.innerHTML = ''; });
+}
+
+function showLinkPackDuplicateModal(pack) {
+  const container = document.getElementById('rf-linkpack-preview');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="rf-linkpack-modal" role="dialog" aria-modal="true">
+      <div class="rf-linkpack-modal-inner">
+        <div class="rf-linkpack-modal-hd">
+          <h3>📦 Paket ini sudah pernah diimpor</h3>
+        </div>
+        <div class="rf-linkpack-modal-body">
+          <p>Paket <b>${escapeHtml(pack.name)}</b> (packId: <code>${escapeHtml(pack.packId)}</code>) sudah ada di Vault Anda.</p>
+          <p class="rf-linkpack-hint">Pilih <b>"Import sebagai Salinan"</b> untuk membuat folder baru dengan suffix <code>(Salinan)</code>.</p>
+        </div>
+        <div class="rf-linkpack-modal-ft">
+          <button class="rf-btn rf-btn-secondary" id="rf-linkpack-dup-cancel">Batal</button>
+          <button class="rf-btn rf-btn-primary" id="rf-linkpack-dup-copy">Import sebagai Salinan</button>
+        </div>
+      </div>
+    </div>
+  `;
+  container.style.display = 'block';
+  document.getElementById('rf-linkpack-dup-cancel').addEventListener('click', () => {
+    container.style.display = 'none'; container.innerHTML = '';
+  });
+  document.getElementById('rf-linkpack-dup-copy').addEventListener('click', async () => {
+    container.style.display = 'none'; container.innerHTML = '';
+    showLinkPackPreviewModal(pack, { asCopy: true });
+  });
+}
+
+function showLinkPackPreviewModal(pack, opts) {
+  const container = document.getElementById('rf-linkpack-preview');
+  if (!container) return;
+  const asCopy = !!(opts && opts.asCopy);
+  const folderNameDisplay = asCopy ? (pack.folder.name + ' (Salinan)') : pack.folder.name;
+  const folderColorBadge = pack.folder.color
+    ? `<span class="rf-linkpack-color" style="background:${escapeHtml(pack.folder.color)}"></span>`
+    : '';
+  const itemsHtml = pack.items.map((it, i) => `
+    <li class="rf-linkpack-item">
+      <span class="rf-linkpack-item-idx">${i + 1}.</span>
+      <span class="rf-linkpack-item-title">🔗 ${escapeHtml(it.title)}</span>
+      <span class="rf-linkpack-item-url">${escapeHtml(it.url)}</span>
+    </li>
+  `).join('');
+
+  const importLabel = asCopy ? 'Import sebagai Salinan' : 'Import Paket';
+
+  container.innerHTML = `
+    <div class="rf-linkpack-modal" role="dialog" aria-modal="true">
+      <div class="rf-linkpack-modal-inner">
+        <div class="rf-linkpack-modal-hd">
+          <h3>📦 Import Paket Link</h3>
+        </div>
+        <div class="rf-linkpack-modal-body">
+          <div class="rf-linkpack-meta">
+            <div><span class="rf-linkpack-label">Nama Paket:</span> <b>${escapeHtml(pack.name)}</b></div>
+            <div><span class="rf-linkpack-label">Versi:</span> ${escapeHtml(pack.version)}</div>
+            ${pack.description ? `<div><span class="rf-linkpack-label">Deskripsi:</span> ${escapeHtml(pack.description)}</div>` : ''}
+            <div><span class="rf-linkpack-label">Pack ID:</span> <code>${escapeHtml(pack.packId)}</code></div>
+          </div>
+          <div class="rf-linkpack-folder">
+            <div class="rf-linkpack-section-title">Folder yang akan dibuat:</div>
+            <div class="rf-linkpack-folder-name">${folderColorBadge}📁 ${escapeHtml(folderNameDisplay)}</div>
+          </div>
+          <div class="rf-linkpack-items">
+            <div class="rf-linkpack-section-title">Link yang akan ditambahkan (${pack.items.length}):</div>
+            <ul class="rf-linkpack-list">${itemsHtml}</ul>
+          </div>
+        </div>
+        <div class="rf-linkpack-modal-ft">
+          <button class="rf-btn rf-btn-secondary" id="rf-linkpack-cancel">Batal</button>
+          <button class="rf-btn rf-btn-primary" id="rf-linkpack-confirm">${escapeHtml(importLabel)}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  container.style.display = 'block';
+
+  document.getElementById('rf-linkpack-cancel').addEventListener('click', () => {
+    container.style.display = 'none'; container.innerHTML = '';
+  });
+
+  document.getElementById('rf-linkpack-confirm').addEventListener('click', async () => {
+    const confirmBtn = document.getElementById('rf-linkpack-confirm');
+    const cancelBtn = document.getElementById('rf-linkpack-cancel');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Mengimpor...'; }
+    if (cancelBtn) cancelBtn.disabled = true;
+
+    const result = await importLinkPack(pack, { asCopy });
+    if (result.ok) {
+      container.style.display = 'none'; container.innerHTML = '';
+      showToast('✓ Paket "' + pack.name + '" berhasil diimpor (' + result.itemCount + ' link).', true);
+      // Reload vault data supaya statistik update
+      try { currentVault = await getVault(); } catch (e) {}
+    } else {
+      showToast('⚠ Gagal import: ' + (result.error || 'unknown'), false);
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = importLabel; }
+      if (cancelBtn) cancelBtn.disabled = false;
+    }
+  });
+}
+
+// Helper: escape HTML supaya safe render — reuse escapeHtml() yang sudah ada di file ini
+// (defined at line ~1613). Tidak perlu redefine.
+
+// Helper: toast notifikasi — pakai toast() yang sudah ada di settings.js (line ~1619).
+// Wrapper showToast(msg, isOk) supaya bisa set warna berdasarkan success/error.
+function showToast(msg, isOk) {
+  // Pakai toast() bawaan kalau ada
+  if (typeof toast === 'function') {
+    toast(msg);
+    return;
+  }
+  // Fallback: buat element toast temporary
+  let t = document.getElementById('rf-linkpack-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'rf-linkpack-toast';
+    t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1c1917;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:90vw;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background = isOk === false ? '#b91c1c' : '#0f766e';
+  t.style.display = 'block';
+  clearTimeout(window._rfLinkPackToastTimer);
+  window._rfLinkPackToastTimer = setTimeout(() => { t.style.display = 'none'; }, 4000);
 }

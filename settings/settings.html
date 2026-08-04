@@ -1299,6 +1299,31 @@
       </div>
     </section>
 
+    <!-- v3.20.25: Import Paket Link -->
+    <section class="rf-section">
+      <h2>📦 Paket Link</h2>
+      <p class="rf-section-desc">
+        Import folder dan shortcut link ke Vault RecallFox dari satu file JSON paket
+        (<code>.recallfox-pack.json</code> atau <code>.json</code>).
+        Folder baru + item link akan muncul di tab <b>Link</b> Vault.
+      </p>
+
+      <div class="rf-row">
+        <div class="rf-row-label">
+          <div class="rf-row-title">Import Paket Link</div>
+          <div class="rf-row-desc">
+            Pilih file JSON manifest paket. Akan dibuat 1 folder + sejumlah item link
+            (maksimal 100 item per paket).
+          </div>
+        </div>
+        <button id="rf-set-import-linkpack" class="rf-btn rf-btn-secondary">Import Paket Link</button>
+        <input type="file" id="rf-linkpack-file" accept=".json,.recallfox-pack.json,application/json" style="display:none" />
+      </div>
+
+      <!-- Preview modal — diisi dinamis oleh settings.js -->
+      <div id="rf-linkpack-preview" class="rf-linkpack-preview" style="display:none;"></div>
+    </section>
+
     <!-- Statistics -->
     <section class="rf-section">
       <h2>Statistik Penggunaan</h2>
