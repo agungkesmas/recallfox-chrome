@@ -4,11 +4,11 @@ Port dari Firefox addon [RecallFox](https://github.com/agungkesmas/recallfox) ke
 
 ## Status
 
-✅ **Stable v3.20.20** — full parity dengan Firefox v3.20.20-stable. Port fitur: Popout Sidebar, OmniRouter provider, Relay Point (snapshot → HANDOVER REPORT via AI, format 6-section dengan adaptive skip empty sections), dual anchor (jawaban AI terakhir + pertanyaan terakhir yang memicu).
+✅ **Stable v3.20.24** — full parity dengan Firefox v3.20.24-stable. Port fitur: Popout Sidebar, OmniRouter provider, Relay Point (snapshot → HANDOVER REPORT via AI, format 6-section dengan adaptive skip empty sections), dual anchor (jawaban AI terakhir + pertanyaan terakhir yang memicu).
 
-**Download:** [recallfox-chrome-v3.20.20.zip](https://github.com/agungkesmas/recallfox-chrome/releases/download/v3.20.20-chrome-stable/recallfox-chrome-v3.20.20.zip) — extract, lalu `chrome://extensions` → Developer mode → Load unpacked.
+**Download:** [recallfox-chrome-v3.20.24.zip](https://github.com/agungkesmas/recallfox-chrome/releases/download/v3.20.24-chrome-stable/recallfox-chrome-v3.20.24.zip) — extract, lalu `chrome://extensions` → Developer mode → Load unpacked.
 
-Latest release: [v3.20.20-chrome-stable](https://github.com/agungkesmas/recallfox-chrome/releases/tag/v3.20.20-chrome-stable)
+Latest release: [v3.20.24-chrome-stable](https://github.com/agungkesmas/recallfox-chrome/releases/tag/v3.20.24-chrome-stable)
 
 ## Perbedaan dari Firefox Addon
 
