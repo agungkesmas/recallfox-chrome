@@ -4662,6 +4662,64 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // v3.20.34-dev: RF_ASSISTANT_FETCH — relay fetch API call dari iframe popout sidebar.
+  // Root cause "NetworkError when attempting to fetch resource" di popout sidebar
+  // (iframe cross-origin): browser block fetch external API dari iframe extension page.
+  // Background Service Worker punya akses penuh ke network tanpa iframe restriction.
+  // chat() di lib/assistant.js auto-detect iframe context + relay via background.
+  if (msg.type === 'RF_ASSISTANT_FETCH') {
+    (async () => {
+      try {
+        const { url, method, headers, body, stream } = msg;
+        if (!url) { sendResponse({ ok: false, error: 'no_url' }); return; }
+
+        // Background fetch — punya akses penuh ke network (host_permissions <all_urls>)
+        const res = await fetch(url, {
+          method: method || 'POST',
+          headers: headers || { 'Content-Type': 'application/json' },
+          body: body || undefined
+        });
+
+        if (!res.ok) {
+          const errText = await res.text().catch(() => '');
+          let errMsg = `HTTP ${res.status}`;
+          try {
+            const err = JSON.parse(errText);
+            errMsg = err.error?.message || err.message || errMsg;
+          } catch (e) {
+            errMsg = errText.slice(0, 200) || errMsg;
+          }
+          sendResponse({ ok: false, error: errMsg, status: res.status });
+          return;
+        }
+
+        // Non-streaming: return JSON
+        if (!stream) {
+          const data = await res.json();
+          sendResponse({ ok: true, data });
+          return;
+        }
+
+        // Streaming: collect full text (relay tidak support real-time SSE ke iframe)
+        // Trade-off: user tidak lihat token-by-token streaming, tapi response lengkap tetap sampai.
+        const text = await res.text();
+        sendResponse({ ok: true, text });
+      } catch (e) {
+        console.error('[RecallFox/bg] RF_ASSISTANT_FETCH failed:', e.message);
+        const errMsg = e.message || '';
+        const isNetworkErr = errMsg.toLowerCase().includes('network') ||
+                             errMsg.toLowerCase().includes('failed to fetch') ||
+                             e.name === 'TypeError';
+        sendResponse({
+          ok: false,
+          error: isNetworkErr ? `NETWORK_ERROR: ${errMsg}` : errMsg,
+          isNetworkError: isNetworkErr
+        });
+      }
+    })();
+    return true;  // async response
+  }
+
   // v3.20.9: RF_FORWARD_TO_ACTIVE_TAB — forward message from content script
   // to active tab's content script. Used by sidebar-cs.js (popout) to send
   // OPEN_TAPE to tape-cs.js. Content scripts don't have browser.tabs access.
