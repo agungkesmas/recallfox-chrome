@@ -1743,7 +1743,15 @@ function wireVaultEvents() {
     if (dropzoneEl) {
       const item = currentVault?.items?.find(i => i.id === draggedItemId);
       if (item && getParentId(item)) {
-        dropzoneEl.style.display = '';
+        // v3.20.35-dev-chrome: Pakai requestAnimationFrame supaya layout settle
+        // sebelum Chrome coba register dropzone sebagai drop target.
+        // Sebelumnya: set display='' langsung → Chrome kadang "lose track" drop
+        // target karena element baru saja di-show during dragstart.
+        requestAnimationFrame(() => {
+          if (draggedItemId) {  // cek lagi — user mungkin sudah batal drag
+            dropzoneEl.style.display = '';
+          }
+        });
       }
     }
   });
@@ -1753,7 +1761,10 @@ function wireVaultEvents() {
     const itemEl = e.target.closest('.item');
     if (itemEl) itemEl.style.opacity = '';
     draggedItemId = null;
-    if (dropzoneEl) dropzoneEl.style.display = 'none';
+    if (dropzoneEl) {
+      dropzoneEl.style.display = 'none';
+      dropzoneEl.classList.remove('drag-over');
+    }
   });
 
   // Drag over group — highlight
@@ -1785,17 +1796,60 @@ function wireVaultEvents() {
     }
   });
 
-  // Dropzone (unparent)
+  // Dropzone (unparent) — v3.20.35-dev-chrome: Fix DnD drop gagal di Chrome
+  //
+  // Root cause (Chrome vs Firefox):
+  // 1. Chrome BUTUH `dragenter` handler yang preventDefault() untuk "register"
+  //    element sebagai valid drop target. Firefox cukup `dragover` saja.
+  //    Sebelumnya: hanya `dragover` + `drop` → Chrome tidak fire `drop`.
+  // 2. Dropzone di-show saat dragstart (display:none → display:''). Chrome
+  //    kadang "lose track" drop target kalau display berubah during drag.
+  //    Fix: tambah dragenter + beri small delay supaya layout settle.
+  // 3. Race condition: `draggedItemId` bisa null kalau dragstart dari luar
+  //    extension context (mis. cross-frame). Fallback: baca dataTransfer.
+  // 4. Visual feedback (.drag-over class) tidak pernah di-add → user tidak
+  //    tahu dropzone aktif. Fix: add/remove class di dragenter/dragleave.
   if (dropzoneEl) {
-    dropzoneEl.addEventListener('dragover', (e) => {
-      if (!draggedItemId) return;
+    // v3.20.35-dev-chrome: dragenter WAJIB di Chrome untuk register drop target
+    dropzoneEl.addEventListener('dragenter', (e) => {
+      // Cek draggedItemId (in-process) ATAU dataTransfer punya data (cross-frame)
+      let itemId = draggedItemId;
+      if (!itemId) {
+        try { itemId = e.dataTransfer?.getData('text/plain') || null; } catch (_) {}
+      }
+      if (!itemId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
+      dropzoneEl.classList.add('drag-over');
+    });
+    dropzoneEl.addEventListener('dragover', (e) => {
+      let itemId = draggedItemId;
+      if (!itemId) {
+        try { itemId = e.dataTransfer?.getData('text/plain') || null; } catch (_) {}
+      }
+      if (!itemId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      // Pertahankan visual feedback (dragover fire berulang, dragenter hanya sekali)
+      dropzoneEl.classList.add('drag-over');
+    });
+    dropzoneEl.addEventListener('dragleave', (e) => {
+      // Hanya remove class kalau benar-benar keluar dari dropzone
+      // (dragleave fire saat child element exit — cek relatedTarget)
+      if (e.relatedTarget && dropzoneEl.contains(e.relatedTarget)) return;
+      dropzoneEl.classList.remove('drag-over');
     });
     dropzoneEl.addEventListener('drop', (e) => {
-      if (!draggedItemId) return;
       e.preventDefault();
-      moveItemToGroup(draggedItemId, null);
+      e.stopPropagation();
+      dropzoneEl.classList.remove('drag-over');
+      // Fallback: kalau draggedItemId null (race condition), baca dari dataTransfer
+      let itemId = draggedItemId;
+      if (!itemId) {
+        try { itemId = e.dataTransfer?.getData('text/plain') || null; } catch (_) {}
+      }
+      if (!itemId) return;
+      moveItemToGroup(itemId, null);
     });
   }
 }
