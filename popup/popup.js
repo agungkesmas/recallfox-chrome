@@ -25,6 +25,8 @@ import { AI_TOOLS, groupByRegion, matchCurrentTool, getEffectiveTools, getVisibl
 import { getAllToppings, buildFinalPrompt } from '../lib/toppings.js';
 import { getNextPrayerIncludingSunnah, getLastPassedPrayer, getSunnahPrayers, formatCountdown, to12Hour } from '../lib/salahtime.js';
 import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGroup } from '../lib/vault-tree.js';
+// v3.20.32: Magic Command — natural language move items to folder + folder archive
+import { parseMagicCommand, applyMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
@@ -1879,6 +1881,206 @@ async function handleAddGroup() {
 
 let _magicFolderRegenerateCount = 0;  // v3.20.30: state untuk regenerate
 let _magicFolderUserInstruction = '';  // v3.20.31: state untuk user instruction
+
+// v3.20.32: Magic Command — ketik perintah natural language untuk pindahkan item ke folder.
+// User bisa bilang: "pindahkan link MDN ke folder Referensi" atau "bikin folder Coding,
+// masukkan prompt Express + Vue ke situ".
+async function handleMagicCommand() {
+  if (!currentVault?.items?.length) { toast('Vault kosong', false); return; }
+  const looseItems = currentVault.items.filter(i => !isGroupItem(i) && !i.archived);
+  if (looseItems.length < 1) {
+    toast('Tidak ada item loose untuk dipindahkan', false);
+    return;
+  }
+  const { isAssistantConfigured } = await import('../lib/assistant.js');
+  if (!(await isAssistantConfigured())) {
+    toast('⚠ Setup AI Assistant dulu di Pengaturan → AI Assistant', false);
+    return;
+  }
+  showMagicCommandModal();
+}
+
+function showMagicCommandModal() {
+  closeMagicFolderModal();
+  const modal = document.createElement('div');
+  modal.id = 'rf-magicfolder-modal';
+  modal.className = 'rf-magicfolder-overlay';
+  modal.innerHTML = `
+    <div class="rf-magicfolder-dialog">
+      <div class="rf-magicfolder-hd">
+        <h3>💬 Magic Command</h3>
+        <button class="rf-magicfolder-close" id="rfMagicCmdCancel" title="Batal">×</button>
+      </div>
+      <div class="rf-magicfolder-body">
+        <p class="rf-magicfolder-summary">
+          Ketik perintah natural language. AI akan cari item yang cocok + folder tujuan, lalu pindahkan otomatis.
+        </p>
+        <div class="rf-magicfolder-cmd-section">
+          <textarea
+            id="rfMagicCmdInput"
+            class="rf-magicfolder-instr-textarea"
+            rows="4"
+            placeholder="Contoh: Pindahkan link MDN dan GitHub Docs ke folder Referensi. Atau: Bikin folder Coding, masukkan prompt Express + Vue ke situ."
+          ></textarea>
+          <div class="rf-magicfolder-cmd-examples">
+            <div class="rf-magicfolder-cmd-examples-title">💡 Contoh perintah:</div>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Pindahkan semua link ke folder Link">Pindahkan semua link ke folder Link</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Bikin folder Coding, masukkan semua prompt tentang programming">Bikin folder Coding + semua prompt programming</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Masukkan snapshot AI ke folder Snapshot AI">Masukkan snapshot AI ke folder Snapshot AI</button>
+          </div>
+        </div>
+      </div>
+      <div class="rf-magicfolder-ft">
+        <button class="btn btn-g" id="rfMagicCmdCancelBtn">Batal</button>
+        <button class="btn btn-p" id="rfMagicCmdExecute">🪄 Eksekusi Perintah</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const cancel = () => closeMagicFolderModal();
+  document.getElementById('rfMagicCmdCancel').addEventListener('click', cancel);
+  document.getElementById('rfMagicCmdCancelBtn').addEventListener('click', cancel);
+
+  document.querySelectorAll('.rf-magicfolder-cmd-example').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = document.getElementById('rfMagicCmdInput');
+      if (input) input.value = btn.dataset.cmd || '';
+      input?.focus();
+    });
+  });
+
+  document.getElementById('rfMagicCmdExecute').addEventListener('click', async () => {
+    const input = document.getElementById('rfMagicCmdInput');
+    const cmd = (input?.value || '').trim();
+    if (cmd.length < 3) {
+      toast('⚠ Ketik perintah minimal 3 karakter', false);
+      return;
+    }
+    await executeMagicCommand(cmd);
+  });
+}
+
+async function executeMagicCommand(command) {
+  const execBtn = document.getElementById('rfMagicCmdExecute');
+  const cancelBtn = document.getElementById('rfMagicCmdCancelBtn');
+  if (execBtn) { execBtn.disabled = true; execBtn.textContent = '⏳ AI mencari...'; }
+  if (cancelBtn) cancelBtn.disabled = true;
+
+  try {
+    const { chatWithFallback } = await import('../lib/assistant.js');
+    const allItems = currentVault.items.filter(i => !i.archived);
+    const result = await parseMagicCommand(allItems, chatWithFallback, command);
+    if (!result.ok) {
+      const errMap = {
+        'command_too_short': 'Perintah terlalu pendek',
+        'no_items_to_move': 'AI tidak menemukan item yang cocok dengan perintah',
+        'no_valid_item_ids': 'Item yang AI pilih tidak valid',
+        'no_valid_json_in_response': 'AI tidak return JSON valid. Coba lagi.',
+        'missing_folder_name': 'AI tidak menentukan folder tujuan',
+        'too_few_items': 'Vault kosong'
+      };
+      toast('⚠ ' + (errMap[result.error] || result.error), false);
+      if (execBtn) { execBtn.disabled = false; execBtn.textContent = '🪄 Eksekusi Perintah'; }
+      if (cancelBtn) cancelBtn.disabled = false;
+      return;
+    }
+    closeMagicFolderModal();
+    showMagicCommandConfirmModal(result.plan, allItems);
+  } catch (e) {
+    toast('⚠ Gagal: ' + e.message, false);
+    console.error('[RecallFox/MagicCmd] executeMagicCommand failed:', e);
+    if (execBtn) { execBtn.disabled = false; execBtn.textContent = '🪄 Eksekusi Perintah'; }
+    if (cancelBtn) cancelBtn.disabled = false;
+  }
+}
+
+function showMagicCommandConfirmModal(plan, allItems) {
+  closeMagicFolderModal();
+
+  const itemLookup = new Map();
+  allItems.forEach(it => itemLookup.set(it.id, it));
+
+  const itemPills = plan.itemIds.slice(0, 10).map(id => {
+    const it = itemLookup.get(id);
+    if (!it) return '';
+    const typeIcon = it.type === 'link' ? '🔗' : it.type === 'prompt' ? '✨' : it.type === 'context' ? '📦' : it.type === 'snapshot' ? '📸' : '📄';
+    return `<span class="rf-magicfolder-item-pill">${typeIcon} ${esc((it.title || 'Untitled').slice(0, 30))}</span>`;
+  }).join('');
+  const morePill = plan.itemIds.length > 10 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${plan.itemIds.length - 10} lainnya</span>` : '';
+
+  const folderIcon = plan.action === 'create-and-move' ? '📁+' : '📁';
+  const actionLabel = plan.action === 'create-and-move' ? 'Buat folder baru + pindahkan' : 'Pindahkan ke folder existing';
+
+  const unmatchedHtml = plan.unmatched && plan.unmatched.length > 0
+    ? `<div class="rf-magicfolder-unmatched">⚠ Query tidak match: ${plan.unmatched.map(u => esc(u)).join(', ')}</div>`
+    : '';
+
+  const modal = document.createElement('div');
+  modal.id = 'rf-magicfolder-modal';
+  modal.className = 'rf-magicfolder-overlay';
+  modal.innerHTML = `
+    <div class="rf-magicfolder-dialog">
+      <div class="rf-magicfolder-hd">
+        <h3>💬 Konfirmasi Perintah</h3>
+        <button class="rf-magicfolder-close" id="rfMagicCmdConfirmCancel" title="Batal">×</button>
+      </div>
+      <div class="rf-magicfolder-body">
+        <p class="rf-magicfolder-summary">
+          AI akan <b>${actionLabel}</b>:
+        </p>
+        <div class="rf-magicfolder-groups">
+          <div class="rf-magicfolder-group">
+            <div class="rf-magicfolder-group-hd">
+              <span class="rf-magicfolder-folder-icon">${folderIcon}</span>
+              <span class="rf-magicfolder-folder-name">${esc(plan.folderName)}</span>
+              <span class="rf-magicfolder-folder-count">${plan.itemIds.length} item</span>
+            </div>
+            ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
+            <div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>
+          </div>
+        </div>
+        ${unmatchedHtml}
+      </div>
+      <div class="rf-magicfolder-ft">
+        <button class="btn btn-g" id="rfMagicCmdConfirmCancelBtn">Batal</button>
+        <button class="btn btn-p" id="rfMagicCmdConfirmApply">✓ Jalankan</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const cancel = () => closeMagicFolderModal();
+  document.getElementById('rfMagicCmdConfirmCancel').addEventListener('click', cancel);
+  document.getElementById('rfMagicCmdConfirmCancelBtn').addEventListener('click', cancel);
+
+  document.getElementById('rfMagicCmdConfirmApply').addEventListener('click', async () => {
+    const applyBtn = document.getElementById('rfMagicCmdConfirmApply');
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = '⏳ Menjalankan...'; }
+    try {
+      const groupType = (currentChip === 'all' || currentChip === 'archive') ? 'prompt' : currentChip;
+      const result = await applyMagicCommand(currentVault.items, plan, groupType);
+      if (result.ok) {
+        closeMagicFolderModal();
+        toast(`✓ ${plan.itemIds.length} item dipindahkan ke "${plan.folderName}"`);
+        await refreshVault();
+        renderChips();
+        renderList();
+        if (result.folderId && !expandedGroupIds.includes(result.folderId)) {
+          expandedGroupIds.push(result.folderId);
+          renderList();
+        }
+      } else {
+        toast('⚠ Gagal: ' + (result.error || 'unknown'), false);
+        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ Jalankan'; }
+      }
+    } catch (e) {
+      toast('⚠ Gagal: ' + e.message, false);
+      console.error('[RecallFox/MagicCmd] apply failed:', e);
+      if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ Jalankan'; }
+    }
+  });
+}
 
 async function handleAiAutoGroup() {
   if (!currentVault?.items?.length) { toast('Vault kosong', false); return; }
@@ -4034,6 +4236,10 @@ function itemSheet(id) {
         + '<button class="act" data-a="folder-color">' + ICONS.dots + '<div>🎨 Warna Folder<div class="ad">Pilih warna untuk folder</div></div></button>'
         + '<button class="act" data-a="move-folder">' + ICONS.clipA + '<div>📂 Pindahkan Folder ke...<div class="ad">Pindahkan folder ini ke folder lain</div></div></button>'
         + '<button class="act" data-a="expand-all">' + ICONS.dots + '<div>📂 Buka semua child<div class="ad">Tampilkan semua item di dalam folder</div></div></button>'
+        // v3.20.32: Archive/Restore folder — recursive (folder + semua descendant)
+        + (it.archived
+          ? '<button class="act" data-a="restore-folder">' + ICONS.archive + '<div>📤 Restore Folder<div class="ad">Keluarkan folder + isinya dari arsip. Parent folder tetap sama.</div></div></button>'
+          : '<button class="act" data-a="archive-folder">' + ICONS.archive + '<div>📦 Arsipkan Folder<div class="ad">Folder + ' + childCount + ' item disembunyikan. Bisa di-restore nanti, parent folder tetap sama.</div></div></button>')
         + (childCount > 0 ? '<button class="act" data-a="unparent-all">' + ICONS.clipA + '<div>📤 Keluarkan semua item<div class="ad">' + childCount + ' item jadi top-level, folder tetap ada</div></div></button>' : '')
         + '<button class="act danger" data-a="del-group">' + ICONS.trash + '<div>🗑️ Hapus Folder<div class="ad">' + (childCount > 0 ? childCount + ' item di dalamnya akan jadi top-level' : 'Folder kosong akan dihapus') + '</div></div></button>';
       b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
@@ -4086,6 +4292,37 @@ function itemSheet(id) {
             await refreshVault();
             toast('🗑️ Folder dihapus' + (children.length > 0 ? ' · ' + children.length + ' item jadi top-level' : ''));
           });
+        }
+        // v3.20.32: Archive folder recursive (folder + semua descendant)
+        else if (k === 'archive-folder') {
+          b.innerHTML = '<div class="confirmstrip"><span style="flex:1">Arsipkan folder <b>' + esc((it.title || '').slice(0, 24)) + '</b> + semua isinya?</span>'
+            + '<button class="btn btn-g" data-c="0">Batal</button><button class="btn btn-p" data-c="1">📦 Arsipkan</button></div>';
+          b.querySelector('[data-c="0"]').addEventListener('click', closeSheet);
+          b.querySelector('[data-c="1"]').addEventListener('click', async () => {
+            try {
+              const result = await archiveFolderRecursive(currentVault.items, it.id);
+              closeSheet();
+              await refreshVault();
+              if (currentChip !== 'archive') currentChip = 'all';
+              renderChips();
+              toast('📦 Folder diarsipkan · ' + result.archivedCount + ' item disembunyikan');
+            } catch (e) {
+              toast('⚠ Gagal arsip folder: ' + e.message, false);
+            }
+          });
+        }
+        // v3.20.32: Restore folder recursive
+        else if (k === 'restore-folder') {
+          closeSheet();
+          (async () => {
+            try {
+              const result = await unarchiveFolderRecursive(currentVault.items, it.id);
+              await refreshVault();
+              toast('📤 Folder di-restore · ' + result.restoredCount + ' item kembali. Parent folder tetap sama.');
+            } catch (e) {
+              toast('⚠ Gagal restore folder: ' + e.message, false);
+            }
+          })();
         }
       }));
     });
@@ -9478,6 +9715,9 @@ function bindEvents() {
   const aiGroupBtnEl = $('#aiGroupBtn');
   if (addGroupBtnEl) addGroupBtnEl.addEventListener('click', handleAddGroup);
   if (aiGroupBtnEl) aiGroupBtnEl.addEventListener('click', handleAiAutoGroup);
+  // v3.20.32: Magic Command button — ketik perintah natural language
+  const magicCommandBtnEl = $('#magicCommandBtn');
+  if (magicCommandBtnEl) magicCommandBtnEl.addEventListener('click', handleMagicCommand);
   // v3.19.0: Sort dropdown + Collapse All + Tag Filter
   const vaultSortSelect = $('#vaultSortSelect');
   if (vaultSortSelect) {
