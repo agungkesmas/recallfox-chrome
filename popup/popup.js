@@ -1923,10 +1923,13 @@ function showMagicCommandModal() {
             placeholder="Contoh: Pindahkan link MDN dan GitHub Docs ke folder Referensi. Atau: Bikin folder Coding, masukkan prompt Express + Vue ke situ."
           ></textarea>
           <div class="rf-magicfolder-cmd-examples">
-            <div class="rf-magicfolder-cmd-examples-title">💡 Contoh perintah:</div>
-            <button class="rf-magicfolder-cmd-example" data-cmd="Pindahkan semua link ke folder Link">Pindahkan semua link ke folder Link</button>
-            <button class="rf-magicfolder-cmd-example" data-cmd="Bikin folder Coding, masukkan semua prompt tentang programming">Bikin folder Coding + semua prompt programming</button>
-            <button class="rf-magicfolder-cmd-example" data-cmd="Masukkan snapshot AI ke folder Snapshot AI">Masukkan snapshot AI ke folder Snapshot AI</button>
+            <div class="rf-magicfolder-cmd-examples-title">💡 Contoh perintah (klik untuk pakai):</div>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Pindahkan semua link ke folder Link">📁 Pindahkan semua link ke folder Link</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Bikin folder Coding, masukkan semua prompt tentang programming">📁+ Bikin folder Coding + semua prompt programming</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Arsipkan folder Lama">📦 Arsipkan folder Lama</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Restore folder Lama dari arsip">♻️ Restore folder Lama dari arsip</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Tambahkan tag favorit ke semua link">🏷️ Tambahkan tag favorit ke semua link</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Hapus tag lama dari semua prompt">🏷️ Hapus tag lama dari semua prompt</button>
           </div>
         </div>
       </div>
@@ -1969,7 +1972,10 @@ async function executeMagicCommand(command) {
 
   try {
     const { chatWithFallback } = await import('../lib/assistant.js');
-    const allItems = currentVault.items.filter(i => !i.archived);
+    // v3.20.33: Pass SEMUA items (termasuk archived) supaya AI bisa pilih archived folder
+    // untuk action "restore-folder". Filter !i.archived hanya dilakukan di parser untuk
+    // loose items + existing folders — archived folders tetap di-include sebagai context.
+    const allItems = currentVault.items || [];
     const result = await parseMagicCommand(allItems, chatWithFallback, command);
     if (!result.ok) {
       const errMap = {
@@ -1978,6 +1984,9 @@ async function executeMagicCommand(command) {
         'no_valid_item_ids': 'Item yang AI pilih tidak valid',
         'no_valid_json_in_response': 'AI tidak return JSON valid. Coba lagi.',
         'missing_folder_name': 'AI tidak menentukan folder tujuan',
+        'missing_tag_name': 'AI tidak menentukan nama tag',
+        'no_valid_folder_to_archive': 'Folder yang mau di-arsip tidak ditemukan',
+        'no_valid_archived_folder_to_restore': 'Folder archived tidak ditemukan',
         'too_few_items': 'Vault kosong'
       };
       toast('⚠ ' + (errMap[result.error] || result.error), false);
@@ -1995,22 +2004,87 @@ async function executeMagicCommand(command) {
   }
 }
 
+// v3.20.33: Confirm modal yang render berdasarkan action type (6 jenis)
 function showMagicCommandConfirmModal(plan, allItems) {
   closeMagicFolderModal();
 
   const itemLookup = new Map();
   allItems.forEach(it => itemLookup.set(it.id, it));
 
-  const itemPills = plan.itemIds.slice(0, 10).map(id => {
+  // Render item pills (untuk move/create-and-move/add-tag/remove-tag)
+  const itemPills = (plan.itemIds || []).slice(0, 10).map(id => {
     const it = itemLookup.get(id);
     if (!it) return '';
     const typeIcon = it.type === 'link' ? '🔗' : it.type === 'prompt' ? '✨' : it.type === 'context' ? '📦' : it.type === 'snapshot' ? '📸' : '📄';
     return `<span class="rf-magicfolder-item-pill">${typeIcon} ${esc((it.title || 'Untitled').slice(0, 30))}</span>`;
   }).join('');
-  const morePill = plan.itemIds.length > 10 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${plan.itemIds.length - 10} lainnya</span>` : '';
+  const morePill = (plan.itemIds || []).length > 10 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${plan.itemIds.length - 10} lainnya</span>` : '';
 
-  const folderIcon = plan.action === 'create-and-move' ? '📁+' : '📁';
-  const actionLabel = plan.action === 'create-and-move' ? 'Buat folder baru + pindahkan' : 'Pindahkan ke folder existing';
+  // v3.20.33: Build action-specific content
+  const actionLabels = {
+    'move': 'Pindahkan item ke folder existing',
+    'create-and-move': 'Buat folder baru + pindahkan item',
+    'archive-folder': 'Arsipkan folder + semua isinya',
+    'restore-folder': 'Restore folder dari arsip',
+    'add-tag': 'Tambahkan tag ke item',
+    'remove-tag': 'Hapus tag dari item'
+  };
+  const actionLabel = actionLabels[plan.action] || plan.action;
+
+  // Build content berdasarkan action type
+  let contentHtml = '';
+  if (plan.action === 'move' || plan.action === 'create-and-move') {
+    const folderIcon = plan.action === 'create-and-move' ? '📁+' : '📁';
+    const targetFolder = itemLookup.get(plan.folderId);
+    const folderDisplay = plan.folderName || targetFolder?.title || 'Folder';
+    contentHtml = `
+      <div class="rf-magicfolder-groups">
+        <div class="rf-magicfolder-group">
+          <div class="rf-magicfolder-group-hd">
+            <span class="rf-magicfolder-folder-icon">${folderIcon}</span>
+            <span class="rf-magicfolder-folder-name">${esc(folderDisplay)}</span>
+            <span class="rf-magicfolder-folder-count">${plan.itemIds.length} item</span>
+          </div>
+          ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
+          <div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>
+        </div>
+      </div>`;
+  } else if (plan.action === 'archive-folder' || plan.action === 'restore-folder') {
+    const targetFolder = itemLookup.get(plan.folderId);
+    const folderDisplay = targetFolder?.title || plan.folderName || 'Folder';
+    const icon = plan.action === 'archive-folder' ? '📦' : '♻️';
+    // Hitung berapa item yang akan ter-arsip/restore
+    const childCount = countFolderDescendants(allItems, plan.folderId);
+    const childLabel = childCount > 0 ? ` + ${childCount} item di dalamnya` : '';
+    contentHtml = `
+      <div class="rf-magicfolder-groups">
+        <div class="rf-magicfolder-group">
+          <div class="rf-magicfolder-group-hd">
+            <span class="rf-magicfolder-folder-icon">${icon}</span>
+            <span class="rf-magicfolder-folder-name">${esc(folderDisplay)}</span>
+            <span class="rf-magicfolder-folder-count">${childCount === 0 ? 'kosong' : childCount + ' item'}</span>
+          </div>
+          ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
+          <div class="rf-magicfolder-folder-items">
+            <span class="rf-magicfolder-item-pill">${icon} Folder + semua isi${childLabel}</span>
+          </div>
+        </div>
+      </div>`;
+  } else if (plan.action === 'add-tag' || plan.action === 'remove-tag') {
+    const icon = plan.action === 'add-tag' ? '🏷️+' : '🏷️−';
+    contentHtml = `
+      <div class="rf-magicfolder-groups">
+        <div class="rf-magicfolder-group">
+          <div class="rf-magicfolder-group-hd">
+            <span class="rf-magicfolder-folder-icon">${icon}</span>
+            <span class="rf-magicfolder-folder-name">Tag: ${esc(plan.tagName)}</span>
+            <span class="rf-magicfolder-folder-count">${plan.itemIds.length} item</span>
+          </div>
+          ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
+          <div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>
+        </div>
+      </div>`;
+  }
 
   const unmatchedHtml = plan.unmatched && plan.unmatched.length > 0
     ? `<div class="rf-magicfolder-unmatched">⚠ Query tidak match: ${plan.unmatched.map(u => esc(u)).join(', ')}</div>`
@@ -2029,17 +2103,7 @@ function showMagicCommandConfirmModal(plan, allItems) {
         <p class="rf-magicfolder-summary">
           AI akan <b>${actionLabel}</b>:
         </p>
-        <div class="rf-magicfolder-groups">
-          <div class="rf-magicfolder-group">
-            <div class="rf-magicfolder-group-hd">
-              <span class="rf-magicfolder-folder-icon">${folderIcon}</span>
-              <span class="rf-magicfolder-folder-name">${esc(plan.folderName)}</span>
-              <span class="rf-magicfolder-folder-count">${plan.itemIds.length} item</span>
-            </div>
-            ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
-            <div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>
-          </div>
-        </div>
+        ${contentHtml}
         ${unmatchedHtml}
       </div>
       <div class="rf-magicfolder-ft">
@@ -2062,11 +2126,24 @@ function showMagicCommandConfirmModal(plan, allItems) {
       const result = await applyMagicCommand(currentVault.items, plan, groupType);
       if (result.ok) {
         closeMagicFolderModal();
-        toast(`✓ ${plan.itemIds.length} item dipindahkan ke "${plan.folderName}"`);
+        // v3.20.33: Toast feedback per action type
+        let toastMsg = '';
+        if (plan.action === 'move' || plan.action === 'create-and-move') {
+          toastMsg = `✓ ${result.itemsMoved} item dipindahkan ke "${plan.folderName}"`;
+        } else if (plan.action === 'archive-folder') {
+          toastMsg = `📦 Folder di-arsipkan (${result.archivedCount} item disembunyikan)`;
+        } else if (plan.action === 'restore-folder') {
+          toastMsg = `♻️ Folder di-restore (${result.restoredCount} item kembali)`;
+        } else if (plan.action === 'add-tag') {
+          toastMsg = `🏷️ Tag "${plan.tagName}" ditambahkan ke ${result.itemsTagged} item`;
+        } else if (plan.action === 'remove-tag') {
+          toastMsg = `🏷️ Tag "${plan.tagName}" dihapus dari ${result.itemsUntagged} item`;
+        }
+        if (toastMsg) toast(toastMsg);
         await refreshVault();
         renderChips();
         renderList();
-        if (result.folderId && !expandedGroupIds.includes(result.folderId)) {
+        if (result.folderId && !expandedGroupIds.includes(result.folderId) && (plan.action === 'move' || plan.action === 'create-and-move' || plan.action === 'restore-folder')) {
           expandedGroupIds.push(result.folderId);
           renderList();
         }
@@ -2080,6 +2157,26 @@ function showMagicCommandConfirmModal(plan, allItems) {
       if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ Jalankan'; }
     }
   });
+}
+
+// v3.20.33: Helper — hitung berapa descendant (recursive) di sebuah folder
+function countFolderDescendants(items, folderId) {
+  if (!folderId) return 0;
+  let count = 0;
+  const visited = new Set();
+  function collect(id) {
+    if (visited.has(id)) return;
+    visited.add(id);
+    for (const it of items) {
+      if (it?.source?.parentId === id) {
+        count++;
+        // Kalau ini sub-folder, recurse
+        if (it.source.isGroup) collect(it.id);
+      }
+    }
+  }
+  collect(folderId);
+  return count;
 }
 
 async function handleAiAutoGroup() {
