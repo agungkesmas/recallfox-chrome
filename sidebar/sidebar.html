@@ -89,7 +89,7 @@
       <!-- v3.20.33 FIX: Magic Command button ada di popup.html tapi HILANG di sidebar.html
            → user yang pakai sidebar/popout tidak bisa akses fitur. Tambah tombol di sini. -->
       <button class="addbtn" id="magicCommandBtn" title="Ketik perintah — mis. 'pindahkan link MDN ke folder Referensi'">💬<span class="btn-text"> Perintah</span></button>
-      <button class="addbtn" id="addGroupBtn" title="Buat Folder/Grup Baru">📁+<span class="btn-text"> Grup</span></button>
+      <button class="addbtn" id="addGroupBtn" title="Buat Folder Baru">📁+<span class="btn-text"> Folder</span></button>
       <select id="vaultSortSelect" title="Urutkan" style="font-size:11px;padding:4px 8px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;outline:none">
         <option value="recent">Terbaru</option>
         <option value="name">Nama A-Z</option>
@@ -111,6 +111,9 @@
       <button class="btn btn-p" id="vaultBatchCopyText" title="Copy teks item (prompt/konteks/link/snapshot)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Teks</button>
       <button class="btn btn-p" id="vaultBatchCopyBundle" title="Copy bundle (gabungan semua anggota)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Bundle</button>
       <button class="btn btn-g" id="vaultBatchUnarchive" title="Keluarkan item dari arsip" style="display:none;padding:4px 8px;font-size:11px">📦 Unarsip</button>
+      <button class="btn btn-g" id="vaultBatchMoveFolder" title="Pindahkan semua item terpilih ke folder" style="display:none;padding:4px 8px;font-size:11px">📂 Pindah ke Folder</button>
+      <button class="btn btn-g" id="vaultBatchArchive" title="Arsipkan semua item terpilih" style="display:none;padding:4px 8px;font-size:11px">📦 Arsipkan</button>
+      <button class="btn btn-g" id="vaultBatchBundle" title="Tambahkan semua item terpilih ke bundle" style="display:none;padding:4px 8px;font-size:11px">📦 Tambah ke Bundle</button>
       <button class="btn btn-d" id="vaultBatchDelete" title="Hapus item terpilih dari vault" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
       <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
@@ -316,9 +319,8 @@
 </div>
 
 <input type="file" id="screenshotFileInput" accept="image/*" style="display:none" />
+<input type="file" id="docFileInput" accept=".md,.markdown,.txt,.json,.html,.htm,.csv,.yaml,.yml" multiple style="display:none" />
 
-<!-- Chrome MV3: Load polyfill SEBELUM module scripts supaya browser.* tersedia -->
-<script src="../lib/browser-polyfill.min.js"></script>
 <script type="module" src="sidebar.js"></script>
 </body>
 </html>

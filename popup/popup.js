@@ -26,7 +26,7 @@ import { getAllToppings, buildFinalPrompt } from '../lib/toppings.js';
 import { getNextPrayerIncludingSunnah, getLastPassedPrayer, getSunnahPrayers, formatCountdown, to12Hour } from '../lib/salahtime.js';
 import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGroup } from '../lib/vault-tree.js';
 // v3.20.32: Magic Command — natural language move items to folder + folder archive
-import { parseMagicCommand, applyMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
+import { parseMagicCommand, parseMultiStepCommand, applyMagicCommand, applyMultiStepMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
@@ -298,7 +298,8 @@ const TYPE = {
   bundle: { label: 'Bundle', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3.3 8.3 12 13l8.7-4.7M12 22V13"/></svg>' },
   // v3.12.0 (Fase 7): Tipe dokumen multi-halaman (CamScanner-like, dibuat di PWA v1.4.0+).
   // Tampil di chip "Media" bersama screenshot (dimerge via visibleItems/chipCount).
-  document: { label: 'Dokumen', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>' }
+  document: { label: 'Dokumen', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>' },
+  file: { label: 'File', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>' }
 };
 
 // ============ Toast ============
@@ -704,9 +705,9 @@ function getVaultItems() {
     id: b.id, type: 'bundle', title: b.name || 'Bundle', tags: ['bundle'],
     uses: b.useCount || 0, _bundle: b
   }));
-  // v3.20.38-dev-chrome: Dedup by ID — defense-in-depth supaya list view tidak
-  //   tampilkan duplikat meskipun storage layer masih punya (e.g. data lama
-  //   sebelum fix, atau realtime race yang lolos). Port dari Firefox v3.20.39-dev.
+  // v3.20.39: Dedup by ID — defense-in-depth supaya list view tidak tampilkan
+  //   duplikat meskipun storage layer masih punya (e.g. data lama sebelum fix).
+  //   Kalau ada ID sama, keep yang pertama (sudah di-sort by recency di caller).
   const seen = new Set();
   const merged = [...items, ...bundles];
   const deduped = merged.filter(it => {
@@ -890,24 +891,34 @@ function updateVaultBatchBarButtons() {
   const copyBundleBtn = $('#vaultBatchCopyBundle');   // Copy Bundle (bundle only)
   const unarchiveBtn = $('#vaultBatchUnarchive');     // Unarsip (archive only)
   const deleteBtn = $('#vaultBatchDelete');           // Hapus (semua)
+  // v3.20.43: Batch mass actions — Move to Folder, Archive, Add to Bundle
+  const moveFolderBtn = $('#vaultBatchMoveFolder');   // Pindah ke Folder (semua item, bukan bundle)
+  const archiveBtn = $('#vaultBatchArchive');         // Arsipkan (semua, kecuali sudah archived)
+  const bundleBtn = $('#vaultBatchBundle');           // Tambah ke Bundle (item only, bukan bundle)
 
   // Reset semua
-  [copyCaptionBtn, copyImgBtn, downloadBtn, copyUrlsBtn, copyMetaBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn].forEach(b => {
+  [copyCaptionBtn, copyImgBtn, downloadBtn, copyUrlsBtn, copyMetaBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn, moveFolderBtn, archiveBtn, bundleBtn].forEach(b => {
     if (b) b.style.display = 'none';
   });
 
   // v3.11.15: Di chip 'all', tentukan tipe item yang terpilih
   let selectedTypes = new Set();
+  let hasActualItems = false;  // v3.20.43: track apakah ada item (bukan bundle) di selection
   if (currentChip === 'all' && vaultBatchSelected.size > 0) {
     for (const id of vaultBatchSelected) {
       const item = currentVault?.items?.find(i => i.id === id);
-      if (item) selectedTypes.add(item.type);
+      if (item) {
+        selectedTypes.add(item.type);
+        hasActualItems = true;
+      }
       // Cek juga bundle
       const bundle = currentVault?.bundles?.find(b => b.id === id);
       if (bundle) selectedTypes.add('bundle');
     }
   } else {
     selectedTypes.add(currentChip === 'archive' ? 'archive' : currentChip);
+    // v3.20.43: Untuk chip selain 'archive', cek apakah ada item (bukan bundle) terpilih
+    if (currentChip !== 'archive') hasActualItems = true;
   }
 
   // Tentukan tombol yang tampil berdasarkan tipe terpilih
@@ -915,7 +926,7 @@ function updateVaultBatchBarButtons() {
   const hasDocument = selectedTypes.has('document'); // v3.12.0 (Fase 7)
   const hasBundle = selectedTypes.has('bundle');
   const hasArchive = selectedTypes.has('archive');
-  const hasText = ['prompt', 'context', 'link', 'snapshot'].some(t => selectedTypes.has(t));
+  const hasText = ['prompt', 'context', 'link', 'snapshot', 'file'].some(t => selectedTypes.has(t));
 
   if (currentChip === 'archive' || hasArchive) {
     if (unarchiveBtn) unarchiveBtn.style.display = '';
@@ -934,6 +945,16 @@ function updateVaultBatchBarButtons() {
   }
   if (hasText) {
     if (copyTextBtn) copyTextBtn.style.display = '';
+  }
+  // v3.20.43: Mass actions — tampil kalau ada item (bukan bundle) terpilih
+  // Move to Folder: item only (bukan bundle), tidak di chip 'archive'
+  if (hasActualItems && currentChip !== 'archive') {
+    if (moveFolderBtn) moveFolderBtn.style.display = '';
+    if (bundleBtn) bundleBtn.style.display = '';
+  }
+  // Arsipkan: tampil kalau BUKAN di chip 'archive' (di archive, pakai Unarsip)
+  if (currentChip !== 'archive') {
+    if (archiveBtn) archiveBtn.style.display = '';
   }
   // Hapus selalu tampil (untuk semua tipe)
   if (deleteBtn) deleteBtn.style.display = '';
@@ -1146,7 +1167,7 @@ async function copyImageUrlToClipboard(id) {
   }
 }
 
-// v3.20.36 port dari Firefox: File upload handlers — pakai addItem yang sudah di-import di top-level
+// v3.20.35-dev: File upload handlers — pakai addItem yang sudah di-import di top-level
 // (TIDAK pakai dynamic import supaya tidak ada masalah circular dependency)
 const FILE_UPLOAD_WHITELIST = {
   '.md':       { kind: 'md',   mime: 'text/markdown' },
@@ -1499,6 +1520,162 @@ async function vaultBatchUnarchiveAction() {
   await refreshVault();
   renderList();
   toast('✓ ' + ok + ' item dikeluarkan dari arsip' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
+}
+
+// v3.20.43: Batch Move to Folder — pindahkan semua item terpilih ke folder tujuan
+async function vaultBatchMoveFolderAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 item dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  // Hanya item (bukan bundle) yang bisa dipindah ke folder
+  const itemIds = ids.filter(id => currentVault.items.find(i => i.id === id) && !isGroupItem(currentVault.items.find(i => i.id === id)));
+  if (itemIds.length === 0) {
+    toast('Tidak ada item yang bisa dipindah (bundle tidak bisa dipindah ke folder)', false);
+    return;
+  }
+  // Cari semua folder yang ada (exclude archived + exclude item yang sedang dipilih)
+  const allFolders = currentVault.items.filter(i => isGroupItem(i) && !i.archived && !itemIds.includes(i.id));
+  if (allFolders.length === 0) {
+    toast('Belum ada folder. Buat folder dulu lewat tombol 📁+ Folder.', false);
+    return;
+  }
+  // Buka sheet pilih folder — mirror openMoveToFolderSheet tapi untuk batch
+  openSheet('Pindahkan ' + itemIds.length + ' item ke folder', 'Pilih folder tujuan', b => {
+    let html = '<button class="act" data-fid=""><div>📤 Top-level (keluarkan dari folder)</div></button>';
+    const nodes = buildTree(allFolders, [], null, true);
+    function renderFolderOption(node, depth) {
+      if (node.kind === 'group') {
+        const indent = '\u00A0\u00A0'.repeat(depth);
+        html += '<button class="act" data-fid="' + node.item.id + '"><div>' + indent + '📁 ' + esc(node.item.title) + '</div></button>';
+        if (node.children) node.children.forEach(c => renderFolderOption(c, depth + 1));
+      }
+    }
+    nodes.forEach(n => renderFolderOption(n, 0));
+    b.innerHTML = html;
+    b.querySelectorAll('[data-fid]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const fid = btn.dataset.fid || null;
+        closeSheet();
+        toast('📂 Memindahkan ' + itemIds.length + ' item...');
+        let ok = 0, fail = 0;
+        for (const itemId of itemIds) {
+          try {
+            await moveItemToGroup(itemId, fid);
+            ok++;
+          } catch (e) {
+            console.warn('Batch move failed for', itemId, e.message);
+            fail++;
+          }
+        }
+        vaultBatchSelected.clear();
+        vaultBatchMode = false;
+        const bar = $('#vaultBatchBar');
+        if (bar) bar.style.display = 'none';
+        await refreshVault();
+        renderList();
+        const folderName = fid ? (currentVault.items.find(i => i.id === fid)?.title || 'folder') : 'top-level';
+        toast('✓ ' + ok + ' item dipindahkan ke "' + folderName + '"' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
+      });
+    });
+  });
+}
+
+// v3.20.43: Batch Archive — arsipkan semua item terpilih
+async function vaultBatchArchiveAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 item dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  const typeLabel = _batchItemTypeLabel();
+  if (!confirm('Arsipkan ' + ids.length + ' ' + typeLabel + '?\n\nItem akan disembunyikan dari list utama. Bisa di-restore dari chip Arsip.')) return;
+  toast('📦 Mengarsipkan ' + ids.length + ' ' + typeLabel + '...');
+  let ok = 0, fail = 0;
+  for (const id of ids) {
+    try {
+      const item = currentVault.items.find(i => i.id === id);
+      const bundle = currentVault.bundles.find(b => b.id === id);
+      if (item) {
+        await updateItem(id, { archived: true });
+        ok++;
+      } else if (bundle) {
+        await updateBundle(id, { archived: true });
+        ok++;
+      } else {
+        fail++;
+      }
+    } catch (e) {
+      console.warn('Batch archive failed for', id, e.message);
+      fail++;
+    }
+  }
+  vaultBatchSelected.clear();
+  vaultBatchMode = false;
+  const bar = $('#vaultBatchBar');
+  if (bar) bar.style.display = 'none';
+  await refreshVault();
+  renderList();
+  toast('✓ ' + ok + ' item diarsipkan' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
+}
+
+// v3.20.43: Batch Add to Bundle — tambahkan semua item terpilih ke bundle
+async function vaultBatchBundleAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 item dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  // Hanya item (bukan bundle) yang bisa ditambah ke bundle
+  const itemIds = ids.filter(id => currentVault.items.find(i => i.id === id));
+  if (itemIds.length === 0) {
+    toast('Tidak ada item yang bisa ditambah ke bundle', false);
+    return;
+  }
+  const bundles = currentVault.bundles || [];
+  if (bundles.length === 0) {
+    toast('Belum ada bundle. Buat bundle dulu.', false);
+    return;
+  }
+  // Buka sheet pilih bundle — mirror openReassignBundleSheet tapi untuk batch
+  openSheet('Tambah ' + itemIds.length + ' item ke Bundle', 'Pilih bundle tujuan — semua item terpilih akan ditambahkan.', b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div class="picklist">' + bundles.map(bd => {
+          return '<label class="pickrow"><input type="checkbox" value="' + bd.id + '"><span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(bd.name || 'Bundle') + '</span><span class="pt-type">' + (bd.itemIds || []).length + ' item</span></label>';
+        }).join('') + '</div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="rbBatchCancel">Batal</button><button class="btn btn-p" id="rbBatchSave">' + ICONS.check + 'Tambah ke Bundle</button></div></div>';
+    const boxes = [...b.querySelectorAll('input[type=checkbox]')];
+    $('#rbBatchCancel').addEventListener('click', closeSheet);
+    $('#rbBatchSave').addEventListener('click', async () => {
+      const selectedBundles = boxes.filter(bx => bx.checked).map(bx => bx.value);
+      if (selectedBundles.length === 0) {
+        toast('Pilih minimal 1 bundle', false);
+        return;
+      }
+      closeSheet();
+      toast('📦 Menambahkan ' + itemIds.length + ' item ke ' + selectedBundles.length + ' bundle...');
+      let ok = 0, fail = 0;
+      for (const bundleId of selectedBundles) {
+        for (const itemId of itemIds) {
+          try {
+            await reassignToBundle(bundleId, itemId, 'add');
+            ok++;
+          } catch (e) {
+            console.warn('Batch bundle add failed:', bundleId, itemId, e.message);
+            fail++;
+          }
+        }
+      }
+      vaultBatchSelected.clear();
+      vaultBatchMode = false;
+      const bar = $('#vaultBatchBar');
+      if (bar) bar.style.display = 'none';
+      await refreshVault();
+      renderList();
+      toast('✓ ' + ok + ' penambahan ke bundle' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
+    });
+  });
 }
 
 async function vaultBatchCopyAction(withCaption) {
@@ -1860,8 +2037,10 @@ function renderItemHtml(it, indent, connector) {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">\uD83D\uDCC4 Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download halaman pertama">' + ICONS.download + '</button>';
   } else if (it.type === 'file') {
-    // v3.20.42: CTA pill untuk type='file' — Salin Konten (1 klik)
-    ctaHtml = '<span class="cta-pill" data-file-action="copy">' + ICONS.copy + 'Salin \u21B5</span>';
+    // v3.20.37-dev: Tombol "Salin ↵" langsung kopi isi file (bukan buka sheet).
+    // User feedback: "Aksi ↵" terlalu banyak langkah — langsung kopi lebih cepat.
+    ctaHtml = '<span class="cta-pill" data-file-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
+      + '<button class="link-mini-btn" data-file-action="download" title="Download file">' + ICONS.download + '</button>';
   } else {
     const cta = currentAiDomain ? ICONS.zap + 'Sisipkan \u21B5' : ICONS.copy + 'Salin \u21B5';
     ctaHtml = '<span class="cta-pill">' + cta + '</span>';
@@ -1975,15 +2154,7 @@ function wireVaultEvents() {
     if (dropzoneEl) {
       const item = currentVault?.items?.find(i => i.id === draggedItemId);
       if (item && getParentId(item)) {
-        // v3.20.35-dev-chrome: Pakai requestAnimationFrame supaya layout settle
-        // sebelum Chrome coba register dropzone sebagai drop target.
-        // Sebelumnya: set display='' langsung → Chrome kadang "lose track" drop
-        // target karena element baru saja di-show during dragstart.
-        requestAnimationFrame(() => {
-          if (draggedItemId) {  // cek lagi — user mungkin sudah batal drag
-            dropzoneEl.style.display = '';
-          }
-        });
+        dropzoneEl.style.display = '';
       }
     }
   });
@@ -1993,10 +2164,7 @@ function wireVaultEvents() {
     const itemEl = e.target.closest('.item');
     if (itemEl) itemEl.style.opacity = '';
     draggedItemId = null;
-    if (dropzoneEl) {
-      dropzoneEl.style.display = 'none';
-      dropzoneEl.classList.remove('drag-over');
-    }
+    if (dropzoneEl) dropzoneEl.style.display = 'none';
   });
 
   // Drag over group — highlight
@@ -2028,60 +2196,17 @@ function wireVaultEvents() {
     }
   });
 
-  // Dropzone (unparent) — v3.20.35-dev-chrome: Fix DnD drop gagal di Chrome
-  //
-  // Root cause (Chrome vs Firefox):
-  // 1. Chrome BUTUH `dragenter` handler yang preventDefault() untuk "register"
-  //    element sebagai valid drop target. Firefox cukup `dragover` saja.
-  //    Sebelumnya: hanya `dragover` + `drop` → Chrome tidak fire `drop`.
-  // 2. Dropzone di-show saat dragstart (display:none → display:''). Chrome
-  //    kadang "lose track" drop target kalau display berubah during drag.
-  //    Fix: tambah dragenter + beri small delay supaya layout settle.
-  // 3. Race condition: `draggedItemId` bisa null kalau dragstart dari luar
-  //    extension context (mis. cross-frame). Fallback: baca dataTransfer.
-  // 4. Visual feedback (.drag-over class) tidak pernah di-add → user tidak
-  //    tahu dropzone aktif. Fix: add/remove class di dragenter/dragleave.
+  // Dropzone (unparent)
   if (dropzoneEl) {
-    // v3.20.35-dev-chrome: dragenter WAJIB di Chrome untuk register drop target
-    dropzoneEl.addEventListener('dragenter', (e) => {
-      // Cek draggedItemId (in-process) ATAU dataTransfer punya data (cross-frame)
-      let itemId = draggedItemId;
-      if (!itemId) {
-        try { itemId = e.dataTransfer?.getData('text/plain') || null; } catch (_) {}
-      }
-      if (!itemId) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      dropzoneEl.classList.add('drag-over');
-    });
     dropzoneEl.addEventListener('dragover', (e) => {
-      let itemId = draggedItemId;
-      if (!itemId) {
-        try { itemId = e.dataTransfer?.getData('text/plain') || null; } catch (_) {}
-      }
-      if (!itemId) return;
+      if (!draggedItemId) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      // Pertahankan visual feedback (dragover fire berulang, dragenter hanya sekali)
-      dropzoneEl.classList.add('drag-over');
-    });
-    dropzoneEl.addEventListener('dragleave', (e) => {
-      // Hanya remove class kalau benar-benar keluar dari dropzone
-      // (dragleave fire saat child element exit — cek relatedTarget)
-      if (e.relatedTarget && dropzoneEl.contains(e.relatedTarget)) return;
-      dropzoneEl.classList.remove('drag-over');
     });
     dropzoneEl.addEventListener('drop', (e) => {
+      if (!draggedItemId) return;
       e.preventDefault();
-      e.stopPropagation();
-      dropzoneEl.classList.remove('drag-over');
-      // Fallback: kalau draggedItemId null (race condition), baca dari dataTransfer
-      let itemId = draggedItemId;
-      if (!itemId) {
-        try { itemId = e.dataTransfer?.getData('text/plain') || null; } catch (_) {}
-      }
-      if (!itemId) return;
-      moveItemToGroup(itemId, null);
+      moveItemToGroup(draggedItemId, null);
     });
   }
 }
@@ -2119,7 +2244,7 @@ async function moveItemToGroup(itemId, groupId) {
     await refreshVault();
     if (groupId) {
       const grp = currentVault.items.find(i => i.id === groupId);
-      toast('\uD83D\uDCC1 Dipindahkan ke \u201C' + (grp?.title || 'grup') + '\u201D');
+      toast('\uD83D\uDCC1 Dipindahkan ke \u201C' + (grp?.title || 'folder') + '\u201D');
     } else {
       toast('\uD83D\uDCE5 Dikeluarkan dari folder');
     }
@@ -2128,29 +2253,29 @@ async function moveItemToGroup(itemId, groupId) {
   }
 }
 
-// ===== handleAddGroup: buat grup baru =====
+// ===== handleAddGroup: buat folder baru =====
 async function handleAddGroup() {
   // v3.18.1: Kalau di "Semua"/"Arsip", default ke 'prompt' + beri tahu user
   let groupType = currentChip;
   if (currentChip === 'all' || currentChip === 'archive') {
     groupType = 'prompt';
-    toast('📁 Grup dibuat di kategori Prompt. Ganti tab untuk lihat.');
+    toast('📁 Folder dibuat di kategori Prompt. Ganti tab untuk lihat.');
   }
-  const name = prompt('Nama grup baru:');
+  const name = prompt('Nama folder baru:');
   if (!name || !name.trim()) return;
   const group = createGroup(name.trim(), groupType);
   try {
     await addItem(group);
     expandedGroupIds.push(group.id);
-    // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat grup
+    // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat folder
     if (currentChip === 'all' || currentChip === 'archive') {
       currentChip = groupType;
     }
     await refreshVault();
     renderChips();
-    toast('📁 Grup "' + name.trim() + '" dibuat');
+    toast('📁 Folder "' + name.trim() + '" dibuat');
   } catch (e) {
-    toast('Gagal buat grup: ' + e.message, false);
+    toast('Gagal buat folder: ' + e.message, false);
   }
 }
 
@@ -2216,6 +2341,8 @@ function showMagicCommandModal() {
             <button class="rf-magicfolder-cmd-example" data-cmd="Restore folder Lama dari arsip">♻️ Restore folder Lama dari arsip</button>
             <button class="rf-magicfolder-cmd-example" data-cmd="Tambahkan tag favorit ke semua link">🏷️ Tambahkan tag favorit ke semua link</button>
             <button class="rf-magicfolder-cmd-example" data-cmd="Hapus tag lama dari semua prompt">🏷️ Hapus tag lama dari semua prompt</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Buat folder AI dan pindahkan semua link tentang AI ke folder AI kemudian arsipkan folder Lama">🔗 Multi-step: Buat folder AI + pindahkan link AI + arsipkan folder Lama</button>
+            <button class="rf-magicfolder-cmd-example" data-cmd="Pindahkan semua screenshot ke folder Media, lalu tambahkan tag favorit">🔗 Multi-step: Pindahkan screenshot ke Media + tambah tag favorit</button>
           </div>
         </div>
       </div>
@@ -2262,7 +2389,8 @@ async function executeMagicCommand(command) {
     // untuk action "restore-folder". Filter !i.archived hanya dilakukan di parser untuk
     // loose items + existing folders — archived folders tetap di-include sebagai context.
     const allItems = currentVault.items || [];
-    const result = await parseMagicCommand(allItems, chatWithFallback, command);
+    // v3.20.43: Pakai parseMultiStepCommand — support multi-step commands
+    const result = await parseMultiStepCommand(allItems, chatWithFallback, command);
     if (!result.ok) {
       const errMap = {
         'command_too_short': 'Perintah terlalu pendek',
@@ -2273,7 +2401,10 @@ async function executeMagicCommand(command) {
         'missing_tag_name': 'AI tidak menentukan nama tag',
         'no_valid_folder_to_archive': 'Folder yang mau di-arsip tidak ditemukan',
         'no_valid_archived_folder_to_restore': 'Folder archived tidak ditemukan',
-        'too_few_items': 'Vault kosong'
+        'too_few_items': 'Vault kosong',
+        'no_steps_or_action_in_response': 'AI tidak return format yang valid. Coba lagi.',
+        'empty_steps': 'AI tidak menemukan langkah yang valid',
+        'no_valid_steps': 'Semua langkah tidak valid — coba perintah yang lebih spesifik'
       };
       toast('⚠ ' + (errMap[result.error] || result.error), false);
       if (execBtn) { execBtn.disabled = false; execBtn.textContent = '🪄 Eksekusi Perintah'; }
@@ -2281,7 +2412,8 @@ async function executeMagicCommand(command) {
       return;
     }
     closeMagicFolderModal();
-    showMagicCommandConfirmModal(result.plan, allItems);
+    // v3.20.43: Pass array of steps ke confirm modal
+    showMagicCommandConfirmModal(result.steps, allItems);
   } catch (e) {
     toast('⚠ Gagal: ' + e.message, false);
     console.error('[RecallFox/MagicCmd] executeMagicCommand failed:', e);
@@ -2291,40 +2423,44 @@ async function executeMagicCommand(command) {
 }
 
 // v3.20.33: Confirm modal yang render berdasarkan action type (6 jenis)
-function showMagicCommandConfirmModal(plan, allItems) {
+// v3.20.43: Updated untuk support multi-step (array of plans)
+function showMagicCommandConfirmModal(steps, allItems) {
   closeMagicFolderModal();
+
+  // v3.20.43: steps adalah array of plans. Kalau bukan array, wrap jadi array.
+  if (!Array.isArray(steps)) steps = [steps];
 
   const itemLookup = new Map();
   allItems.forEach(it => itemLookup.set(it.id, it));
 
-  // Render item pills (untuk move/create-and-move/add-tag/remove-tag)
-  const itemPills = (plan.itemIds || []).slice(0, 10).map(id => {
-    const it = itemLookup.get(id);
-    if (!it) return '';
-    const typeIcon = it.type === 'link' ? '🔗' : it.type === 'prompt' ? '✨' : it.type === 'context' ? '📦' : it.type === 'snapshot' ? '📸' : '📄';
-    return `<span class="rf-magicfolder-item-pill">${typeIcon} ${esc((it.title || 'Untitled').slice(0, 30))}</span>`;
-  }).join('');
-  const morePill = (plan.itemIds || []).length > 10 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${plan.itemIds.length - 10} lainnya</span>` : '';
-
-  // v3.20.33: Build action-specific content
   const actionLabels = {
-    'move': 'Pindahkan item ke folder existing',
+    'move': 'Pindahkan item ke folder',
     'create-and-move': 'Buat folder baru + pindahkan item',
     'archive-folder': 'Arsipkan folder + semua isinya',
     'restore-folder': 'Restore folder dari arsip',
     'add-tag': 'Tambahkan tag ke item',
-    'remove-tag': 'Hapus tag dari item'
+    'remove-tag': 'Hapus tag dari item',
+    'archive-items': 'Arsipkan item-item',
+    'delete-items': 'Hapus item-item'
   };
-  const actionLabel = actionLabels[plan.action] || plan.action;
 
-  // Build content berdasarkan action type
-  let contentHtml = '';
-  if (plan.action === 'move' || plan.action === 'create-and-move') {
-    const folderIcon = plan.action === 'create-and-move' ? '📁+' : '📁';
-    const targetFolder = itemLookup.get(plan.folderId);
-    const folderDisplay = plan.folderName || targetFolder?.title || 'Folder';
-    contentHtml = `
-      <div class="rf-magicfolder-groups">
+  // v3.20.43: Render setiap step sebagai card terpisah
+  function renderStepCard(plan, stepNum) {
+    // Render item pills (untuk move/create-and-move/add-tag/remove-tag/archive-items/delete-items)
+    const itemPills = (plan.itemIds || []).slice(0, 8).map(id => {
+      const it = itemLookup.get(id);
+      if (!it) return '';
+      const typeIcon = it.type === 'link' ? '🔗' : it.type === 'prompt' ? '✨' : it.type === 'context' ? '📦' : it.type === 'snapshot' ? '📸' : it.type === 'file' ? '📄' : it.type === 'screenshot' ? '🖼️' : '📄';
+      return `<span class="rf-magicfolder-item-pill">${typeIcon} ${esc((it.title || 'Untitled').slice(0, 25))}</span>`;
+    }).join('');
+    const morePill = (plan.itemIds || []).length > 8 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${plan.itemIds.length - 8} lainnya</span>` : '';
+
+    let stepContent = '';
+    if (plan.action === 'move' || plan.action === 'create-and-move') {
+      const folderIcon = plan.action === 'create-and-move' ? '📁+' : '📁';
+      const targetFolder = itemLookup.get(plan.folderId);
+      const folderDisplay = plan.folderName || targetFolder?.title || 'Folder';
+      stepContent = `
         <div class="rf-magicfolder-group">
           <div class="rf-magicfolder-group-hd">
             <span class="rf-magicfolder-folder-icon">${folderIcon}</span>
@@ -2333,17 +2469,14 @@ function showMagicCommandConfirmModal(plan, allItems) {
           </div>
           ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
           <div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>
-        </div>
-      </div>`;
-  } else if (plan.action === 'archive-folder' || plan.action === 'restore-folder') {
-    const targetFolder = itemLookup.get(plan.folderId);
-    const folderDisplay = targetFolder?.title || plan.folderName || 'Folder';
-    const icon = plan.action === 'archive-folder' ? '📦' : '♻️';
-    // Hitung berapa item yang akan ter-arsip/restore
-    const childCount = countFolderDescendants(allItems, plan.folderId);
-    const childLabel = childCount > 0 ? ` + ${childCount} item di dalamnya` : '';
-    contentHtml = `
-      <div class="rf-magicfolder-groups">
+        </div>`;
+    } else if (plan.action === 'archive-folder' || plan.action === 'restore-folder') {
+      const targetFolder = itemLookup.get(plan.folderId);
+      const folderDisplay = targetFolder?.title || plan.folderName || 'Folder';
+      const icon = plan.action === 'archive-folder' ? '📦' : '♻️';
+      const childCount = countFolderDescendants(allItems, plan.folderId);
+      const childLabel = childCount > 0 ? ` + ${childCount} item di dalamnya` : '';
+      stepContent = `
         <div class="rf-magicfolder-group">
           <div class="rf-magicfolder-group-hd">
             <span class="rf-magicfolder-folder-icon">${icon}</span>
@@ -2354,12 +2487,10 @@ function showMagicCommandConfirmModal(plan, allItems) {
           <div class="rf-magicfolder-folder-items">
             <span class="rf-magicfolder-item-pill">${icon} Folder + semua isi${childLabel}</span>
           </div>
-        </div>
-      </div>`;
-  } else if (plan.action === 'add-tag' || plan.action === 'remove-tag') {
-    const icon = plan.action === 'add-tag' ? '🏷️+' : '🏷️−';
-    contentHtml = `
-      <div class="rf-magicfolder-groups">
+        </div>`;
+    } else if (plan.action === 'add-tag' || plan.action === 'remove-tag') {
+      const icon = plan.action === 'add-tag' ? '🏷️+' : '🏷️−';
+      stepContent = `
         <div class="rf-magicfolder-group">
           <div class="rf-magicfolder-group-hd">
             <span class="rf-magicfolder-folder-icon">${icon}</span>
@@ -2368,13 +2499,35 @@ function showMagicCommandConfirmModal(plan, allItems) {
           </div>
           ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
           <div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>
-        </div>
-      </div>`;
+        </div>`;
+    } else if (plan.action === 'archive-items' || plan.action === 'delete-items') {
+      const icon = plan.action === 'archive-items' ? '📦' : '🗑️';
+      stepContent = `
+        <div class="rf-magicfolder-group">
+          <div class="rf-magicfolder-group-hd">
+            <span class="rf-magicfolder-folder-icon">${icon}</span>
+            <span class="rf-magicfolder-folder-name">${plan.action === 'archive-items' ? 'Arsipkan' : 'Hapus'} ${plan.itemIds.length} item</span>
+            <span class="rf-magicfolder-folder-count">${plan.itemIds.length} item</span>
+          </div>
+          ${plan.reasoning ? `<div class="rf-magicfolder-reasoning">💡 ${esc(plan.reasoning)}</div>` : ''}
+          <div class="rf-magicfolder-folder-items">${itemPills}${morePill}</div>
+        </div>`;
+    }
+
+    const unmatchedHtml = plan.unmatched && plan.unmatched.length > 0
+      ? `<div class="rf-magicfolder-unmatched">⚠ Query tidak match: ${plan.unmatched.map(u => esc(u)).join(', ')}</div>`
+      : '';
+
+    const stepLabel = steps.length > 1 ? `<div class="rf-magicfolder-step-label">Langkah ${stepNum} dari ${steps.length}</div>` : '';
+    return `<div class="rf-magicfolder-step">${stepLabel}<div class="rf-magicfolder-groups">${stepContent}</div>${unmatchedHtml}</div>`;
   }
 
-  const unmatchedHtml = plan.unmatched && plan.unmatched.length > 0
-    ? `<div class="rf-magicfolder-unmatched">⚠ Query tidak match: ${plan.unmatched.map(u => esc(u)).join(', ')}</div>`
-    : '';
+  // Build all step cards
+  const allStepsHtml = steps.map((plan, i) => renderStepCard(plan, i + 1)).join('');
+  const isMultiStep = steps.length > 1;
+  const summaryText = isMultiStep
+    ? `AI akan menjalankan <b>${steps.length} langkah</b> secara berurutan:`
+    : `AI akan <b>${actionLabels[steps[0].action] || steps[0].action}</b>:`;
 
   const modal = document.createElement('div');
   modal.id = 'rf-magicfolder-modal';
@@ -2382,19 +2535,16 @@ function showMagicCommandConfirmModal(plan, allItems) {
   modal.innerHTML = `
     <div class="rf-magicfolder-dialog">
       <div class="rf-magicfolder-hd">
-        <h3>💬 Konfirmasi Perintah</h3>
+        <h3>💬 Konfirmasi Perintah${isMultiStep ? ' (' + steps.length + ' langkah)' : ''}</h3>
         <button class="rf-magicfolder-close" id="rfMagicCmdConfirmCancel" title="Batal">×</button>
       </div>
       <div class="rf-magicfolder-body">
-        <p class="rf-magicfolder-summary">
-          AI akan <b>${actionLabel}</b>:
-        </p>
-        ${contentHtml}
-        ${unmatchedHtml}
+        <p class="rf-magicfolder-summary">${summaryText}</p>
+        ${allStepsHtml}
       </div>
       <div class="rf-magicfolder-ft">
         <button class="btn btn-g" id="rfMagicCmdConfirmCancelBtn">Batal</button>
-        <button class="btn btn-p" id="rfMagicCmdConfirmApply">✓ Jalankan</button>
+        <button class="btn btn-p" id="rfMagicCmdConfirmApply">${isMultiStep ? '✓ Jalankan Semua' : '✓ Jalankan'}</button>
       </div>
     </div>
   `;
@@ -2406,41 +2556,69 @@ function showMagicCommandConfirmModal(plan, allItems) {
 
   document.getElementById('rfMagicCmdConfirmApply').addEventListener('click', async () => {
     const applyBtn = document.getElementById('rfMagicCmdConfirmApply');
-    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = '⏳ Menjalankan...'; }
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = isMultiStep ? '⏳ Menjalankan...' : '⏳ Menjalankan...'; }
     try {
       const groupType = (currentChip === 'all' || currentChip === 'archive') ? 'prompt' : currentChip;
-      const result = await applyMagicCommand(currentVault.items, plan, groupType);
+      // v3.20.43: Use applyMultiStepMagicCommand untuk multi-step, applyMagicCommand untuk single
+      let result;
+      if (isMultiStep) {
+        // refreshFn: refresh vault antar step supaya step 2 bisa lihat folder yang dibuat step 1
+        const refreshFn = async () => { await refreshVault(); };
+        result = await applyMultiStepMagicCommand(currentVault.items, steps, groupType, refreshFn);
+      } else {
+        result = await applyMagicCommand(currentVault.items, steps[0], groupType);
+        // Wrap single result to match multi-step shape
+        result = { ok: result.ok, results: [{ stepIndex: 0, action: steps[0].action, result }], allOk: result.ok };
+      }
+
       if (result.ok) {
         closeMagicFolderModal();
-        // v3.20.33: Toast feedback per action type
-        let toastMsg = '';
-        if (plan.action === 'move' || plan.action === 'create-and-move') {
-          toastMsg = `✓ ${result.itemsMoved} item dipindahkan ke "${plan.folderName}"`;
-        } else if (plan.action === 'archive-folder') {
-          toastMsg = `📦 Folder di-arsipkan (${result.archivedCount} item disembunyikan)`;
-        } else if (plan.action === 'restore-folder') {
-          toastMsg = `♻️ Folder di-restore (${result.restoredCount} item kembali)`;
-        } else if (plan.action === 'add-tag') {
-          toastMsg = `🏷️ Tag "${plan.tagName}" ditambahkan ke ${result.itemsTagged} item`;
-        } else if (plan.action === 'remove-tag') {
-          toastMsg = `🏷️ Tag "${plan.tagName}" dihapus dari ${result.itemsUntagged} item`;
+        // v3.20.43: Build toast message dari results
+        let toastParts = [];
+        let allOk = true;
+        for (const r of (result.results || [])) {
+          const stepNum = r.stepIndex + 1;
+          const res = r.result;
+          if (!res.ok) {
+            allOk = false;
+            toastParts.push(`Langkah ${stepNum}: gagal (${res.error || 'unknown'})`);
+            continue;
+          }
+          if (r.action === 'move' || r.action === 'create-and-move') {
+            toastParts.push(`Langkah ${stepNum}: ${res.itemsMoved} item dipindahkan`);
+          } else if (r.action === 'archive-folder') {
+            toastParts.push(`Langkah ${stepNum}: folder di-arsipkan (${res.archivedCount} item)`);
+          } else if (r.action === 'restore-folder') {
+            toastParts.push(`Langkah ${stepNum}: folder di-restore (${res.restoredCount} item)`);
+          } else if (r.action === 'add-tag') {
+            toastParts.push(`Langkah ${stepNum}: tag "${res.tagName}" +${res.itemsTagged} item`);
+          } else if (r.action === 'remove-tag') {
+            toastParts.push(`Langkah ${stepNum}: tag "${res.tagName}" −${res.itemsUntagged} item`);
+          } else if (r.action === 'archive-items') {
+            toastParts.push(`Langkah ${stepNum}: ${res.itemsArchived} item diarsipkan`);
+          } else if (r.action === 'delete-items') {
+            toastParts.push(`Langkah ${stepNum}: ${res.itemsDeleted} item dihapus`);
+          }
         }
-        if (toastMsg) toast(toastMsg);
+        // Single step: simpler toast
+        if (!isMultiStep && toastParts.length === 1) {
+          toast('✓ ' + toastParts[0].replace(/^Langkah \d+: /, ''));
+        } else if (allOk) {
+          toast('✓ Semua ' + steps.length + ' langkah berhasil');
+        } else {
+          toast('⚠ Sebagian langkah gagal: ' + toastParts.join('; '), false);
+        }
         await refreshVault();
         renderChips();
         renderList();
-        if (result.folderId && !expandedGroupIds.includes(result.folderId) && (plan.action === 'move' || plan.action === 'create-and-move' || plan.action === 'restore-folder')) {
-          expandedGroupIds.push(result.folderId);
-          renderList();
-        }
       } else {
         toast('⚠ Gagal: ' + (result.error || 'unknown'), false);
-        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ Jalankan'; }
+        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = isMultiStep ? '✓ Jalankan Semua' : '✓ Jalankan'; }
       }
     } catch (e) {
       toast('⚠ Gagal: ' + e.message, false);
       console.error('[RecallFox/MagicCmd] apply failed:', e);
-      if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = '✓ Jalankan'; }
+      if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = isMultiStep ? '✓ Jalankan Semua' : '✓ Jalankan'; }
     }
   });
 }
@@ -3126,7 +3304,8 @@ function bindItemClicks() {
         }
         return;
       }
-      // v3.20.42: CTA pill untuk type='file' — Salin Konten (1 klik)
+      // v3.20.35-dev: Tombol aksi File (data-file-action)
+      // v3.20.37-dev: 'copy' langsung kopi isi file (bukan buka sheet)
       const fileBtn = e.target.closest('[data-file-action]');
       if (fileBtn) {
         e.stopPropagation();
@@ -3134,7 +3313,12 @@ function bindItemClicks() {
         const it = findItem(el.dataset.id);
         if (!it) return;
         if (action === 'copy') {
+          // Direct copy isi file ke clipboard — tidak buka item sheet
           copyFileContentToClipboard(it.id);
+        } else if (action === 'sheet') {
+          itemSheet(it.id);
+        } else if (action === 'download') {
+          downloadFileItem(it.id);
         }
         return;
       }
@@ -3173,9 +3357,9 @@ async function primaryAction(id) {
     openDocumentViewer(it.id);
     return;
   }
-  // v3.20.42: File → kopi isi file ke clipboard
+  // v3.20.35-dev: File → buka item sheet (Kopi File, Kopi Link, Download)
   if (it.type === 'file') {
-    copyFileContentToClipboard(it.id);
+    itemSheet(it.id);
     return;
   }
   // prompt / context / snapshot
@@ -4734,7 +4918,13 @@ function itemSheet(id) {
   openSheet(esc(it.title), T.label + (vars ? ' · ' + vars + ' variabel' : ''), b => {
     const isAi = !!currentAiDomain;
     // v3.12.0 (Fase 7): Tambah label utama untuk dokumen.
-    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru' : (it.type === 'bundle' ? 'Salin bundle ke clipboard' : (it.type === 'screenshot' ? 'Lihat screenshot' : (it.type === 'document' ? 'Lihat dokumen (multi-halaman)' : (it.type === 'file' ? 'Salin konten ke clipboard' : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard')))));
+    // v3.20.36-dev: Label spesifik untuk file — "Kopi isi file" (bukan generic "Salin ke clipboard")
+    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru'
+      : (it.type === 'bundle' ? 'Salin bundle ke clipboard'
+      : (it.type === 'screenshot' ? 'Lihat screenshot'
+      : (it.type === 'document' ? 'Lihat dokumen (multi-halaman)'
+      : (it.type === 'file' ? '📋 Kopi isi file ke clipboard'
+      : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard')))));
     const primaryIcon = it.type === 'link' ? ICONS.spark : (it.type === 'bundle' ? ICONS.archive : (it.type === 'file' ? ICONS.copy : (isAi ? ICONS.zap : ICONS.copy)));
     b.innerHTML =
       '<button class="act" data-a="primary">' + primaryIcon + '<div>' + primaryLabel + '<div class="ad">Sama dengan klik baris — 1 klik</div></div></button>'
@@ -4798,7 +4988,7 @@ function itemSheet(id) {
       const k = a.dataset.a;
       if (k === 'primary') {
         closeSheet();
-        // v3.20.42: Untuk type='file', primary action = kopi isi file (bukan buka itemSheet lagi)
+        // v3.20.36-dev: Untuk type='file', primary action = kopi isi file (bukan buka itemSheet lagi)
         if (it.type === 'file') { copyFileContentToClipboard(it.id); return; }
         primaryAction(it.id);
       }
@@ -4864,7 +5054,7 @@ function itemSheet(id) {
       else if (k === 'copy-meta') { closeSheet(); copyScreenshotMetaToClipboard(it.id); }
       // v3.14.9: Handler Salin URL Gambar (untuk AI sites yang tidak support paste gambar)
       else if (k === 'copy-url') { closeSheet(); copyImageUrlToClipboard(it.id); }
-      // v3.20.42: Handler untuk type='file' — kopi isi, kopi URL, download
+      // v3.20.35-dev: Handler untuk type='file' — kopi isi, kopi URL, download
       else if (k === 'copy-file-content') { closeSheet(); copyFileContentToClipboard(it.id); }
       else if (k === 'copy-file-url') { closeSheet(); copyFileUrlToClipboard(it.id); }
       else if (k === 'download-file') { closeSheet(); downloadFileItem(it.id); }
@@ -6349,7 +6539,7 @@ function addItemMenu() {
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', (ev) => {
       const opt = opts[a.dataset.i];
       const label = opt[0];
-      // Upload gambar + Upload File teks buka sheet sendiri — JANGAN closeSheet()
+      // v3.20.42: Upload gambar + Upload File teks buka sheet sendiri — JANGAN closeSheet()
       if (label.includes('Upload gambar') || label.includes('Upload File')) {
         opt[1]();
       } else {
@@ -6371,7 +6561,6 @@ function saveFileUploadSheet() {
       +   '<input class="f" id="docT" placeholder="mis. Catatan rapet..."></div>'
       + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label>'
       +   '<input class="f" id="docTag" placeholder="catatan, rapat"></div>'
-      // Dropzone
       + '<div id="docDropzone" style="border:2px dashed #c0c0c0;border-radius:8px;padding:24px;text-align:center;color:#666;cursor:pointer;margin:8px 0;transition:all 0.2s">'
       +   '<div style="font-size:32px;margin-bottom:8px">📄</div>'
       +   '<div style="font-weight:600;color:#333">Klik untuk pilih file</div>'
@@ -6379,7 +6568,6 @@ function saveFileUploadSheet() {
       +   '<div style="font-size:10px;margin-top:4px;color:#999">Format: .md, .txt, .json, .html, .csv, .yaml (max 2MB)</div>'
       + '</div>'
       + '<input type="file" id="docFileInputSheet" accept=".md,.markdown,.txt,.json,.html,.htm,.csv,.yaml,.yml" style="display:none">'
-      // Preview
       + '<div id="docPreview" style="display:none;margin:8px 0">'
       +   '<div style="font-size:11px;color:#666;margin-top:4px" id="docPreviewMeta"></div>'
       +   '<div id="docPreviewText" style="font-size:11px;background:var(--surface-2);padding:8px;border-radius:6px;margin-top:4px;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-family:monospace"></div>'
@@ -6387,62 +6575,22 @@ function saveFileUploadSheet() {
       + '<div class="btn-row"><button class="btn btn-g" id="docCancel">Batal</button>'
       +   '<button class="btn btn-p" id="docSave" disabled>' + ICONS.check + 'Simpan File</button></div></div>';
 
-    let _fileContent = null;
-    let _fileName = '';
-    let _fileKind = null;
-    let _fileMime = 'text/plain';
-
+    let _fileContent = null, _fileName = '', _fileKind = null, _fileMime = 'text/plain';
     const dropzone = b.querySelector('#docDropzone');
     const fileInput = b.querySelector('#docFileInputSheet');
-
-    // Klik dropzone → trigger file picker
     dropzone.addEventListener('click', () => fileInput.click());
-
-    // File picker change
-    fileInput.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (file) await _handleFile(file);
-    });
-
-    // Drag & drop
-    dropzone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropzone.style.borderColor = '#FF7139';
-      dropzone.style.background = '#FFF4E6';
-    });
-    dropzone.addEventListener('dragleave', (e) => {
-      e.preventDefault();
-      dropzone.style.borderColor = '#c0c0c0';
-      dropzone.style.background = '';
-    });
-    dropzone.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      dropzone.style.borderColor = '#c0c0c0';
-      dropzone.style.background = '';
-      const file = e.dataTransfer.files[0];
-      if (file) await _handleFile(file);
-    });
+    fileInput.addEventListener('change', async (e) => { if (e.target.files[0]) await _handleFile(e.target.files[0]); });
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.style.borderColor = '#FF7139'; dropzone.style.background = '#FFF4E6'; });
+    dropzone.addEventListener('dragleave', (e) => { e.preventDefault(); dropzone.style.borderColor = '#c0c0c0'; dropzone.style.background = ''; });
+    dropzone.addEventListener('drop', async (e) => { e.preventDefault(); dropzone.style.borderColor = '#c0c0c0'; dropzone.style.background = ''; if (e.dataTransfer.files[0]) await _handleFile(e.dataTransfer.files[0]); });
 
     async function _handleFile(file) {
       const info = detectFileKind(file);
-      if (!info) {
-        toast('⚠ Format tidak didukung: ' + file.name, false);
-        return;
-      }
-      if (file.size > MAX_FILE_UPLOAD_BYTES) {
-        toast('⚠ File terlalu besar (max 2MB)', false);
-        return;
-      }
+      if (!info) { toast('⚠ Format tidak didukung: ' + file.name, false); return; }
+      if (file.size > MAX_FILE_UPLOAD_BYTES) { toast('⚠ File terlalu besar (max 2MB)', false); return; }
       const text = await file.text();
-      if (!text || text.length === 0) {
-        toast('⚠ File kosong', false);
-        return;
-      }
-      _fileContent = text;
-      _fileName = file.name;
-      _fileKind = info.kind;
-      _fileMime = info.mime;
-      // Preview
+      if (!text || text.length === 0) { toast('⚠ File kosong', false); return; }
+      _fileContent = text; _fileName = file.name; _fileKind = info.kind; _fileMime = info.mime;
       const previewMeta = b.querySelector('#docPreviewMeta');
       const previewText = b.querySelector('#docPreviewText');
       const previewBox = b.querySelector('#docPreview');
@@ -6450,13 +6598,9 @@ function saveFileUploadSheet() {
       previewMeta.textContent = '📎 ' + file.name + ' · ' + sizeKb + ' KB · ' + info.kind;
       previewText.textContent = text.slice(0, 500) + (text.length > 500 ? '\n... (' + text.length + ' chars total)' : '');
       previewBox.style.display = '';
-      // Enable save button
       b.querySelector('#docSave').disabled = false;
-      // Auto-fill title kalau kosong
       const titleEl = b.querySelector('#docT');
-      if (!titleEl.value.trim()) {
-        titleEl.value = file.name.replace(/\.[^.]+$/, '').slice(0, 60);
-      }
+      if (!titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '').slice(0, 60);
       toast('📋 File dimuat — klik Simpan untuk menyimpan');
     }
 
@@ -6466,26 +6610,10 @@ function saveFileUploadSheet() {
       const title = (b.querySelector('#docT').value || '').trim() || _fileName;
       const tags = (b.querySelector('#docTag').value || '').trim();
       const tagList = tags ? tags.split(',').map(s => s.trim()).filter(Boolean) : ['file', _fileKind];
-
       const btn = b.querySelector('#docSave');
-      btn.textContent = '⏳ Menyimpan...';
-      btn.disabled = true;
+      btn.textContent = '⏳ Menyimpan...'; btn.disabled = true;
       try {
-        await addItem({
-          type: 'file',
-          title: title,
-          body: _fileContent,
-          tags: tagList,
-          source: {
-            kind: _fileKind,
-            mime: _fileMime,
-            fileName: _fileName,
-            size: _fileContent.length,
-            uploadedFrom: 'addon-upload',
-            capturedAt: new Date().toISOString()
-          }
-        });
-        // Cek cloud upload error
+        await addItem({ type: 'file', title, body: _fileContent, tags: tagList, source: { kind: _fileKind, mime: _fileMime, fileName: _fileName, size: _fileContent.length, uploadedFrom: 'addon-upload', capturedAt: new Date().toISOString() } });
         let cloudOk = true;
         try {
           const errData = await browser.storage.local.get('recallfox_last_sync_error');
@@ -6493,21 +6621,14 @@ function saveFileUploadSheet() {
             const syncErr = JSON.parse(errData['recallfox_last_sync_error']);
             if (syncErr.source === '_uploadFileDocument' && Date.now() - new Date(syncErr.ts).getTime() < 5000) {
               cloudOk = false;
-              const hint = syncErr.hint || syncErr.error || 'unknown error';
-              toast('📤 ' + _fileName + ' tersimpan lokal — URL cloud gagal: ' + hint, false);
+              toast('📤 ' + _fileName + ' tersimpan lokal — URL cloud gagal: ' + (syncErr.hint || syncErr.error), false);
             }
           }
         } catch (_) {}
-        if (cloudOk) {
-          toast('📤 ' + _fileName + ' terupload — URL cloud siap');
-        }
+        if (cloudOk) toast('📤 ' + _fileName + ' terupload — URL cloud siap');
         closeSheet();
         await refreshVault();
-      } catch (e) {
-        toast('⚠ Gagal simpan: ' + e.message, false);
-        btn.textContent = ICONS.check + 'Simpan File';
-        btn.disabled = false;
-      }
+      } catch (e) { toast('⚠ Gagal simpan: ' + e.message, false); btn.textContent = ICONS.check + 'Simpan File'; btn.disabled = false; }
     });
   });
 }
@@ -10286,9 +10407,9 @@ function bindEvents() {
   // Add item button
   $('#addItemBtn').addEventListener('click', addItemMenu);
   $('#noteAddBtn').addEventListener('click', newNote);
-  // v3.20.36 port dari Firefox: File upload via menu "+ Baru" — input hidden.
+  // v3.20.36-dev: File upload via menu "+ Baru" — tombol header dihapus, input hidden tetap.
   // docFileInput di-trigger dari addItemMenu() opsi "📄 Upload File teks".
-  // v3.20.39: Tambah console.log untuk debugging — user bisa verify event terjadi.
+  // v3.20.41: Tambah console.log untuk debugging.
   const _docFileInput = $('#docFileInput');
   if (_docFileInput) {
     console.log('[RecallFox] docFileInput found, wiring change handler. Element:', _docFileInput);
@@ -10345,6 +10466,13 @@ function bindEvents() {
   if (vaultBatchCopyBundleBtn) vaultBatchCopyBundleBtn.addEventListener('click', vaultBatchCopyBundleAction);
   const vaultBatchUnarchiveBtn = $('#vaultBatchUnarchive');
   if (vaultBatchUnarchiveBtn) vaultBatchUnarchiveBtn.addEventListener('click', vaultBatchUnarchiveAction);
+  // v3.20.43: Batch mass actions — Move to Folder, Archive, Add to Bundle
+  const vaultBatchMoveFolderBtn = $('#vaultBatchMoveFolder');
+  if (vaultBatchMoveFolderBtn) vaultBatchMoveFolderBtn.addEventListener('click', vaultBatchMoveFolderAction);
+  const vaultBatchArchiveBtn = $('#vaultBatchArchive');
+  if (vaultBatchArchiveBtn) vaultBatchArchiveBtn.addEventListener('click', vaultBatchArchiveAction);
+  const vaultBatchBundleBtn = $('#vaultBatchBundle');
+  if (vaultBatchBundleBtn) vaultBatchBundleBtn.addEventListener('click', vaultBatchBundleAction);
   // v3.11.13 (Sesi 12): Batch delete button
   const vaultBatchDeleteBtn = $('#vaultBatchDelete');
   if (vaultBatchDeleteBtn) vaultBatchDeleteBtn.addEventListener('click', vaultBatchDeleteAction);
