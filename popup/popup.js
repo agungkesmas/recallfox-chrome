@@ -6306,7 +6306,19 @@ function addItemMenu() {
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
-    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => { closeSheet(); setTimeout(opts[a.dataset.i][1], 80); }));
+    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
+      const opt = opts[a.dataset.i];
+      // v3.20.37: File input click must happen synchronously in user gesture (Chrome MV3 requirement).
+      // Generic pattern closeSheet() + setTimeout(callback, 80) breaks gesture chain → file picker tidak buka.
+      // Fix: untuk opsi yang trigger file input, jalankan callback DULU (synchronous), baru close sheet.
+      if (opt[0].includes('Upload File') || opt[0].includes('Upload gambar')) {
+        opt[1](); // synchronous — preserves user gesture
+        closeSheet();
+      } else {
+        closeSheet();
+        setTimeout(opt[1], 80);
+      }
+    }));
     b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File teks support .md/.txt/.json/.html/.csv/.yaml (maks 2MB).</div>');
   });
 }
