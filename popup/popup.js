@@ -6319,15 +6319,33 @@ function addItemMenu() {
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
-    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => {
+    b.querySelectorAll('.act').forEach(a => a.addEventListener('click', (ev) => {
       const opt = opts[a.dataset.i];
-      // v3.20.37: File input click must happen synchronously in user gesture (Chrome MV3 requirement).
-      // Generic pattern closeSheet() + setTimeout(callback, 80) breaks gesture chain → file picker tidak buka.
-      // Fix: untuk opsi yang trigger file input, jalankan callback DULU (synchronous), baru close sheet.
-      if (opt[0].includes('Upload File') || opt[0].includes('Upload gambar')) {
-        opt[1](); // synchronous — preserves user gesture
+      const label = opt[0];
+      // v3.20.39: Fix tombol upload tidak bereaksi — 2 root cause:
+      //
+      // BUG 1: "Upload gambar (manual)" → doShot('upload') → saveScreenshotManualSheet()
+      // → openSheet() membuka sheet upload. Tapi lalu closeSheet() langsung menutupnya!
+      // User lihat sheet flash lalu hilang. Fix: JANGAN closeSheet() untuk opsi ini —
+      // saveScreenshotManualSheet() sudah replace sheet menu dengan sheet upload.
+      //
+      // BUG 2: "Upload File teks" → docFileInput.click() pada element display:none.
+      // Chrome MV3 popup kadang menolak buka file picker untuk display:none input.
+      // Fix: tutup menu dulu (sync CSS), lalu trigger .click() — gesture tetap valid.
+      // Plus: docFileInput CSS diubah dari display:none → offscreen positioning.
+      if (label.includes('Upload gambar')) {
+        // Upload gambar: saveScreenshotManualSheet() opens its own sheet.
+        // JANGAN closeSheet() — akan menutup sheet yang baru dibuka.
+        console.log('[RecallFox/addItemMenu] Upload gambar clicked → opening manual upload sheet');
+        opt[1](); // synchronous — saveScreenshotManualSheet() replaces menu sheet
+      } else if (label.includes('Upload File')) {
+        // Upload File teks: trigger native file picker.
+        // Close menu first (sync CSS toggle), then .click() preserves user gesture.
+        console.log('[RecallFox/addItemMenu] Upload File teks clicked → triggering file picker');
         closeSheet();
+        opt[1](); // synchronous — docFileInput.click()
       } else {
+        // Opsi lain: tutup sheet dulu, lalu jalankan callback setelah 80ms.
         closeSheet();
         setTimeout(opt[1], 80);
       }
@@ -10112,9 +10130,12 @@ function bindEvents() {
   $('#noteAddBtn').addEventListener('click', newNote);
   // v3.20.36 port dari Firefox: File upload via menu "+ Baru" — input hidden.
   // docFileInput di-trigger dari addItemMenu() opsi "📄 Upload File teks".
+  // v3.20.39: Tambah console.log untuk debugging — user bisa verify event terjadi.
   const _docFileInput = $('#docFileInput');
   if (_docFileInput) {
+    console.log('[RecallFox] docFileInput found, wiring change handler. Element:', _docFileInput);
     _docFileInput.addEventListener('change', async (e) => {
+      console.log('[RecallFox] docFileInput change event fired. Files:', e.target.files?.length);
       if (e.target.files && e.target.files.length > 0) {
         await handleDocFileUpload(e.target.files);
       }
