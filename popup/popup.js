@@ -1460,8 +1460,11 @@ async function vaultBatchCopyBundleAction() {
     for (const i of items) {
       const T = TYPE[i.type] || { label: i.type };
       const header = '## ' + (i.title || i.type) + ' [' + T.label + ']';
-      if (i.type === 'link') sections.push(header + '\n' + (i.linkUrl || i.body || ''));
-      else sections.push(header + '\n' + (i.body || ''));
+      // v3.20.45: Pakai getBundleContent(i, 'copy') — standarisasi logic.
+      //   Sebelumnya: inline logic yang tidak handle file/media dengan benar.
+      //   Sekarang: prompt/file→teks, link/media→URL.
+      const content = getBundleContent(i, 'copy');
+      sections.push(header + '\n' + content);
     }
     for (const n of notes) {
       // v3.13.0 (Issue #4): Strip HTML untuk Markdown output supaya AI tidak bingung.
@@ -3247,7 +3250,7 @@ function bindItemClicks() {
         const action = bundleBtn.dataset.bundleAction;
         const it = findItem(el.dataset.id);
         if (!it) return;
-        if (action === 'copy') { injectBundle(it.id); return; }
+        if (action === 'copy') { copyBundle(it.id); return; }
         else if (action === 'scope') {
           // v3.16.7 #5: Scope vault ke bundle ini (workspace proyek)
           currentBundleScope = it.id;
@@ -3682,17 +3685,16 @@ async function injectBundle(id) {
   const noteIds = Array.isArray(bundle.noteIds) ? bundle.noteIds : [];
   const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
   if (items.length === 0 && notes.length === 0) { toast('Bundle kosong', false); return; }
-  // v3.7.1-FIX: Bundle sekarang salin semua konten ke clipboard, bukan buka link di tab baru
+  // v3.20.45: Pakai getBundleContent(item, 'insert') — standarisasi logic.
+  //   Sebelumnya: inline logic di injectBundle + vaultBatchCopyBundleAction
+  //   yang berbeda-beda → perilaku tidak konsisten.
+  //   Sekarang: satu fungsi dengan mode 'insert' | 'copy'.
+  //   - insert: prompt→teks, file/link/media→URL
+  //   - copy: prompt/file→teks, link/media→URL
   const allParts = items.map(i => {
     const header = '## ' + (i.title || i.type) + ' [' + (TYPE[i.type]?.label || i.type) + ']';
-    if (i.type === 'link') return header + '\n' + (i.linkUrl || i.body || '');
-    // v3.20.44: File type — gunakan URL cloud (bukan isi file) supaya AI bisa fetch
-    if (i.type === 'file') {
-      const fileUrl = i.gdriveFileUrl || i.gdrive_file_url || (i.source && i.source.url) || '';
-      if (fileUrl) return header + '\n' + fileUrl + '\n(File URL — AI bisa fetch isi dari link ini)';
-      return header + '\n(URL cloud belum tersedia — gunakan Salin Konten untuk isi file)';
-    }
-    return header + '\n' + (i.body || '');
+    const content = getBundleContent(i, 'insert');
+    return header + '\n' + content;
   });
   // v3.10.2 (Issue 3 + 5 fix): Tambahkan catatan sebagai section terpisah
   for (const n of notes) {
@@ -3718,6 +3720,118 @@ async function injectBundle(id) {
     }
   }
   if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
+}
+
+// v3.20.45: copyBundle — Salin bundle dengan mode 'copy'.
+//   Sama struktur dengan injectBundle, tapi pakai getBundleContent(item, 'copy').
+//   Aturan copy: prompt/file→teks (isi), link/media→URL.
+//   Dipanggil dari bundle card tombol "Salin ⤴" (data-bundle-action="copy").
+async function copyBundle(id) {
+  const bundle = currentVault.bundles.find(b => b.id === id);
+  if (!bundle) return;
+  const items = (bundle.injectOrder || bundle.itemIds || []).map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
+  const noteIds = Array.isArray(bundle.noteIds) ? bundle.noteIds : [];
+  const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
+  if (items.length === 0 && notes.length === 0) { toast('Bundle kosong', false); return; }
+  const allParts = items.map(i => {
+    const header = '## ' + (i.title || i.type) + ' [' + (TYPE[i.type]?.label || i.type) + ']';
+    const content = getBundleContent(i, 'copy');
+    return header + '\n' + content;
+  });
+  for (const n of notes) {
+    const noteTitle = n.title || 'Catatan';
+    allParts.push('## ' + noteTitle + ' [Catatan]\n' + stripHtmlForPreview(n.body || ''));
+  }
+  if (bundle.inlinePrompt && bundle.inlinePrompt.trim()) {
+    allParts.unshift('## ' + (bundle.inlinePromptItemId ? (bundle.name || 'Prompt Inline') : 'Prompt Cepat') + ' [Prompt]\n' + bundle.inlinePrompt.trim());
+  }
+  const fullText = allParts.join('\n\n---\n\n');
+  try {
+    await navigator.clipboard.writeText(fullText);
+    for (const i of items) await incrementUseCount(i.id);
+    toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
+  } catch (e) {
+    try {
+      await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: fullText });
+      for (const i of items) await incrementUseCount(i.id);
+      toast('📋 Bundle disalin ke clipboard (' + (items.length + notes.length) + ' anggota)');
+    } catch (e2) {
+      toast('⚠ Gagal menyalin bundle', false);
+    }
+  }
+}
+
+// v3.20.45: getBundleContent — standarisasi logic sisip vs salin bundle.
+//   Dipakai oleh injectBundle (mode='insert') + copyBundle/vaultBatchCopyBundleAction (mode='copy').
+//
+// Aturan (sesuai spec user):
+//   - insert (Sisip): prompt→teks, file/link/media→URL
+//       AI bisa fetch konten dari URL, hemat token prompt.
+//   - copy (Salin): prompt/file→teks (isi), link/media→URL
+//       User paste langsung ke chat/AI, konten teks langsung visible.
+//
+// Field name convention (camelCase lokal, snake_case dari cloud):
+//   - prompt/context: item.body (teks prompt)
+//   - file: item.gdriveFileUrl || item.gdrive_file_url (URL cloud Storage)
+//           fallback: item.body (isi teks, kalau URL belum tersedia)
+//   - link: item.linkUrl || item.body (URL)
+//   - screenshot/media: item.gdriveFileUrl || item.gdrive_file_url (URL cloud Storage)
+//                       fallback: item.source.url (legacy)
+//   - snapshot: item.body (teks percakapan)
+//   - document: item.gdriveFileUrl || item.gdrive_file_url (URL multi-page)
+//   - note: item.body (teks catatan, dipakai di vaultBatchCopyBundleAction)
+function getBundleContent(item, mode) {
+  if (!item) return '';
+  const t = item.type;
+  console.log('[RecallFox/Bundle] getBundleContent:', t, 'mode=' + mode, 'id=' + item.id);
+
+  // Helper: resolve cloud URL (file / screenshot / document)
+  const cloudUrl = item.gdriveFileUrl || item.gdrive_file_url || (item.source && item.source.url) || '';
+
+  if (mode === 'insert') {
+    // SISIP: prompt→teks, file/link/media→URL
+    if (t === 'prompt' || t === 'context' || t === 'snapshot') {
+      return item.body || '';
+    }
+    if (t === 'file') {
+      if (cloudUrl) return cloudUrl + '\n(File URL — AI bisa fetch isi dari link ini)';
+      return '(URL cloud belum tersedia — gunakan Salin untuk isi file)';
+    }
+    if (t === 'link') {
+      return item.linkUrl || item.body || '';
+    }
+    if (t === 'screenshot' || t === 'media' || t === 'document') {
+      if (cloudUrl) return cloudUrl + '\n(Media URL — AI bisa fetch gambar/dokumen dari link ini)';
+      return '(URL cloud belum tersedia)';
+    }
+    // note + unknown → teks
+    return item.body || '';
+  }
+
+  if (mode === 'copy') {
+    // SALIN: prompt/file→teks (isi), link/media→URL
+    if (t === 'prompt' || t === 'context' || t === 'snapshot') {
+      return item.body || '';
+    }
+    if (t === 'file') {
+      // Salin: isi teks file (bukan URL) — user bisa paste langsung ke chat
+      return item.body || '';
+    }
+    if (t === 'link') {
+      return item.linkUrl || item.body || '';
+    }
+    if (t === 'screenshot' || t === 'media' || t === 'document') {
+      // Salin: URL gambar (bukan base64 — terlalu besar untuk clipboard text)
+      if (cloudUrl) return cloudUrl;
+      return '(URL cloud belum tersedia)';
+    }
+    // note + unknown → teks
+    return item.body || '';
+  }
+
+  // Fallback (mode tidak dikenal) → teks
+  console.warn('[RecallFox/Bundle] getBundleContent: unknown mode', mode);
+  return item.body || '';
 }
 // v3.12.2: Image modal viewer — in-sidebar overlay (bukan window/tab baru).
 // Dipakai untuk screenshot (1 page) DAN dokumen multi-page.
