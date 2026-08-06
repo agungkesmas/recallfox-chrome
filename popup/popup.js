@@ -2024,32 +2024,29 @@ function renderItemHtml(it, indent, connector) {
   const arch = it.archived ? '<span class="fav" title="Diarsipkan" style="color:var(--muted)">\uD83D\uDCE6</span>' : '';
   const uses = it.useCount || it.uses || 0;
   let ctaHtml = '';
+  // v3.20.47: Standarisasi — SEMUA type item punya Sisip + Salin.
+  // Sisip = inject ke AI/active tab (zap icon). Salin = copy ke clipboard (copy icon).
+  // Plus tombol type-specific yang sudah ada (Lihat, Download, Buka, Scope).
   if (it.type === 'link') {
-    ctaHtml = '<span class="cta-pill" data-link-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
-      + '<button class="link-mini-btn" data-link-action="open" title="Buka link di tab baru">' + ICONS.spark + '</button>'
-      + (currentAiDomain ? '<button class="link-mini-btn" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + '</button>' : '');
+    ctaHtml = '<span class="cta-pill" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + 'Sisip \u21B5</span>'
+      + '<button class="link-mini-btn" data-link-action="copy" title="Salin URL ke clipboard">' + ICONS.copy + '</button>'
+      + '<button class="link-mini-btn" data-link-action="open" title="Buka link di tab baru">' + ICONS.spark + '</button>';
   } else if (it.type === 'bundle') {
     const memberCount = (it._bundle?.itemIds || []).length;
-    // v3.20.46: Dua tombol terpisah — Sisip (insert mode) + Salin (copy mode).
-    //   Sebelumnya: tombol "Salin ⤴" panggil injectBundle (mode insert) → user
-    //   bingung karena label "Salin" tapi behavior "Sisip".
-    //   v3.20.45: saya ubah ke copyBundle → user complain "Sisip hilang".
-    //   Sekarang: DUA tombol eksplisit supaya user bisa pilih.
-    //     - Sisip ⤴ (cta-pill, primary): injectBundle → prompt→teks, file/link→URL
-    //     - 📋 (mini btn): copyBundle → prompt/file→teks, link→URL
     ctaHtml = '<span class="cta-pill" data-bundle-action="inject">' + ICONS.zap + 'Sisip \u21B5</span>'
-      + '<button class="link-mini-btn" data-bundle-action="copy" title="Salin bundle (prompt/file→teks, link→URL)">' + ICONS.copy + '</button>'
+      + '<button class="link-mini-btn" data-bundle-action="copy" title="Salin bundle ke clipboard">' + ICONS.copy + '</button>'
       + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '');
   } else if (it.type === 'screenshot') {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat \u21B5</span>'
+      + '<button class="link-mini-btn" data-shot-action="inject" title="Sisipkan URL gambar ke chat AI">' + ICONS.zap + '</button>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download gambar">' + ICONS.download + '</button>';
   } else if (it.type === 'document') {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">\uD83D\uDCC4 Lihat \u21B5</span>'
+      + '<button class="link-mini-btn" data-shot-action="inject" title="Sisipkan URL dokumen ke chat AI">' + ICONS.zap + '</button>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download halaman pertama">' + ICONS.download + '</button>';
   } else if (it.type === 'file') {
-    // v3.20.37-dev: Tombol "Salin ↵" langsung kopi isi file (bukan buka sheet).
-    // User feedback: "Aksi ↵" terlalu banyak langkah — langsung kopi lebih cepat.
-    ctaHtml = '<span class="cta-pill" data-file-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
+    ctaHtml = '<span class="cta-pill" data-file-action="inject" title="Sisipkan isi file ke chat AI">' + ICONS.zap + 'Sisip \u21B5</span>'
+      + '<button class="link-mini-btn" data-file-action="copy" title="Salin isi file ke clipboard">' + ICONS.copy + '</button>'
       + '<button class="link-mini-btn" data-file-action="download" title="Download file">' + ICONS.download + '</button>';
   } else {
     // v3.20.47: Standarisasi — prompt/context/snapshot dapat DUA tombol eksplisit:
@@ -2059,8 +2056,8 @@ function renderItemHtml(it, indent, connector) {
     //   yang panggil doInject (coba sisip, fallback clipboard). Label "Salin" menyesatkan
     //   karena sebenarnya inject. User complain: "Sisip tidak jalan, Salin juga tidak."
     // Fix: dua tombol terpisah supaya user bisa pilih injeksi ATAU salin.
-    ctaHtml = '<span class="cta-pill" data-prompt-action="inject">' + ICONS.zap + 'Sisip \u21B5</span>'
-      + '<button class="link-mini-btn" data-prompt-action="copy" title="Salin isi ke clipboard">' + ICONS.copy + '</button>';
+    ctaHtml = '<span class="cta-pill" data-prompt-action="inject" title="Sisipkan ke chat AI">' + ICONS.zap + 'Sisip \u21B5</span>'
+      + '<button class="link-mini-btn" data-prompt-action="copy" title="Salin ke clipboard">' + ICONS.copy + '</button>';
   }
   let batchCheckboxHtml = '';
   if (vaultBatchMode) {
@@ -3300,6 +3297,14 @@ function bindItemClicks() {
           else openScreenshotViewer(it.id);
         } else if (action === 'download') {
           downloadScreenshot(it.id);
+        } else if (action === 'inject') {
+          // v3.20.47: Sisipkan URL gambar/dokumen ke chat AI
+          const url = resolveImageUrl(it);
+          if (url) {
+            await doInject(url, it.id);
+          } else {
+            toast('URL cloud belum tersedia. Buka item sheet untuk download.', false);
+          }
         }
         return;
       }
@@ -3331,12 +3336,41 @@ function bindItemClicks() {
         const it = findItem(el.dataset.id);
         if (!it) return;
         if (action === 'copy') {
-          // Direct copy isi file ke clipboard — tidak buka item sheet
           copyFileContentToClipboard(it.id);
+        } else if (action === 'inject') {
+          // v3.20.47: Sisipkan isi file ke chat AI
+          if (it.body) {
+            await doInject(it.body, it.id);
+          } else {
+            toast('File kosong', false);
+          }
         } else if (action === 'sheet') {
           itemSheet(it.id);
         } else if (action === 'download') {
           downloadFileItem(it.id);
+        }
+        return;
+      }
+      // v3.20.47: Tombol aksi Prompt/Context/Snapshot (data-prompt-action)
+      const promptBtn = e.target.closest('[data-prompt-action]');
+      if (promptBtn) {
+        e.stopPropagation();
+        const action = promptBtn.dataset.promptAction;
+        const it = findItem(el.dataset.id);
+        if (!it) return;
+        if (action === 'inject') {
+          // Sisipkan ke AI — pakai primaryAction logic (handles variables, toppings, context)
+          await primaryAction(it.id);
+        } else if (action === 'copy') {
+          // Salin body ke clipboard
+          const body = it.body || '';
+          if (body) {
+            const ok = await _copyTextWithFallback(body);
+            if (ok) toast('📋 Disalin ke clipboard (' + body.length + ' karakter)');
+            else toast('Gagal salin (clipboard diblokir)', false);
+          } else {
+            toast('Item ini tidak punya teks untuk disalin', false);
+          }
         }
         return;
       }
