@@ -6308,12 +6308,26 @@ function addItemMenu() {
       ['📱 Screenshot viewport', () => doShot('visible')],
       ['📄 Screenshot seluruh halaman', () => doShot('entire')],
       ['📤 Upload gambar (manual)', () => doShot('upload')],   // v3.8.1 Issue #3
-      // v3.20.36 port dari Firefox: Upload file teks (.md/.txt/.json/.html/.csv/.yaml)
+      // v3.20.40: Upload file teks — Buka di detached window (chrome.windows.create)
+      // Root cause: Chrome MV3 popup CLOSES when file picker opens (loses focus → destroyed).
+      // Firefox popup stays alive — that's why Firefox works but Chrome didn't.
+      // Fix: open upload-window.html in a detached popup window that stays alive.
       ['📄 Upload File teks', () => {
-        const docFileInput = $('#docFileInput');
-        if (docFileInput) {
-          docFileInput.value = '';
-          docFileInput.click();
+        console.log('[RecallFox/addItemMenu] Upload File teks → opening detached window');
+        closeSheet();
+        // Open detached window — stays alive when file picker opens
+        browser.windows.create({
+          url: browser.runtime.getURL('popup/upload-window.html'),
+          type: 'popup',
+          width: 420,
+          height: 480
+        }).catch(e => {
+          console.error('[RecallFox] Failed to open upload window:', e);
+          toast('⚠ Gagal buka upload window: ' + e.message, false);
+        });
+        // Close popup supaya user fokus ke upload window
+        if (!document.body.classList.contains('rf-sidebar-body')) {
+          setTimeout(() => window.close(), 200);
         }
       }],
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
@@ -6322,30 +6336,13 @@ function addItemMenu() {
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', (ev) => {
       const opt = opts[a.dataset.i];
       const label = opt[0];
-      // v3.20.39: Fix tombol upload tidak bereaksi — 2 root cause:
-      //
-      // BUG 1: "Upload gambar (manual)" → doShot('upload') → saveScreenshotManualSheet()
-      // → openSheet() membuka sheet upload. Tapi lalu closeSheet() langsung menutupnya!
-      // User lihat sheet flash lalu hilang. Fix: JANGAN closeSheet() untuk opsi ini —
-      // saveScreenshotManualSheet() sudah replace sheet menu dengan sheet upload.
-      //
-      // BUG 2: "Upload File teks" → docFileInput.click() pada element display:none.
-      // Chrome MV3 popup kadang menolak buka file picker untuk display:none input.
-      // Fix: tutup menu dulu (sync CSS), lalu trigger .click() — gesture tetap valid.
-      // Plus: docFileInput CSS diubah dari display:none → offscreen positioning.
+      // v3.20.40: Upload File teks sekarang buka detached window — handler sendiri
+      // close popup. Opsi lain ikut pattern default.
       if (label.includes('Upload gambar')) {
-        // Upload gambar: saveScreenshotManualSheet() opens its own sheet.
-        // JANGAN closeSheet() — akan menutup sheet yang baru dibuka.
+        // saveScreenshotManualSheet() opens its own sheet — JANGAN closeSheet()
         console.log('[RecallFox/addItemMenu] Upload gambar clicked → opening manual upload sheet');
-        opt[1](); // synchronous — saveScreenshotManualSheet() replaces menu sheet
-      } else if (label.includes('Upload File')) {
-        // Upload File teks: trigger native file picker.
-        // Close menu first (sync CSS toggle), then .click() preserves user gesture.
-        console.log('[RecallFox/addItemMenu] Upload File teks clicked → triggering file picker');
-        closeSheet();
-        opt[1](); // synchronous — docFileInput.click()
+        opt[1]();
       } else {
-        // Opsi lain: tutup sheet dulu, lalu jalankan callback setelah 80ms.
         closeSheet();
         setTimeout(opt[1], 80);
       }

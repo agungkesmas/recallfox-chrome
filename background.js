@@ -2453,6 +2453,39 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Save captured image to vault as screenshot item
     sendResponse(await saveCaptureToVault(msg)); return;
   }
+  // v3.20.40: Upload file teks dari detached window — Chrome MV3 popup closes
+  // when file picker opens, jadi file dibaca di upload-window.js lalu dikirim ke sini.
+  if (msg.type === 'DOC_FILE_UPLOADED') {
+    try {
+      const { addItem } = await import('./lib/storage.js');
+      const file = msg.file;
+      if (!file || !file.body) {
+        sendResponse({ ok: false, error: 'no_file_data' });
+        return;
+      }
+      const newItem = await addItem({
+        type: 'file',
+        title: file.name,
+        body: file.body,
+        tags: ['file', file.kind],
+        source: {
+          kind: file.kind,
+          mime: file.mime,
+          fileName: file.name,
+          size: file.size,
+          uploadedFrom: 'upload-window'
+        }
+      });
+      console.log('[RecallFox] Doc file uploaded via detached window:', newItem.id);
+      // Notify vault updated
+      browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
+      sendResponse({ ok: true, id: newItem.id });
+    } catch (e) {
+      console.error('[RecallFox] DOC_FILE_UPLOADED failed:', e);
+      sendResponse({ ok: false, error: e.message });
+    }
+    return;
+  }
   if (msg.type === 'CAPTURE_SCREENSHOT') {
     // Legacy: sent from popup/sidebar quick-action button — now triggers the modal flow
     // via overlay.js in the active tab. msg.mode can be 'entire' | 'visible' | 'selection'
