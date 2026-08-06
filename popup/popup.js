@@ -2030,9 +2030,16 @@ function renderItemHtml(it, indent, connector) {
       + (currentAiDomain ? '<button class="link-mini-btn" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + '</button>' : '');
   } else if (it.type === 'bundle') {
     const memberCount = (it._bundle?.itemIds || []).length;
-    ctaHtml = '<span class="cta-pill" data-bundle-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
-      + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '')
-      + (currentAiDomain ? '<button class="link-mini-btn" data-bundle-action="inject" title="Sisipkan semua item ke chat AI">' + ICONS.zap + '</button>' : '');
+    // v3.20.46: Dua tombol terpisah — Sisip (insert mode) + Salin (copy mode).
+    //   Sebelumnya: tombol "Salin ⤴" panggil injectBundle (mode insert) → user
+    //   bingung karena label "Salin" tapi behavior "Sisip".
+    //   v3.20.45: saya ubah ke copyBundle → user complain "Sisip hilang".
+    //   Sekarang: DUA tombol eksplisit supaya user bisa pilih.
+    //     - Sisip ⤴ (cta-pill, primary): injectBundle → prompt→teks, file/link→URL
+    //     - 📋 (mini btn): copyBundle → prompt/file→teks, link→URL
+    ctaHtml = '<span class="cta-pill" data-bundle-action="inject">' + ICONS.zap + 'Sisip \u21B5</span>'
+      + '<button class="link-mini-btn" data-bundle-action="copy" title="Salin bundle (prompt/file→teks, link→URL)">' + ICONS.copy + '</button>'
+      + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '');
   } else if (it.type === 'screenshot') {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download gambar">' + ICONS.download + '</button>';
@@ -3262,31 +3269,13 @@ function bindItemClicks() {
           return;
         }
         else if (action === 'inject') {
-          // Sisipkan semua teks item bundle ke chat AI
-          // v3.10.2 (Issue 3 + 5 fix): Sertakan juga catatan (bundle.noteIds)
-          // dan inline prompt — sebelumnya hanya item teks.
-          const bundle = currentVault.bundles.find(b => b.id === it.id);
-          if (bundle) {
-            const items = (bundle.injectOrder || bundle.itemIds || []).map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
-            const textItems = items.filter(i => i.type !== 'link');
-            const noteIds = Array.isArray(bundle.noteIds) ? bundle.noteIds : [];
-            const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
-            const parts = [];
-            // Inline prompt di awal kalau ada
-            if (bundle.inlinePrompt && bundle.inlinePrompt.trim()) {
-              parts.push('## ' + (bundle.name || 'Prompt Cepat') + ' [Prompt]\n' + bundle.inlinePrompt.trim());
-            }
-            for (const i of textItems) {
-              parts.push('## ' + (i.title || i.type) + '\n' + (i.body || ''));
-            }
-            for (const n of notes) {
-              parts.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + stripHtmlForPreview(n.body || ''));
-            }
-            if (parts.length > 0) {
-              const text = parts.join('\n\n---\n\n');
-              doInject(text, it.id);
-            } else { toast('Bundle tidak punya item teks/catatan', false); }
-          }
+          // v3.20.46: Sisip bundle — pakai injectBundle (mode insert).
+          //   Sebelumnya: logic lama yang filter(i => i.type !== 'link') →
+          //   link TIDAK di-sisip. User complain: "Sisip hanya membaca prompt
+          //   dan isi file, link TIDAK terbaca".
+          //   Sekarang: panggil injectBundle yang pakai getBundleContent(insert)
+          //   → prompt→teks, file/link/media→URL. Semua anggota disisipkan.
+          injectBundle(it.id);
           return;
         }
       }
