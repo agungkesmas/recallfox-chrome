@@ -2,11 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-<<<<<<< Updated upstream
   "version": "3.20.46",
-=======
-  "version": "3.20.45",
->>>>>>> Stashed changes
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
