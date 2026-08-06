@@ -704,7 +704,20 @@ function getVaultItems() {
     id: b.id, type: 'bundle', title: b.name || 'Bundle', tags: ['bundle'],
     uses: b.useCount || 0, _bundle: b
   }));
-  return [...items, ...bundles];
+  // v3.20.38-dev-chrome: Dedup by ID — defense-in-depth supaya list view tidak
+  //   tampilkan duplikat meskipun storage layer masih punya (e.g. data lama
+  //   sebelum fix, atau realtime race yang lolos). Port dari Firefox v3.20.39-dev.
+  const seen = new Set();
+  const merged = [...items, ...bundles];
+  const deduped = merged.filter(it => {
+    if (!it.id || seen.has(it.id)) {
+      console.warn('[RecallFox/popup] getVaultItems: skipped duplicate ID:', it.id, it.title);
+      return false;
+    }
+    seen.add(it.id);
+    return true;
+  });
+  return deduped;
 }
 
 // v3.7.2 (Issue 1): tambah chip "Arsip" untuk lihat item yang diarsipkan.
