@@ -3686,6 +3686,12 @@ async function injectBundle(id) {
   const allParts = items.map(i => {
     const header = '## ' + (i.title || i.type) + ' [' + (TYPE[i.type]?.label || i.type) + ']';
     if (i.type === 'link') return header + '\n' + (i.linkUrl || i.body || '');
+    // v3.20.44: File type — gunakan URL cloud (bukan isi file) supaya AI bisa fetch
+    if (i.type === 'file') {
+      const fileUrl = i.gdriveFileUrl || i.gdrive_file_url || (i.source && i.source.url) || '';
+      if (fileUrl) return header + '\n' + fileUrl + '\n(File URL — AI bisa fetch isi dari link ini)';
+      return header + '\n(URL cloud belum tersedia — gunakan Salin Konten untuk isi file)';
+    }
     return header + '\n' + (i.body || '');
   });
   // v3.10.2 (Issue 3 + 5 fix): Tambahkan catatan sebagai section terpisah
@@ -5161,9 +5167,9 @@ function openBundleEditorSheet(bundleId) {
   const bd = currentVault.bundles.find(b => b.id === bundleId);
   if (!bd) { toast('Bundle tidak ditemukan', false); return; }
   // v3.9.0 (Issue 2): Sort by type + add filter chips + color badges
-  const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5 };
+  const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5, file: 6 };
   const allCandidates = (currentVault?.items || []).filter(i =>
-    ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived
+    ['prompt', 'context', 'link', 'screenshot', 'snapshot', 'file'].includes(i.type) && !i.archived
   ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
                     (a.title || '').localeCompare(c.title || ''));
   // v3.10.2 (Issue 5 fix): Catatan candidates — selaras dengan Buat Bundle
@@ -5190,7 +5196,9 @@ function openBundleEditorSheet(bundleId) {
       +   '<label class="checkrow" style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px">'
       +     '<input type="checkbox" id="ebSaveAsPrompt"' + (bd.inlinePromptItemId ? ' checked' : '') + '> Simpan juga sebagai item Prompt tersendiri'
       +   '</label></div>'
-      // v3.9.0 (Issue 2): Filter chips per tipe — sekarang + chip "Catatan"
+      // v3.20.44: Tambah search bar + File filter chip
+      + '<div><label>Cari item <span class="field-hint">(judul, tag, konten)</span></label>'
+      +   '<input class="f" id="ebSearch" placeholder="🔍 Cari item..." style="margin-bottom:8px"></div>'
       + '<div><label>Filter per tipe <span class="field-hint">(klik untuk filter)</span></label>'
       +   '<div class="eb-filters" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">'
       +     '<button class="chip eb-filter on" data-cat="all" style="font-size:10.5px;padding:3px 9px">Semua</button>'
@@ -5199,6 +5207,7 @@ function openBundleEditorSheet(bundleId) {
       +     '<button class="chip eb-filter" data-cat="link" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #0891b2">🔗 Link</button>'
       +     '<button class="chip eb-filter" data-cat="screenshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--green)">🖼️ Media</button>'
       +     '<button class="chip eb-filter" data-cat="snapshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--amber)">📸 Snapshot</button>'
+      +     '<button class="chip eb-filter" data-cat="file" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #6366f1">📄 File</button>'
       +     '<button class="chip eb-filter" data-cat="note" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #ca8a04">📝 Catatan</button>'
       +   '</div></div>'
       + '<div><label>Anggota <span class="field-hint" id="ebCount">' + ((bd.itemIds || []).length + (bd.noteIds || []).length) + ' dipilih</span></label>'
@@ -5213,15 +5222,23 @@ function openBundleEditorSheet(bundleId) {
     // v3.10.2 (Issue 5 fix): + track checked notes in a Set
     const listBox = b.querySelector('#ebList');
     let activeFilter = 'all';
+    let searchQuery = '';
     b._checkedSet = new Set(bd.itemIds || []);
     b._checkedNotes = new Set(bd.noteIds || []);
 
     function renderList() {
       let html = '';
-      // Items
-      const filtered = activeFilter === 'all' || activeFilter === 'note'
+      // v3.20.44: Apply search filter + type filter
+      const filtered = (activeFilter === 'all' || activeFilter === 'note'
         ? allCandidates
-        : allCandidates.filter(it => it.type === activeFilter);
+        : allCandidates.filter(it => it.type === activeFilter)
+      ).filter(it => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        return (it.title || '').toLowerCase().includes(q)
+          || (it.body || '').toLowerCase().includes(q)
+          || (it.tags || []).some(t => t.toLowerCase().includes(q));
+      });
       for (const it of filtered) {
         const T = TYPE[it.type] || { icon: '', label: it.type };
         const checked = b._checkedSet.has(it.id) ? ' checked' : '';
@@ -5268,6 +5285,19 @@ function openBundleEditorSheet(bundleId) {
         renderList();
       });
     });
+
+    // v3.20.44: Search bar handler with debounce
+    let _ebSearchTimer = null;
+    const _ebSearchInput = b.querySelector('#ebSearch');
+    if (_ebSearchInput) {
+      _ebSearchInput.addEventListener('input', () => {
+        clearTimeout(_ebSearchTimer);
+        _ebSearchTimer = setTimeout(() => {
+          searchQuery = (_ebSearchInput.value || '').trim();
+          renderList();
+        }, 200);
+      });
+    }
 
     $('#ebCancel').addEventListener('click', closeSheet);
     $('#ebSave').addEventListener('click', async () => {
@@ -5984,9 +6014,9 @@ function saveBundleSheet() {
     // v3.8.1 (Issue #5d): Item di-sort per tipe + badge warna (bukan cuma teks).
     // Sertakan juga screenshot & snapshot (v3.7.2 Issue 1).
     // v3.10.2 (Issue 3 fix): Tambah filter per tipe — selaras dengan Edit Bundle.
-    const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5 };
+    const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5, file: 6 };
     const itemCandidates = (currentVault?.items || []).filter(i =>
-      ['prompt', 'context', 'link', 'screenshot', 'snapshot'].includes(i.type) && !i.archived
+      ['prompt', 'context', 'link', 'screenshot', 'snapshot', 'file'].includes(i.type) && !i.archived
     ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
                        (a.title || '').localeCompare(c.title || ''));
     const noteCandidates = (currentNotes || []).filter(n => !n.archived);
@@ -6009,7 +6039,9 @@ function saveBundleSheet() {
       +   '<label class="checkrow" style="display:flex;align-items:center;gap:6px;font-size:11px;margin-top:4px">'
       +     '<input type="checkbox" id="bSaveAsPrompt"> Simpan juga sebagai item Prompt tersendiri (default: mati)'
       +   '</label></div>'
-      // v3.10.2 (Issue 3 fix): Filter chips per tipe — IDENTIK dengan Edit Bundle
+      // v3.20.44: Tambah search bar + File filter chip
+      + '<div><label>Cari item <span class="field-hint">(judul, tag, konten)</span></label>'
+      +   '<input class="f" id="bSearch" placeholder="🔍 Cari item..." style="margin-bottom:8px"></div>'
       + '<div><label>Filter per tipe <span class="field-hint">(klik untuk filter)</span></label>'
       +   '<div class="eb-filters" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">'
       +     '<button class="chip eb-filter on" data-cat="all" style="font-size:10.5px;padding:3px 9px">Semua</button>'
@@ -6018,6 +6050,7 @@ function saveBundleSheet() {
       +     '<button class="chip eb-filter" data-cat="link" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #0891b2">🔗 Link</button>'
       +     '<button class="chip eb-filter" data-cat="screenshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--green)">🖼️ Media</button>'
       +     '<button class="chip eb-filter" data-cat="snapshot" style="font-size:10.5px;padding:3px 9px;border-left:3px solid var(--amber)">📸 Snapshot</button>'
+      +     '<button class="chip eb-filter" data-cat="file" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #6366f1">📄 File</button>'
       +     '<button class="chip eb-filter" data-cat="note" style="font-size:10.5px;padding:3px 9px;border-left:3px solid #ca8a04">📝 Catatan</button>'
       +   '</div></div>'
       + '<div><label>Pilih item <span class="field-hint" id="bCount">0 dipilih</span></label>'
@@ -6027,16 +6060,24 @@ function saveBundleSheet() {
     // v3.10.2 (Issue 3 fix): Render list dengan filter, tracking checked via Set
     const listBox = b.querySelector('#bList');
     let activeFilter = 'all';
+    let searchQuery = '';
     // Set untuk track item + note yang tercentang (id unik jadi tidak tabrakan)
     b._checkedItems = new Set();
     b._checkedNotes = new Set();
 
     function renderList() {
       let html = '';
-      // Items (filter sesuai activeFilter, "all" = tampilkan semua)
-      const filteredItems = activeFilter === 'all' || activeFilter === 'note'
+      // v3.20.44: Apply search filter + type filter
+      const filteredItems = (activeFilter === 'all' || activeFilter === 'note'
         ? itemCandidates
-        : itemCandidates.filter(it => it.type === activeFilter);
+        : itemCandidates.filter(it => it.type === activeFilter)
+      ).filter(it => {
+        if (!searchQuery) return true;
+        const q = searchQuery.toLowerCase();
+        return (it.title || '').toLowerCase().includes(q)
+          || (it.body || '').toLowerCase().includes(q)
+          || (it.tags || []).some(t => t.toLowerCase().includes(q));
+      });
       for (const it of filteredItems) {
         const T = TYPE[it.type] || { icon: '', label: it.type };
         const checked = b._checkedItems.has(it.id) ? ' checked' : '';
@@ -6083,6 +6124,19 @@ function saveBundleSheet() {
         renderList();
       });
     });
+
+    // v3.20.44: Search bar handler with debounce
+    let _searchTimer = null;
+    const _searchInput = b.querySelector('#bSearch');
+    if (_searchInput) {
+      _searchInput.addEventListener('input', () => {
+        clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => {
+          searchQuery = (_searchInput.value || '').trim();
+          renderList();
+        }, 200);
+      });
+    }
 
     b.querySelector('#bCancel').addEventListener('click', closeSheet);
     b.querySelector('#bSave').addEventListener('click', async () => {
