@@ -34,6 +34,7 @@
   let isPinned = false;
   let idleTimer = null;
   let userResized = false;  // v3.20.8: track apakah user pernah resize
+  let captureHideTimer = null;  // v3.20.14: fallback restore 5s kalau RF_RESTORE_AFTER_CAPTURE lost
 
   // ===== Storage =====
   async function loadState() {
@@ -295,37 +296,23 @@
 
   // ===== Trigger screenshot — kirim message ke background =====
   function triggerScreenshot() {
-    // v3.20.12: Hide popout sidebar + floater BEFORE screenshot capture.
-    // Flow: triggerScreenshot → hide → CAPTURE_SCREENSHOT → overlay.js modal
-    // → user picks mode → overlay.js sends CAPTURE_FOR_PREVIEW → background
-    // broadcasts RF_HIDE_FOR_CAPTURE (redundant but safe) → captureVisibleTab
-    // → background broadcasts RF_RESTORE_AFTER_CAPTURE → sidebar restored.
+    // v3.20.13: Event-driven hide/restore — sidebar tetap visible saat
+    // mode-picker (picker z-index tinggi nutupin sidebar, tidak masalah).
+    // Hide hanya terjadi saat background akan captureVisibleTab, lewat
+    // broadcast RF_HIDE_FOR_CAPTURE. Restore SELALU dikirim di finally block
+    // background (sukses / gagal / cancel) — tidak ada timer fallback 30s.
     //
-    // Fallback timer (30s): if user cancels capture (Esc in overlay.js),
-    // background never sends RF_RESTORE → timer restores sidebar.
-    if (host) host.style.display = 'none';
-    if (floaterPair) floaterPair.style.display = 'none';  // v3.20.13: FIX — was host.style.display (bug)
-
-    // v3.20.13: HAPUS .catch() fallback yang kirim RF_FORWARD_TO_ACTIVE_TAB.
-    //   Sebelumnya: kalau CAPTURE_SCREENSHOT reject (common Chrome MV3
-    //   "message channel closed" error), .catch() kirim RF_FORWARD_TO_ACTIVE_TAB
-    //   → background forward TRIGGER_CAPTURE_FROM_POPUP → modal muncul 2x!
-    //   User complain: "modal screnshotnya keluar lagi tidak berapa lama.
-    //   jadi kyk dobel gitu listenernya."
-    //   Sekarang: background.js CAPTURE_SCREENSHOT handler sudah punya inject+retry
-    //   sendiri (v3.20.11). Tidak perlu fallback di sini. Kalau sendMessage reject,
-    //   just log — jangan trigger ulang.
-    browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode: undefined }).catch((e) => {
-      console.warn('[RecallFox] CAPTURE_SCREENSHOT rejected (background will handle inject+retry):', e.message);
+    // Bug sebelumnya (v3.20.12): hide langsung di sini pakai display:none
+    // + jadwal setTimeout 30s restore. Kalau user batal picker (Esc / klik
+    // luar), background tidak pernah panggil captureVisibleTab → sidebar
+    // tetap hidden sampai 30s timer selesai. User report:
+    // "kalau batal screenshot berarti popout tidak kembali otomatis?
+    // misal pencet esc atau halaman kosong lainnya diluar modal screnshoot?"
+    // Plus typo bug: line 307 set host.style.display (harusnya floaterPair).
+    browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode: undefined }).catch(() => {
+      // Fallback: kirim TRIGGER_CAPTURE_FROM_POPUP ke overlay.js via background
+      browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'TRIGGER_CAPTURE_FROM_POPUP' }).catch(() => {});
     });
-
-    // v3.20.12: Fallback restore after 30 seconds.
-    // Covers: user cancels capture, closes overlay, navigates away.
-    // Normal flow: background sends RF_RESTORE_AFTER_CAPTURE after save.
-    setTimeout(() => {
-      if (host) host.style.display = 'block';
-      if (floaterPair) host.style.display = 'flex';
-    }, 30000);
   }
 
   // ===== Show / Hide / Toggle =====
@@ -430,8 +417,24 @@
       // v3.20.12: Background broadcasts this before captureVisibleTab
       if (host) host.style.display = 'none';
       if (floaterPair) floaterPair.style.display = 'none';
+
+      // v3.20.14: Fallback restore 5 detik.
+      // User report: "akhirnya muncul tapi itu terlalu lama... kadang ga
+      // muncul lagi juga." Root cause: kalau RF_RESTORE_AFTER_CAPTURE
+      // gagal sampai (tab navigate, content script reload, message lost),
+      // sidebar + floater tetap hidden selamanya.
+      // Fix: jadwalkan auto-restore 5 detik. Kalau RF_RESTORE_AFTER_CAPTURE
+      // datang lebih cepat, timer di-clear (lihat handler di bawah).
+      if (captureHideTimer) clearTimeout(captureHideTimer);
+      captureHideTimer = setTimeout(() => {
+        if (host && isVisible) host.style.display = 'block';
+        if (floaterPair) floaterPair.style.display = 'flex';
+        captureHideTimer = null;
+      }, 5000);
     }
     else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE') {
+      // v3.20.14: Clear fallback timer karena restore sudah datang dari background
+      if (captureHideTimer) { clearTimeout(captureHideTimer); captureHideTimer = null; }
       // v3.20.12: Always restore — even if isVisible changed during capture
       if (host && isVisible) host.style.display = 'block';
       if (floaterPair) floaterPair.style.display = 'flex';

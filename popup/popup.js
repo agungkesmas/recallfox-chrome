@@ -1133,6 +1133,222 @@ async function copyImageUrlToClipboard(id) {
   }
 }
 
+// v3.20.36 port dari Firefox: File upload handlers — pakai addItem yang sudah di-import di top-level
+// (TIDAK pakai dynamic import supaya tidak ada masalah circular dependency)
+const FILE_UPLOAD_WHITELIST = {
+  '.md':       { kind: 'md',   mime: 'text/markdown' },
+  '.markdown': { kind: 'md',   mime: 'text/markdown' },
+  '.txt':      { kind: 'txt',  mime: 'text/plain' },
+  '.json':     { kind: 'json', mime: 'application/json' },
+  '.html':     { kind: 'html', mime: 'text/html' },
+  '.htm':      { kind: 'html', mime: 'text/html' },
+  '.csv':      { kind: 'csv',  mime: 'text/csv' },
+  '.yaml':     { kind: 'yaml', mime: 'text/yaml' },
+  '.yml':      { kind: 'yaml', mime: 'text/yaml' }
+};
+const MAX_FILE_UPLOAD_BYTES = 2 * 1024 * 1024;
+
+function detectFileKind(file) {
+  if (!file || !file.name) return null;
+  const dotIdx = file.name.lastIndexOf('.');
+  if (dotIdx < 0) return null;
+  const ext = file.name.slice(dotIdx).toLowerCase();
+  return FILE_UPLOAD_WHITELIST[ext] || null;
+}
+
+async function handleDocFileUpload(fileList) {
+  if (!fileList || fileList.length === 0) return;
+  const files = Array.from(fileList);
+  let ok = 0, fail = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const progress = files.length > 1 ? ' (' + (i + 1) + '/' + files.length + ')' : '';
+    try {
+      const info = detectFileKind(file);
+      if (!info) {
+        toast('⚠ ' + file.name + ': format tidak didukung' + progress, false);
+        fail++;
+        continue;
+      }
+      if (file.size > MAX_FILE_UPLOAD_BYTES) {
+        toast('⚠ ' + file.name + ': terlalu besar (maks 2MB)' + progress, false);
+        fail++;
+        continue;
+      }
+      const text = await file.text();
+      if (!text || text.length === 0) {
+        toast('⚠ ' + file.name + ': file kosong' + progress, false);
+        fail++;
+        continue;
+      }
+      // addItem sudah di-import di top-level popup.js
+      // v3.20.36-dev: addItem() otomatis trigger directUpsertVaultItem ke Supabase.
+      // Kalau Supabase error (auth/RLS/network), error di-catch di sini + toast jelas.
+      try {
+        await addItem({
+          type: 'file',
+          title: file.name,
+          body: text,
+          tags: ['file', info.kind],
+          source: {
+            kind: info.kind,
+            mime: info.mime,
+            fileName: file.name,
+            size: file.size,
+            uploadedFrom: 'addon-upload',
+            capturedAt: new Date().toISOString()
+          }
+        });
+      } catch (addItemErr) {
+        // addItem gagal — kemungkinan storage.local penuh atau sync error
+        console.error('[RecallFox] File upload: addItem gagal:', file.name, addItemErr);
+        toast('⚠ ' + file.name + ': gagal simpan — ' + (addItemErr.message || 'unknown error'), false);
+        fail++;
+        continue;
+      }
+      // v3.20.38-dev: Cek apakah cloud upload error tercatat di storage.local.
+      // Kalau ada error, tampilkan toast yang JELAS ke user dengan hint.
+      let cloudOk = true;
+      try {
+        const errData = await browser.storage.local.get('recallfox_last_sync_error');
+        if (errData['recallfox_last_sync_error']) {
+          const syncErr = JSON.parse(errData['recallfox_last_sync_error']);
+          // Cek apakah error ini untuk upload file yang baru saja (dalam 5 detik)
+          if (syncErr.source === '_uploadFileDocument' && Date.now() - new Date(syncErr.ts).getTime() < 5000) {
+            cloudOk = false;
+            const hint = syncErr.hint || syncErr.error || 'unknown error';
+            console.warn('[RecallFox] File upload: cloud GAGAL untuk', file.name, ':', syncErr.error);
+            toast('📤 ' + file.name + ' tersimpan lokal — URL cloud gagal: ' + hint, false);
+          }
+        }
+      } catch (_) {}
+      if (cloudOk) {
+        toast('📤 ' + file.name + ' terupload — URL cloud siap' + progress);
+      }
+      ok++;
+      if (i < files.length - 1) await new Promise(r => setTimeout(r, 300));
+    } catch (e) {
+      console.error('[RecallFox] File upload error:', file.name, e);
+      toast('⚠ ' + file.name + ': gagal upload — ' + (e.message || 'unknown error'), false);
+      fail++;
+    }
+  }
+  await refreshVault();
+  if (files.length > 1) {
+    toast('📤 Upload selesai: ' + ok + ' sukses' + (fail > 0 ? ', ' + fail + ' gagal' : ''));
+  }
+}
+
+async function copyFileContentToClipboard(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item || item.type !== 'file') { toast('Item file tidak ditemukan', false); return; }
+  if (!item.body) { toast('File kosong', false); return; }
+  // _copyTextWithFallback di-defined di bawah (hoisted), aman dipanggil di sini
+  const ok = await _copyTextWithFallback(item.body);
+  if (ok) {
+    toast('📋 Isi file "' + item.title + '" tersalin (' + item.body.length + ' karakter)');
+  } else {
+    toast('Gagal salin isi file (clipboard diblokir)', false);
+  }
+}
+
+// v3.20.37-dev: Copy URL dengan retry mechanism.
+// Root cause "belum punya URL cloud": upload Storage adalah async — butuh beberapa detik
+// setelah addItem() sampai _uploadFileDocument selesai + update gdriveFileUrl di vault.
+// Fix: refresh vault dari storage.local + retry 2x dengan jeda 1.5 detik.
+// getVault sudah di-import di top-level popup.js (bukan dynamic import).
+async function copyFileUrlToClipboard(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item || item.type !== 'file') { toast('Item file tidak ditemukan', false); return; }
+
+  // Cek URL dari currentVault (fast path)
+  let url = resolveImageUrl(item);
+
+  // Kalau belum ada, refresh vault dari storage.local (mungkin _uploadFileDocument sudah update)
+  if (!url) {
+    try {
+      const freshVault = await getVault();
+      const freshItem = freshVault.items.find(i => i.id === id);
+      if (freshItem) url = resolveImageUrl(freshItem);
+    } catch (_) {}
+  }
+
+  // Kalau masih belum ada, retry dengan delay (upload mungkin masih berjalan)
+  if (!url) {
+    toast('⏳ URL cloud belum siap — menunggu upload selesai...');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        const freshVault = await getVault();
+        const freshItem = freshVault.items.find(i => i.id === id);
+        if (freshItem) {
+          url = resolveImageUrl(freshItem);
+          if (url) break;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // v3.20.39: Kalau masih belum ada URL, trigger push sync ke background.
+  //   Sebelumnya: kalau upload belum jalan (e.g. pushToSupabase belum ke-trigger
+  //   untuk file type), URL tidak akan pernah ada. Sekarang: kirim SUPABASE_PUSH
+  //   supaya background jalankan pushToSupabase (yang sekarang upload file ke
+  //   Storage + PATCH gdrive_file_url). Setelah push, retry baca URL.
+  if (!url) {
+    try {
+      console.log('[RecallFox] copyFileUrl: URL not found, triggering SUPABASE_PUSH...');
+      await browser.runtime.sendMessage({ type: 'SUPABASE_PUSH' });
+      // Tunggu push selesai (max 5 detik), lalu retry baca URL
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          const freshVault = await getVault();
+          const freshItem = freshVault.items.find(i => i.id === id);
+          if (freshItem) {
+            url = resolveImageUrl(freshItem);
+            if (url) {
+              console.log('[RecallFox] copyFileUrl: URL found after push, attempt', attempt + 1);
+              break;
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (pushErr) {
+      console.warn('[RecallFox] copyFileUrl: SUPABASE_PUSH failed:', pushErr.message);
+    }
+  }
+
+  if (!url) {
+    toast('⚠ URL cloud belum tersedia. Gunakan "Kopi File" untuk salin isi teks, atau "Download" untuk unduh file.', false);
+    return;
+  }
+
+  const ok = await _copyTextWithFallback(url);
+  if (ok) toast('✓ URL file tersalin — paste ke AI chat');
+  else toast('Gagal salin URL file (clipboard diblokir)', false);
+}
+
+async function downloadFileItem(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item || item.type !== 'file') { toast('Item file tidak ditemukan', false); return; }
+  if (!item.body) { toast('File kosong', false); return; }
+  try {
+    const mime = (item.source && item.source.mime) || 'text/plain';
+    const blob = new Blob([item.body], { type: mime });
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = (item.source && item.source.fileName) || item.title || 'file.txt';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+    toast('⬇️ ' + a.download + ' di-download');
+  } catch (e) {
+    toast('Gagal download: ' + e.message, false);
+  }
+}
+
 // v3.11.36 (Sesi 2, Issue dari Google Doc): Batch copy TEKS METADATA saja (tanpa gambar)
 // untuk multiple screenshot. Format = buildBatchCaption.textPlain (sudah ada di copy-format.js).
 // User feedback: paste gambar+teks bersamaan tidak reliable → text-only lebih universal.
@@ -6079,11 +6295,19 @@ function addItemMenu() {
       ['📱 Screenshot viewport', () => doShot('visible')],
       ['📄 Screenshot seluruh halaman', () => doShot('entire')],
       ['📤 Upload gambar (manual)', () => doShot('upload')],   // v3.8.1 Issue #3
+      // v3.20.36 port dari Firefox: Upload file teks (.md/.txt/.json/.html/.csv/.yaml)
+      ['📄 Upload File teks', () => {
+        const docFileInput = $('#docFileInput');
+        if (docFileInput) {
+          docFileInput.value = '';
+          docFileInput.click();
+        }
+      }],
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', () => { closeSheet(); setTimeout(opts[a.dataset.i][1], 80); }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard).</div>');
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File teks support .md/.txt/.json/.html/.csv/.yaml (maks 2MB).</div>');
   });
 }
 
@@ -9861,6 +10085,16 @@ function bindEvents() {
   // Add item button
   $('#addItemBtn').addEventListener('click', addItemMenu);
   $('#noteAddBtn').addEventListener('click', newNote);
+  // v3.20.36 port dari Firefox: File upload via menu "+ Baru" — input hidden.
+  // docFileInput di-trigger dari addItemMenu() opsi "📄 Upload File teks".
+  const _docFileInput = $('#docFileInput');
+  if (_docFileInput) {
+    _docFileInput.addEventListener('change', async (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        await handleDocFileUpload(e.target.files);
+      }
+    });
+  }
   // v3.18.0: Tombol Buat Grup + Auto-Grup AI — bind event listeners
   const addGroupBtnEl = $('#addGroupBtn');
   const aiGroupBtnEl = $('#aiGroupBtn');

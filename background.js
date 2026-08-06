@@ -3412,6 +3412,32 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
 
+  // v3.20.36 port dari Firefox: SUPABASE_GET_ITEM_URL — query gdrive_file_url dari vault_items.
+  // Dipakai copyFileUrlToClipboard sebagai fallback terakhir kalau URL tidak ada di storage.local.
+  if (msg.type === 'SUPABASE_GET_ITEM_URL') {
+    try {
+      const { selectRows } = await import('./lib/supabase-client.js');
+      const res = await selectRows('vault_items', {
+        filter: 'id=eq.' + msg.itemId,
+        select: 'gdrive_file_url,gdrive_file_id',
+        limit: 1
+      });
+      if (res.ok && res.data && res.data.length > 0) {
+        const url = res.data[0].gdrive_file_url;
+        if (url) {
+          sendResponse({ ok: true, url: url, fileId: res.data[0].gdrive_file_id });
+        } else {
+          sendResponse({ ok: false, error: 'no_url_in_cloud' });
+        }
+      } else {
+        sendResponse({ ok: false, error: res?.error || 'item_not_found_in_cloud' });
+      }
+      return;
+    } catch (e) {
+      sendResponse({ ok: false, error: e.message }); return;
+    }
+  }
+
   // SUPABASE_DELETE_ITEM — hapus item dari cloud saat item lokal dihapus
   // v3.11.29: Fix — gunakan msg.itemId (bukan msg.id) supaya cocok dengan storage.js
   if (msg.type === 'SUPABASE_DELETE_ITEM') {
