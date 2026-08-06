@@ -721,7 +721,7 @@ function getVaultItems() {
 }
 
 // v3.7.2 (Issue 1): tambah chip "Arsip" untuk lihat item yang diarsipkan.
-const CHIPS = [['all', 'Semua'], ['recent', '🕑 Terbaru'], ['prompt', 'Prompt'], ['context', 'Konteks'], ['snapshot', 'Snapshot'], ['screenshot', 'Media'], ['link', 'Link'], ['bundle', 'Bundle'], ['archive', 'Arsip']];
+const CHIPS = [['all', 'Semua'], ['recent', '🕑 Terbaru'], ['prompt', 'Prompt'], ['context', 'Konteks'], ['snapshot', 'Snapshot'], ['screenshot', 'Media'], ['file', '📄 File'], ['link', 'Link'], ['bundle', 'Bundle'], ['archive', 'Arsip']];
 function chipCount(c) {
   const items = getVaultItems();
   if (c === 'all') {
@@ -851,7 +851,7 @@ const vaultBatchSelected = new Set();
 // v3.11.14: Chip yang support batch mode (semua chip kecuali 'all')
 // v3.11.15: Sekarang chip 'all' JUGA support batch — user bisa pilih multiple item
 // dari berbagai tipe sekaligus. Tombol yang tampil disesuaikan dengan tipe item terpilih.
-const BATCH_SUPPORTED_CHIPS = new Set(['all', 'prompt', 'context', 'link', 'bundle', 'snapshot', 'screenshot', 'archive']);
+const BATCH_SUPPORTED_CHIPS = new Set(['all', 'prompt', 'context', 'link', 'bundle', 'snapshot', 'screenshot', 'file', 'archive']);
 
 function updateBatchModeBtnVisibility() {
   // v3.11.14: Tombol batch tampil untuk SEMUA chip yang support batch (bukan hanya screenshot)
@@ -1859,6 +1859,9 @@ function renderItemHtml(it, indent, connector) {
   } else if (it.type === 'document') {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">\uD83D\uDCC4 Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download halaman pertama">' + ICONS.download + '</button>';
+  } else if (it.type === 'file') {
+    // v3.20.42: CTA pill untuk type='file' — Salin Konten (1 klik)
+    ctaHtml = '<span class="cta-pill" data-file-action="copy">' + ICONS.copy + 'Salin \u21B5</span>';
   } else {
     const cta = currentAiDomain ? ICONS.zap + 'Sisipkan \u21B5' : ICONS.copy + 'Salin \u21B5';
     ctaHtml = '<span class="cta-pill">' + cta + '</span>';
@@ -3026,7 +3029,7 @@ function bindItemClicks() {
         // Cek apakah yang diklik adalah checkbox atau tombol aksi (data-* action)
         // Kalau ya, biar handler masing-masing yang handle (stopPropagation sudah ada)
         // Kalau bukan, return early — tidak buka viewer saat batch mode aktif
-        const isActionBtn = e.target.closest('[data-link-action],[data-bundle-action],[data-shot-action],.morebtn,.vault-batch-check');
+        const isActionBtn = e.target.closest('[data-link-action],[data-bundle-action],[data-shot-action],[data-file-action],.morebtn,.vault-batch-check');
         if (!isActionBtn) {
           // Klik di area item (bukan tombol aksi) — toggle checkbox kalau ada
           const cb = el.querySelector('.vault-batch-check');
@@ -3123,6 +3126,18 @@ function bindItemClicks() {
         }
         return;
       }
+      // v3.20.42: CTA pill untuk type='file' — Salin Konten (1 klik)
+      const fileBtn = e.target.closest('[data-file-action]');
+      if (fileBtn) {
+        e.stopPropagation();
+        const action = fileBtn.dataset.fileAction;
+        const it = findItem(el.dataset.id);
+        if (!it) return;
+        if (action === 'copy') {
+          copyFileContentToClipboard(it.id);
+        }
+        return;
+      }
       if (e.target.closest('.morebtn')) return;
       primaryAction(el.dataset.id);
     });
@@ -3156,6 +3171,11 @@ async function primaryAction(id) {
   // v3.12.0 (Fase 7): Dokumen multi-halaman → buka multi-page viewer
   if (it.type === 'document') {
     openDocumentViewer(it.id);
+    return;
+  }
+  // v3.20.42: File → kopi isi file ke clipboard
+  if (it.type === 'file') {
+    copyFileContentToClipboard(it.id);
     return;
   }
   // prompt / context / snapshot
@@ -4714,8 +4734,8 @@ function itemSheet(id) {
   openSheet(esc(it.title), T.label + (vars ? ' · ' + vars + ' variabel' : ''), b => {
     const isAi = !!currentAiDomain;
     // v3.12.0 (Fase 7): Tambah label utama untuk dokumen.
-    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru' : (it.type === 'bundle' ? 'Salin bundle ke clipboard' : (it.type === 'screenshot' ? 'Lihat screenshot' : (it.type === 'document' ? 'Lihat dokumen (multi-halaman)' : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard'))));
-    const primaryIcon = it.type === 'link' ? ICONS.spark : (it.type === 'bundle' ? ICONS.archive : (isAi ? ICONS.zap : ICONS.copy));
+    const primaryLabel = it.type === 'link' ? 'Buka link di tab baru' : (it.type === 'bundle' ? 'Salin bundle ke clipboard' : (it.type === 'screenshot' ? 'Lihat screenshot' : (it.type === 'document' ? 'Lihat dokumen (multi-halaman)' : (it.type === 'file' ? 'Salin konten ke clipboard' : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard')))));
+    const primaryIcon = it.type === 'link' ? ICONS.spark : (it.type === 'bundle' ? ICONS.archive : (it.type === 'file' ? ICONS.copy : (isAi ? ICONS.zap : ICONS.copy)));
     b.innerHTML =
       '<button class="act" data-a="primary">' + primaryIcon + '<div>' + primaryLabel + '<div class="ad">Sama dengan klik baris — 1 klik</div></div></button>'
       + (it.type === 'prompt' || it.type === 'context' ? '<button class="act" data-a="attach">' + ICONS.clipA + '<div>Sisipkan dengan lampiran<div class="ad">Prompt + link referensi sekaligus</div></div></button>' : '')
@@ -4765,14 +4785,23 @@ function itemSheet(id) {
       // v3.14.9: Salin URL gambar (public Supabase Storage URL) — untuk AI sites
       // yang tidak support paste gambar langsung. User paste URL ke AI chat,
       // AI fetch gambar dari URL.
-      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-url">' + ICONS.copy + '<div>🔗 Salin URL Gambar<div class="ad">URL public — paste ke AI chat yang tidak support paste gambar</div></div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-url">' + ICONS.copy + '<div>🔗 Salin Tautan<div class="ad">URL public gambar — paste ke AI chat yang tidak support paste gambar</div></div></button>' : '')
+      // v3.20.42: Tombol untuk type='file' — standarisasi label (sama seperti tipe lain)
+      + (it.type === 'file' ? '<button class="act" data-a="copy-file-content">' + ICONS.copy + '<div>📋 Salin Konten<div class="ad">Salin isi file (teks) ke clipboard — paste ke AI chat</div></div></button>' : '')
+      + (it.type === 'file' ? '<button class="act" data-a="copy-file-url">' + ICONS.copy + '<div>🔗 Salin Tautan<div class="ad">URL public file — paste ke AI chat, AI bisa fetch isi dari URL</div></div></button>' : '')
+      + (it.type === 'file' ? '<button class="act" data-a="download-file">' + ICONS.download + '<div>⬇️ Unduh<div class="ad">Download file ke komputer</div></div></button>' : '')
       // v3.11.25 (Sesi 15, Issue #3): Tambah catatan anotasi untuk screenshot
       // v3.12.0 (Fase 7): Juga tampil untuk dokumen — catatan disimpan di source.annotationNote.
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan — ikut saat copy</div></div></button>' : '')
       + '<button class="act danger" data-a="del">' + ICONS.trash + '<div>Hapus item</div></button>';
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', async () => {
       const k = a.dataset.a;
-      if (k === 'primary') { closeSheet(); primaryAction(it.id); }
+      if (k === 'primary') {
+        closeSheet();
+        // v3.20.42: Untuk type='file', primary action = kopi isi file (bukan buka itemSheet lagi)
+        if (it.type === 'file') { copyFileContentToClipboard(it.id); return; }
+        primaryAction(it.id);
+      }
       else if (k === 'attach') { closeSheet(); openAttachModal(it.id); }
       else if (k === 'edit') { closeSheet(); openEditorSheet(it.id); }
       // v3.16.5: Ringkas snapshot dengan AI
@@ -4835,6 +4864,10 @@ function itemSheet(id) {
       else if (k === 'copy-meta') { closeSheet(); copyScreenshotMetaToClipboard(it.id); }
       // v3.14.9: Handler Salin URL Gambar (untuk AI sites yang tidak support paste gambar)
       else if (k === 'copy-url') { closeSheet(); copyImageUrlToClipboard(it.id); }
+      // v3.20.42: Handler untuk type='file' — kopi isi, kopi URL, download
+      else if (k === 'copy-file-content') { closeSheet(); copyFileContentToClipboard(it.id); }
+      else if (k === 'copy-file-url') { closeSheet(); copyFileUrlToClipboard(it.id); }
+      else if (k === 'download-file') { closeSheet(); downloadFileItem(it.id); }
       // v3.11.25 (Sesi 15, Issue #3): Handler untuk catatan anotasi
       else if (k === 'annot-note') { closeSheet(); openAnnotationNoteSheet(it.id); }
       else if (k === 'del') {
@@ -6308,39 +6341,16 @@ function addItemMenu() {
       ['📱 Screenshot viewport', () => doShot('visible')],
       ['📄 Screenshot seluruh halaman', () => doShot('entire')],
       ['📤 Upload gambar (manual)', () => doShot('upload')],   // v3.8.1 Issue #3
-      // v3.20.40: Upload file teks — Buka di detached window (chrome.windows.create)
-      // Root cause: Chrome MV3 popup CLOSES when file picker opens (loses focus → destroyed).
-      // Firefox popup stays alive — that's why Firefox works but Chrome didn't.
-      // Fix: open upload-window.html in a detached popup window that stays alive.
-      ['📄 Upload File teks', () => {
-        console.log('[RecallFox/addItemMenu] Upload File teks → opening detached window');
-        closeSheet();
-        // Open detached window — stays alive when file picker opens
-        browser.windows.create({
-          url: browser.runtime.getURL('popup/upload-window.html'),
-          type: 'popup',
-          width: 420,
-          height: 480
-        }).catch(e => {
-          console.error('[RecallFox] Failed to open upload window:', e);
-          toast('⚠ Gagal buka upload window: ' + e.message, false);
-        });
-        // Close popup supaya user fokus ke upload window
-        if (!document.body.classList.contains('rf-sidebar-body')) {
-          setTimeout(() => window.close(), 200);
-        }
-      }],
+      // v3.20.42: Upload file teks pakai modal standar (sama seperti screenshot manual)
+      ['📄 Upload File teks', saveFileUploadSheet],
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
     b.querySelectorAll('.act').forEach(a => a.addEventListener('click', (ev) => {
       const opt = opts[a.dataset.i];
       const label = opt[0];
-      // v3.20.40: Upload File teks sekarang buka detached window — handler sendiri
-      // close popup. Opsi lain ikut pattern default.
-      if (label.includes('Upload gambar')) {
-        // saveScreenshotManualSheet() opens its own sheet — JANGAN closeSheet()
-        console.log('[RecallFox/addItemMenu] Upload gambar clicked → opening manual upload sheet');
+      // Upload gambar + Upload File teks buka sheet sendiri — JANGAN closeSheet()
+      if (label.includes('Upload gambar') || label.includes('Upload File')) {
         opt[1]();
       } else {
         closeSheet();
@@ -6348,6 +6358,157 @@ function addItemMenu() {
       }
     }));
     b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File teks support .md/.txt/.json/.html/.csv/.yaml (maks 2MB).</div>');
+  });
+}
+
+// v3.20.42: Upload File Teks — modal standar (mirror saveScreenshotManualSheet)
+// Punya: Judul (opsional), Tag (opsional), area upload (klik/drag&drop), Batal, Simpan
+// Format: .md/.txt/.json/.html/.csv/.yaml (max 2MB)
+function saveFileUploadSheet() {
+  openSheet('📄 Upload File Teks', 'Pilih file teks, atau drag & drop', b => {
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div><label>Judul <span class="field-hint">(opsional — kosongkan untuk pakai filename)</span></label>'
+      +   '<input class="f" id="docT" placeholder="mis. Catatan rapet..."></div>'
+      + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label>'
+      +   '<input class="f" id="docTag" placeholder="catatan, rapat"></div>'
+      // Dropzone
+      + '<div id="docDropzone" style="border:2px dashed #c0c0c0;border-radius:8px;padding:24px;text-align:center;color:#666;cursor:pointer;margin:8px 0;transition:all 0.2s">'
+      +   '<div style="font-size:32px;margin-bottom:8px">📄</div>'
+      +   '<div style="font-weight:600;color:#333">Klik untuk pilih file</div>'
+      +   '<div style="font-size:11px;margin-top:4px">atau drag & drop</div>'
+      +   '<div style="font-size:10px;margin-top:4px;color:#999">Format: .md, .txt, .json, .html, .csv, .yaml (max 2MB)</div>'
+      + '</div>'
+      + '<input type="file" id="docFileInputSheet" accept=".md,.markdown,.txt,.json,.html,.htm,.csv,.yaml,.yml" style="display:none">'
+      // Preview
+      + '<div id="docPreview" style="display:none;margin:8px 0">'
+      +   '<div style="font-size:11px;color:#666;margin-top:4px" id="docPreviewMeta"></div>'
+      +   '<div id="docPreviewText" style="font-size:11px;background:var(--surface-2);padding:8px;border-radius:6px;margin-top:4px;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-family:monospace"></div>'
+      + '</div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="docCancel">Batal</button>'
+      +   '<button class="btn btn-p" id="docSave" disabled>' + ICONS.check + 'Simpan File</button></div></div>';
+
+    let _fileContent = null;
+    let _fileName = '';
+    let _fileKind = null;
+    let _fileMime = 'text/plain';
+
+    const dropzone = b.querySelector('#docDropzone');
+    const fileInput = b.querySelector('#docFileInputSheet');
+
+    // Klik dropzone → trigger file picker
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    // File picker change
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (file) await _handleFile(file);
+    });
+
+    // Drag & drop
+    dropzone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#FF7139';
+      dropzone.style.background = '#FFF4E6';
+    });
+    dropzone.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#c0c0c0';
+      dropzone.style.background = '';
+    });
+    dropzone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropzone.style.borderColor = '#c0c0c0';
+      dropzone.style.background = '';
+      const file = e.dataTransfer.files[0];
+      if (file) await _handleFile(file);
+    });
+
+    async function _handleFile(file) {
+      const info = detectFileKind(file);
+      if (!info) {
+        toast('⚠ Format tidak didukung: ' + file.name, false);
+        return;
+      }
+      if (file.size > MAX_FILE_UPLOAD_BYTES) {
+        toast('⚠ File terlalu besar (max 2MB)', false);
+        return;
+      }
+      const text = await file.text();
+      if (!text || text.length === 0) {
+        toast('⚠ File kosong', false);
+        return;
+      }
+      _fileContent = text;
+      _fileName = file.name;
+      _fileKind = info.kind;
+      _fileMime = info.mime;
+      // Preview
+      const previewMeta = b.querySelector('#docPreviewMeta');
+      const previewText = b.querySelector('#docPreviewText');
+      const previewBox = b.querySelector('#docPreview');
+      const sizeKb = (file.size / 1024).toFixed(1);
+      previewMeta.textContent = '📎 ' + file.name + ' · ' + sizeKb + ' KB · ' + info.kind;
+      previewText.textContent = text.slice(0, 500) + (text.length > 500 ? '\n... (' + text.length + ' chars total)' : '');
+      previewBox.style.display = '';
+      // Enable save button
+      b.querySelector('#docSave').disabled = false;
+      // Auto-fill title kalau kosong
+      const titleEl = b.querySelector('#docT');
+      if (!titleEl.value.trim()) {
+        titleEl.value = file.name.replace(/\.[^.]+$/, '').slice(0, 60);
+      }
+      toast('📋 File dimuat — klik Simpan untuk menyimpan');
+    }
+
+    b.querySelector('#docCancel').addEventListener('click', closeSheet);
+    b.querySelector('#docSave').addEventListener('click', async () => {
+      if (!_fileContent) { toast('Pilih file dulu', false); return; }
+      const title = (b.querySelector('#docT').value || '').trim() || _fileName;
+      const tags = (b.querySelector('#docTag').value || '').trim();
+      const tagList = tags ? tags.split(',').map(s => s.trim()).filter(Boolean) : ['file', _fileKind];
+
+      const btn = b.querySelector('#docSave');
+      btn.textContent = '⏳ Menyimpan...';
+      btn.disabled = true;
+      try {
+        await addItem({
+          type: 'file',
+          title: title,
+          body: _fileContent,
+          tags: tagList,
+          source: {
+            kind: _fileKind,
+            mime: _fileMime,
+            fileName: _fileName,
+            size: _fileContent.length,
+            uploadedFrom: 'addon-upload',
+            capturedAt: new Date().toISOString()
+          }
+        });
+        // Cek cloud upload error
+        let cloudOk = true;
+        try {
+          const errData = await browser.storage.local.get('recallfox_last_sync_error');
+          if (errData['recallfox_last_sync_error']) {
+            const syncErr = JSON.parse(errData['recallfox_last_sync_error']);
+            if (syncErr.source === '_uploadFileDocument' && Date.now() - new Date(syncErr.ts).getTime() < 5000) {
+              cloudOk = false;
+              const hint = syncErr.hint || syncErr.error || 'unknown error';
+              toast('📤 ' + _fileName + ' tersimpan lokal — URL cloud gagal: ' + hint, false);
+            }
+          }
+        } catch (_) {}
+        if (cloudOk) {
+          toast('📤 ' + _fileName + ' terupload — URL cloud siap');
+        }
+        closeSheet();
+        await refreshVault();
+      } catch (e) {
+        toast('⚠ Gagal simpan: ' + e.message, false);
+        btn.textContent = ICONS.check + 'Simpan File';
+        btn.disabled = false;
+      }
+    });
   });
 }
 
