@@ -2052,8 +2052,15 @@ function renderItemHtml(it, indent, connector) {
     ctaHtml = '<span class="cta-pill" data-file-action="copy">' + ICONS.copy + 'Salin \u21B5</span>'
       + '<button class="link-mini-btn" data-file-action="download" title="Download file">' + ICONS.download + '</button>';
   } else {
-    const cta = currentAiDomain ? ICONS.zap + 'Sisipkan \u21B5' : ICONS.copy + 'Salin \u21B5';
-    ctaHtml = '<span class="cta-pill">' + cta + '</span>';
+    // v3.20.47: Standarisasi — prompt/context/snapshot dapat DUA tombol eksplisit:
+    //   - Sisip ⤴ (data-prompt-action="inject"): doInject → coba sisip ke active tab editor
+    //   - Salin ⤴ (data-prompt-action="copy"): _copyTextWithFallback → clipboard only
+    // Sebelumnya: cta-pill tunggal tanpa data-action, klik fallthrough ke primaryAction
+    //   yang panggil doInject (coba sisip, fallback clipboard). Label "Salin" menyesatkan
+    //   karena sebenarnya inject. User complain: "Sisip tidak jalan, Salin juga tidak."
+    // Fix: dua tombol terpisah supaya user bisa pilih injeksi ATAU salin.
+    ctaHtml = '<span class="cta-pill" data-prompt-action="inject">' + ICONS.zap + 'Sisip \u21B5</span>'
+      + '<button class="link-mini-btn" data-prompt-action="copy" title="Salin isi ke clipboard">' + ICONS.copy + '</button>';
   }
   let batchCheckboxHtml = '';
   if (vaultBatchMode) {
@@ -3217,7 +3224,7 @@ function bindItemClicks() {
         // Cek apakah yang diklik adalah checkbox atau tombol aksi (data-* action)
         // Kalau ya, biar handler masing-masing yang handle (stopPropagation sudah ada)
         // Kalau bukan, return early — tidak buka viewer saat batch mode aktif
-        const isActionBtn = e.target.closest('[data-link-action],[data-bundle-action],[data-shot-action],[data-file-action],.morebtn,.vault-batch-check');
+        const isActionBtn = e.target.closest('[data-link-action],[data-bundle-action],[data-shot-action],[data-file-action],[data-prompt-action],.morebtn,.vault-batch-check');
         if (!isActionBtn) {
           // Klik di area item (bukan tombol aksi) — toggle checkbox kalau ada
           const cb = el.querySelector('.vault-batch-check');
@@ -3293,6 +3300,25 @@ function bindItemClicks() {
           else openScreenshotViewer(it.id);
         } else if (action === 'download') {
           downloadScreenshot(it.id);
+        }
+        return;
+      }
+      // v3.20.47: Tombol aksi Prompt/Context/Snapshot (data-prompt-action)
+      // Standarisasi: Sisip (inject ke active tab) + Salin (clipboard only)
+      const promptBtn = e.target.closest('[data-prompt-action]');
+      if (promptBtn) {
+        e.stopPropagation();
+        const action = promptBtn.dataset.promptAction;
+        const it = findItem(el.dataset.id);
+        if (!it) return;
+        if (action === 'inject') {
+          // Sisip ke active tab editor — pakai primaryAction yang handle vars + doInject
+          console.log('[RecallFox] Sisip clicked for item:', it.id, 'type:', it.type);
+          primaryAction(it.id);
+        } else if (action === 'copy') {
+          // Salin body ke clipboard — TIDAK coba inject
+          console.log('[RecallFox] Salin clicked for item:', it.id, 'type:', it.type);
+          copyItemBody(it.id);
         }
         return;
       }
@@ -3383,6 +3409,29 @@ async function copyLinkToClipboard(it) {
   if (ok) {
     await incrementUseCount(it.id);
     toast('📋 URL disalin: ' + url.slice(0, 40) + (url.length > 40 ? '…' : ''));
+  }
+}
+
+// v3.20.47: Salin body prompt/context/snapshot ke clipboard — TIDAK coba inject.
+// Dipanggil dari tombol "Salin" (data-prompt-action="copy") di item card.
+// Sebelumnya: tombol "Salin" sebenarnya panggil doInject (coba sisip, fallback clipboard).
+// User complain: "Salin tidak konsisten — kadang sisip, kadang salin."
+// Fix: tombol Salin sekarang HANYA salin ke clipboard, tidak coba inject.
+async function copyItemBody(id) {
+  const it = findItem(id);
+  if (!it) { toast('Item tidak ditemukan', false); return; }
+  // Build final body dengan toppings (sama seperti doInject)
+  const finalBody = await buildFinalPrompt(it.body || '', it.toppings || []);
+  if (!finalBody || finalBody.trim() === '') {
+    toast('Item ini tidak punya isi untuk disalin', false);
+    return;
+  }
+  console.log('[RecallFox] copyItemBody: copying', finalBody.length, 'chars to clipboard');
+  const ok = await _copyTextWithFallback(finalBody);
+  if (ok) {
+    await incrementUseCount(it.id);
+    const preview = finalBody.slice(0, 40).replace(/\n/g, ' ');
+    toast('📋 Disalin: ' + preview + (finalBody.length > 40 ? '…' : ''));
   }
 }
 
