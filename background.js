@@ -63,7 +63,8 @@ import {
   signOut,
   testConnection as testSupabaseConnection,
   handleOAuthCallback,
-  proactiveRefresh
+  proactiveRefresh,
+  selectRows  // v3.20.41: Static import — dynamic import() forbidden in MV3 service worker
 } from './lib/supabase-client.js';
 import {
   startRealtimeSync,
@@ -2457,7 +2458,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // when file picker opens, jadi file dibaca di upload-window.js lalu dikirim ke sini.
   if (msg.type === 'DOC_FILE_UPLOADED') {
     try {
-      const { addItem } = await import('./lib/storage.js');
+      // v3.20.41 FIX: HAPUS dynamic import() — dilarang di ServiceWorkerGlobalScope.
+      // Sebelumnya: `const { addItem } = await import('./lib/storage.js');`
+      // Error: "import() is disallowed on ServiceWorkerGlobalScope by the HTML specification"
+      // Fix: addItem sudah di-import statically di top-level (line 28) — pakai langsung.
       const file = msg.file;
       if (!file || !file.body) {
         sendResponse({ ok: false, error: 'no_file_data' });
@@ -3449,7 +3453,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Dipakai copyFileUrlToClipboard sebagai fallback terakhir kalau URL tidak ada di storage.local.
   if (msg.type === 'SUPABASE_GET_ITEM_URL') {
     try {
-      const { selectRows } = await import('./lib/supabase-client.js');
+      // v3.20.41 FIX: selectRows sudah di-import statically — hapus dynamic import()
       const res = await selectRows('vault_items', {
         filter: 'id=eq.' + msg.itemId,
         select: 'gdrive_file_url,gdrive_file_id',
