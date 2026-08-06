@@ -2030,6 +2030,7 @@ function renderItemHtml(it, indent, connector) {
       + (currentAiDomain ? '<button class="link-mini-btn" data-link-action="inject" title="Sisipkan URL ke chat AI">' + ICONS.zap + '</button>' : '');
   } else if (it.type === 'bundle') {
     const memberCount = (it._bundle?.itemIds || []).length;
+<<<<<<< Updated upstream
     // v3.20.46: Dua tombol terpisah — Sisip (insert mode) + Salin (copy mode).
     //   Sebelumnya: tombol "Salin ⤴" panggil injectBundle (mode insert) → user
     //   bingung karena label "Salin" tapi behavior "Sisip".
@@ -2040,6 +2041,19 @@ function renderItemHtml(it, indent, connector) {
     ctaHtml = '<span class="cta-pill" data-bundle-action="inject">' + ICONS.zap + 'Sisip \u21B5</span>'
       + '<button class="link-mini-btn" data-bundle-action="copy" title="Salin bundle (prompt/file→teks, link→URL)">' + ICONS.copy + '</button>'
       + (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '');
+=======
+    // v3.20.45-dev: Fix ikon ketukar + fungsi sisip salah.
+    // Saat di halaman AI: tombol besar = "Sisipkan ↵" (zap icon, inject ke AI)
+    // Saat non-AI: tombol besar = "Salin ↵" (copy icon, copy to clipboard)
+    // Tombol kecil "Salin" (copy icon) muncul saat di AI page supaya user tetap bisa copy.
+    if (currentAiDomain) {
+      ctaHtml = '<span class="cta-pill" data-bundle-action="inject">' + ICONS.zap + 'Sisipkan \u21B5</span>'
+        + '<button class="link-mini-btn" data-bundle-action="copy" title="Salin bundle ke clipboard">' + ICONS.copy + '</button>';
+    } else {
+      ctaHtml = '<span class="cta-pill" data-bundle-action="copy">' + ICONS.copy + 'Salin \u21B5</span>';
+    }
+    ctaHtml += (memberCount > 0 ? '<button class="link-mini-btn" data-bundle-action="scope" title="Lihat anggota bundle">\uD83D\uDC41</button>' : '');
+>>>>>>> Stashed changes
   } else if (it.type === 'screenshot') {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">' + ICONS.image + 'Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="download" title="Download gambar">' + ICONS.download + '</button>';
@@ -3269,6 +3283,7 @@ function bindItemClicks() {
           return;
         }
         else if (action === 'inject') {
+<<<<<<< Updated upstream
           // v3.20.46: Sisip bundle — pakai injectBundle (mode insert).
           //   Sebelumnya: logic lama yang filter(i => i.type !== 'link') →
           //   link TIDAK di-sisip. User complain: "Sisip hanya membaca prompt
@@ -3276,6 +3291,50 @@ function bindItemClicks() {
           //   Sekarang: panggil injectBundle yang pakai getBundleContent(insert)
           //   → prompt→teks, file/link/media→URL. Semua anggota disisipkan.
           injectBundle(it.id);
+=======
+          // v3.20.45-dev: Fix sisip bundle — samakan logic dengan injectBundle() (copy).
+          // Sebelumnya: link di-FILTER KELUAR (i.type !== 'link') → sisip tidak baca link.
+          // Sekarang: include SEMUA item type (link, prompt, context, snapshot, file).
+          // Logic sama persis dengan injectBundle() line 3686-3696.
+          const bundle = currentVault.bundles.find(b => b.id === it.id);
+          if (bundle) {
+            const items = (bundle.injectOrder || bundle.itemIds || []).map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
+            const noteIds = Array.isArray(bundle.noteIds) ? bundle.noteIds : [];
+            const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
+            const parts = [];
+            // Inline prompt di awal kalau ada
+            if (bundle.inlinePrompt && bundle.inlinePrompt.trim()) {
+              parts.push('## ' + (bundle.inlinePromptItemId ? (bundle.name || 'Prompt Inline') : 'Prompt Cepat') + ' [Prompt]\n' + bundle.inlinePrompt.trim());
+            }
+            // v3.20.45-dev: Include SEMUA item type — link, file, prompt, context, snapshot
+            for (const i of items) {
+              const header = '## ' + (i.title || i.type) + ' [' + (TYPE[i.type]?.label || i.type) + ']';
+              if (i.type === 'link') {
+                parts.push(header + '\n' + (i.linkUrl || i.body || ''));
+              } else if (i.type === 'file') {
+                // File: gunakan URL cloud (bukan isi file) supaya AI bisa fetch
+                const fileUrl = i.gdriveFileUrl || i.gdrive_file_url || (i.source && i.source.url) || '';
+                if (fileUrl) {
+                  parts.push(header + '\n' + fileUrl + '\n(File URL — AI bisa fetch isi dari link ini)');
+                } else {
+                  // Fallback: isi file (teks) kalau URL cloud belum tersedia
+                  parts.push(header + '\n' + (i.body || ''));
+                }
+              } else {
+                // prompt, context, snapshot → pakai body
+                parts.push(header + '\n' + (i.body || ''));
+              }
+            }
+            for (const n of notes) {
+              parts.push('## ' + (n.title || 'Catatan') + ' [Catatan]\n' + stripHtmlForPreview(n.body || ''));
+            }
+            if (parts.length > 0) {
+              const text = parts.join('\n\n---\n\n');
+              console.log('[RecallFox] Bundle inject:', bundle.name, '| items:', items.length, '| notes:', notes.length, '| text length:', text.length);
+              doInject(text, it.id);
+            } else { toast('Bundle kosong', false); }
+          }
+>>>>>>> Stashed changes
           return;
         }
       }
