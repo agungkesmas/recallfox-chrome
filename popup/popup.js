@@ -3317,7 +3317,7 @@ function renderList() {
 }
 function bindItemClicks() {
   $$('#list .item').forEach(el => {
-    el.addEventListener('click', e => {
+    el.addEventListener('click', async e => {
       // v3.17.1: Kalau klik group header, jangan trigger primaryAction (expand/collapse sudah di-handle wireTreeEvents)
       // v3.11.12 (Sesi 11, Issue #2): Fix klik checkbox malah buka gambar viewer.
       // User feedback: "ketika klik centang untuk memilih daftar gambar, eh malah
@@ -3458,29 +3458,6 @@ function bindItemClicks() {
           itemSheet(it.id);
         } else if (action === 'download') {
           downloadFileItem(it.id);
-        }
-        return;
-      }
-      // v3.20.47: Tombol aksi Prompt/Context/Snapshot (data-prompt-action)
-      const promptBtn = e.target.closest('[data-prompt-action]');
-      if (promptBtn) {
-        e.stopPropagation();
-        const action = promptBtn.dataset.promptAction;
-        const it = findItem(el.dataset.id);
-        if (!it) return;
-        if (action === 'inject') {
-          // Sisipkan ke AI — pakai primaryAction logic (handles variables, toppings, context)
-          await primaryAction(it.id);
-        } else if (action === 'copy') {
-          // Salin body ke clipboard
-          const body = it.body || '';
-          if (body) {
-            const ok = await _copyTextWithFallback(body);
-            if (ok) toast('📋 Disalin ke clipboard (' + body.length + ' karakter)');
-            else toast('Gagal salin (clipboard diblokir)', false);
-          } else {
-            toast('Item ini tidak punya teks untuk disalin', false);
-          }
         }
         return;
       }
