@@ -2267,30 +2267,140 @@ async function moveItemToGroup(itemId, groupId) {
   }
 }
 
+// ===== openCreateFolderSheet: modal standar untuk buat/rename folder =====
+// v3.20.50: Ganti window.prompt() dengan openSheet. Reuse pattern dari
+// openAnnotationNoteSheet (line ~4781) + openFolderColorSheet (line ~4971)
+// yang sudah terbukti jalan stabil.
+// Field: Nama (wajib) + Warna (opsional). TIDAK ada tag (per instruksi user —
+// nanti sebagai enhancement terpisah supaya tidak ubah struktur data existing).
+//
+// Callback: onSave(name, color) => Promise<void>
+//   name: string (sudah di-trim, sudah divalidasi non-empty)
+//   color: string ('' atau hex seperti '#ef4444')
+function openCreateFolderSheet(opts) {
+  const title = (opts && opts.title) || '📁 Buat Folder Baru';
+  const sub = (opts && opts.sub) || 'Nama wajib, warna opsional';
+  const defaultName = (opts && typeof opts.defaultName === 'string') ? opts.defaultName : '';
+  const defaultColor = (opts && typeof opts.defaultColor === 'string') ? opts.defaultColor : '';
+  const onSave = (opts && typeof opts.onSave === 'function') ? opts.onSave : null;
+
+  const colors = [
+    { id: '', label: 'Default', color: 'var(--muted)' },
+    { id: '#ef4444', label: 'Merah', color: '#ef4444' },
+    { id: '#f59e0b', label: 'Oranye', color: '#f59e0b' },
+    { id: '#10b981', label: 'Hijau', color: '#10b981' },
+    { id: '#3b82f6', label: 'Biru', color: '#3b82f6' },
+    { id: '#8b5cf6', label: 'Ungu', color: '#8b5cf6' },
+    { id: '#ec4899', label: 'Pink', color: '#ec4899' }
+  ];
+  let selectedColor = defaultColor;
+
+  openSheet(title, sub, b => {
+    // Pakai class yang sudah ada CSS-nya (sheet-form, f, btn-row, field-hint)
+    // supaya tidak ada inline style kompleks yang berisiko break rendering.
+    b.innerHTML = '<div class="sheet-form">'
+      + '<div><label>Nama Folder <span class="field-hint">(wajib)</span></label>'
+      + '<input class="f" id="rfFolderName" type="text" placeholder="mis. Referensi, Coding, Proyek A..." /></div>'
+      + '<div><label>Warna <span class="field-hint">(opsional)</span></label>'
+      + '<div id="rfFolderColors" style="display:flex;gap:6px;flex-wrap:wrap"></div></div>'
+      + '<div class="btn-row"><button class="btn btn-g" id="rfFolderCancel">Batal</button>'
+      + '<button class="btn btn-p" id="rfFolderSave">' + ICONS.check + 'Simpan</button></div></div>';
+
+    const nameInput = b.querySelector('#rfFolderName');
+    if (nameInput) {
+      if (defaultName) nameInput.value = defaultName;
+      nameInput.focus();
+      if (defaultName) {
+        try { nameInput.select(); } catch (e) {}
+      }
+    }
+
+    // Render color picker pakai pattern dari openFolderColorSheet (line ~4971)
+    const colorsEl = b.querySelector('#rfFolderColors');
+    if (colorsEl) {
+      colorsEl.innerHTML = colors.map(c =>
+        '<button type="button" class="rf-color-pick" data-color="' + c.id + '" title="' + esc(c.label) + '" style="width:28px;height:28px;border-radius:6px;border:2px solid ' + (c.id === selectedColor ? 'var(--primary)' : 'transparent') + ';background:' + c.color + ';cursor:pointer;padding:0"></button>'
+      ).join('');
+      colorsEl.querySelectorAll('.rf-color-pick').forEach(btn => {
+        btn.addEventListener('click', () => {
+          selectedColor = btn.dataset.color || '';
+          colorsEl.querySelectorAll('.rf-color-pick').forEach(b2 => { b2.style.borderColor = 'transparent'; });
+          btn.style.borderColor = 'var(--primary)';
+        });
+      });
+    }
+
+    // Cancel button
+    const cancelBtn = b.querySelector('#rfFolderCancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', closeSheet);
+
+    // Save button
+    const saveBtn = b.querySelector('#rfFolderSave');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        const name = (nameInput && typeof nameInput.value === 'string') ? nameInput.value.trim() : '';
+        if (!name) {
+          if (nameInput) {
+            nameInput.style.borderColor = 'var(--danger)';
+            nameInput.focus();
+          }
+          toast('⚠ Nama folder wajib diisi', false);
+          return;
+        }
+        if (!onSave) { closeSheet(); return; }
+        closeSheet();
+        try {
+          await onSave(name, selectedColor);
+        } catch (e) {
+          console.error('[RecallFox] openCreateFolderSheet onSave failed:', e);
+          toast('⚠ Gagal: ' + (e && e.message ? e.message : 'unknown error'), false);
+        }
+      });
+    }
+
+    // Enter key di name input = trigger Save (mirip pattern editor sheet lainnya)
+    if (nameInput) {
+      nameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (saveBtn) saveBtn.click();
+        }
+      });
+    }
+  });
+}
+
 // ===== handleAddGroup: buat folder baru =====
+// v3.20.50: Pakai openCreateFolderSheet (modal standar) — bukan window.prompt()
+// lagi. Lihat catatan di openCreateFolderSheet untuk pattern yang dipakai.
 async function handleAddGroup() {
-  // v3.18.1: Kalau di "Semua"/"Arsip", default ke 'prompt' + beri tahu user
   let groupType = currentChip;
   if (currentChip === 'all' || currentChip === 'archive') {
     groupType = 'prompt';
     toast('📁 Folder dibuat di kategori Prompt. Ganti tab untuk lihat.');
   }
-  const name = prompt('Nama folder baru:');
-  if (!name || !name.trim()) return;
-  const group = createGroup(name.trim(), groupType);
-  try {
-    await addItem(group);
-    expandedGroupIds.push(group.id);
-    // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat folder
-    if (currentChip === 'all' || currentChip === 'archive') {
-      currentChip = groupType;
+  openCreateFolderSheet({
+    title: '📁 Buat Folder Baru',
+    sub: 'Nama wajib, warna opsional',
+    defaultName: '',
+    defaultColor: '',
+    onSave: async (name, color) => {
+      const group = createGroup(name, groupType);
+      if (color) {
+        if (!group.source) group.source = {};
+        group.source.folderColor = color;
+      }
+      await addItem(group);
+      expandedGroupIds.push(group.id);
+      // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat folder
+      if (currentChip === 'all' || currentChip === 'archive') {
+        currentChip = groupType;
+      }
+      await refreshVault();
+      renderChips();
+      toast('📁 Folder "' + name + '" dibuat');
     }
-    await refreshVault();
-    renderChips();
-    toast('📁 Folder "' + name.trim() + '" dibuat');
-  } catch (e) {
-    toast('Gagal buat folder: ' + e.message, false);
-  }
+  });
 }
 
 // ===== handleAiAutoGroup: AI grouping otomatis (Magic Folder) =====
@@ -5022,13 +5132,25 @@ function itemSheet(id) {
         const k = a.dataset.a;
         if (k === 'rename-group') {
           closeSheet();
-          const newName = prompt('Nama folder baru:', it.title);
-          if (newName && newName.trim()) {
-            updateItem(it.id, { title: newName.trim() }).then(() => {
-              refreshVault();
-              toast('✏️ Folder di-rename: ' + newName.trim());
-            });
-          }
+          // v3.20.50: Ganti prompt() dengan openCreateFolderSheet (modal standar).
+          // Pre-fill nama + warna lama supaya user bisa edit incremental.
+          openCreateFolderSheet({
+            title: '✏️ Rename Folder',
+            sub: 'Ubah nama folder' + (it.source && it.source.folderColor ? ' + warna' : ''),
+            defaultName: it.title || '',
+            defaultColor: (it.source && it.source.folderColor) ? it.source.folderColor : '',
+            onSave: async (name, color) => {
+              const newSource = { ...(it.source || {}) };
+              if (color) {
+                newSource.folderColor = color;
+              } else {
+                delete newSource.folderColor;
+              }
+              await updateItem(it.id, { title: name, source: newSource });
+              await refreshVault();
+              toast('✏️ Folder di-rename: ' + name);
+            }
+          });
         }
         else if (k === 'folder-color') { closeSheet(); openFolderColorSheet(it.id); }
         else if (k === 'move-folder') { closeSheet(); openMoveToFolderSheet(it.id); }
