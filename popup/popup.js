@@ -2268,29 +2268,91 @@ async function moveItemToGroup(itemId, groupId) {
 }
 
 // ===== handleAddGroup: buat folder baru =====
+// v3.20.48: Ganti window.prompt() dengan modal standar (openSheet).
+// Modal punya: nama folder (wajib) + pilihan warna (opsional).
+// TIDAK tambah tag (per instruksi user — nanti sebagai enhancement terpisah).
 async function handleAddGroup() {
-  // v3.18.1: Kalau di "Semua"/"Arsip", default ke 'prompt' + beri tahu user
   let groupType = currentChip;
   if (currentChip === 'all' || currentChip === 'archive') {
     groupType = 'prompt';
-    toast('📁 Folder dibuat di kategori Prompt. Ganti tab untuk lihat.');
   }
-  const name = prompt('Nama folder baru:');
-  if (!name || !name.trim()) return;
-  const group = createGroup(name.trim(), groupType);
-  try {
-    await addItem(group);
-    expandedGroupIds.push(group.id);
-    // v3.18.1: Auto-switch ke kategori yang sesuai supaya user langsung lihat folder
-    if (currentChip === 'all' || currentChip === 'archive') {
-      currentChip = groupType;
-    }
-    await refreshVault();
-    renderChips();
-    toast('📁 Folder "' + name.trim() + '" dibuat');
-  } catch (e) {
-    toast('Gagal buat folder: ' + e.message, false);
-  }
+  const colors = [
+    { id: '', label: 'Default', color: 'var(--muted)' },
+    { id: '#ef4444', label: 'Merah', color: '#ef4444' },
+    { id: '#f59e0b', label: 'Oranye', color: '#f59e0b' },
+    { id: '#10b981', label: 'Hijau', color: '#10b981' },
+    { id: '#3b82f6', label: 'Biru', color: '#3b82f6' },
+    { id: '#8b5cf6', label: 'Ungu', color: '#8b5cf6' },
+    { id: '#ec4899', label: 'Pink', color: '#ec4899' }
+  ];
+  let selectedColor = '';
+  openSheet('📁 Buat Folder Baru', 'Masukkan nama folder + pilih warna (opsional)', b => {
+    b.innerHTML =
+      '<div style="padding:4px 0">'
+      + '<label style="font-size:11px;font-weight:600;color:var(--text-2);display:block;margin-bottom:4px">Nama Folder <span style="color:var(--danger)">*</span></label>'
+      + '<input id="rfNewFolderName" type="text" placeholder="mis. Referensi, Coding, Proyek A..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--r-md);font-size:13px;background:var(--surface);color:var(--text);outline:none" />'
+      + '</div>'
+      + '<div style="padding:8px 0 4px">'
+      + '<label style="font-size:11px;font-weight:600;color:var(--text-2);display:block;margin-bottom:6px">Warna (opsional)</label>'
+      + '<div id="rfNewFolderColors" style="display:flex;gap:6px;flex-wrap:wrap">'
+      + colors.map(c =>
+        '<button type="button" class="rf-color-pick" data-color="' + c.id + '" title="' + c.label + '" style="width:28px;height:28px;border-radius:6px;border:2px solid ' + (c.id === '' ? 'var(--border)' : 'transparent') + ';background:' + c.color + ';cursor:pointer;padding:0"></button>'
+      ).join('')
+      + '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;padding:12px 0 0;justify-content:flex-end">'
+      + '<button class="btn btn-g" id="rfNewFolderCancel">Batal</button>'
+      + '<button class="btn btn-p" id="rfNewFolderSave">📁 Simpan</button>'
+      + '</div>';
+    // Focus input
+    const nameInput = b.querySelector('#rfNewFolderName');
+    if (nameInput) nameInput.focus();
+    // Color picker
+    b.querySelectorAll('.rf-color-pick').forEach(btn => {
+      btn.addEventListener('click', () => {
+        selectedColor = btn.dataset.color;
+        b.querySelectorAll('.rf-color-pick').forEach(b2 => b2.style.borderColor = 'transparent');
+        btn.style.borderColor = 'var(--primary)';
+      });
+    });
+    // Cancel
+    b.querySelector('#rfNewFolderCancel').addEventListener('click', closeSheet);
+    // Save
+    b.querySelector('#rfNewFolderSave').addEventListener('click', async () => {
+      const name = (nameInput?.value || '').trim();
+      if (!name) {
+        nameInput.style.borderColor = 'var(--danger)';
+        nameInput.focus();
+        toast('⚠ Nama folder wajib diisi', false);
+        return;
+      }
+      closeSheet();
+      const group = createGroup(name, groupType);
+      if (selectedColor) {
+        if (!group.source) group.source = {};
+        group.source.folderColor = selectedColor;
+      }
+      try {
+        await addItem(group);
+        expandedGroupIds.push(group.id);
+        if (currentChip === 'all' || currentChip === 'archive') {
+          currentChip = groupType;
+        }
+        await refreshVault();
+        renderChips();
+        toast('📁 Folder "' + name + '" dibuat');
+      } catch (e) {
+        toast('Gagal buat folder: ' + e.message, false);
+      }
+    });
+    // Enter key = save
+    nameInput?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        b.querySelector('#rfNewFolderSave').click();
+      }
+    });
+  });
 }
 
 // ===== handleAiAutoGroup: AI grouping otomatis (Magic Folder) =====
@@ -5022,13 +5084,32 @@ function itemSheet(id) {
         const k = a.dataset.a;
         if (k === 'rename-group') {
           closeSheet();
-          const newName = prompt('Nama folder baru:', it.title);
-          if (newName && newName.trim()) {
-            updateItem(it.id, { title: newName.trim() }).then(() => {
-              refreshVault();
-              toast('✏️ Folder di-rename: ' + newName.trim());
+          // v3.20.48: Ganti prompt dengan modal standar
+          openSheet('✏️ Rename Folder', esc(it.title || 'Folder'), b => {
+            b.innerHTML =
+              '<div style="padding:4px 0">'
+              + '<label style="font-size:11px;font-weight:600;color:var(--text-2);display:block;margin-bottom:4px">Nama Folder <span style="color:var(--danger)">*</span></label>'
+              + '<input id="rfRenameFolderName" type="text" value="' + esc(it.title || '') + '" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--r-md);font-size:13px;background:var(--surface);color:var(--text);outline:none" />'
+              + '</div>'
+              + '<div style="display:flex;gap:8px;padding:12px 0 0;justify-content:flex-end">'
+              + '<button class="btn btn-g" id="rfRenameFolderCancel">Batal</button>'
+              + '<button class="btn btn-p" id="rfRenameFolderSave">✏️ Simpan</button>'
+              + '</div>';
+            const nameInput = b.querySelector('#rfRenameFolderName');
+            if (nameInput) { nameInput.focus(); nameInput.select(); }
+            b.querySelector('#rfRenameFolderCancel').addEventListener('click', closeSheet);
+            b.querySelector('#rfRenameFolderSave').addEventListener('click', async () => {
+              const newName = (nameInput?.value || '').trim();
+              if (!newName) { nameInput.style.borderColor = 'var(--danger)'; nameInput.focus(); toast('⚠ Nama folder wajib diisi', false); return; }
+              closeSheet();
+              await updateItem(it.id, { title: newName });
+              await refreshVault();
+              toast('✏️ Folder di-rename: ' + newName);
             });
-          }
+            nameInput?.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') { e.preventDefault(); b.querySelector('#rfRenameFolderSave').click(); }
+            });
+          });
         }
         else if (k === 'folder-color') { closeSheet(); openFolderColorSheet(it.id); }
         else if (k === 'move-folder') { closeSheet(); openMoveToFolderSheet(it.id); }
