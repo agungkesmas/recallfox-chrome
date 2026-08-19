@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RecallFox Dokumen</title>
+  <link rel="stylesheet" href="viewer.css" />
+</head>
+<body>
+  <div class="topbar">
+    <button class="icon-btn" id="closeBtn" title="Tutup tab" aria-label="Tutup">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <span class="title" id="docTitle">📄 Memuat dokumen…</span>
+    <span class="count" id="docCount"></span>
+  </div>
+
+  <div class="page-wrap" id="pageWrap">
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <div>Memuat halaman…</div>
+    </div>
+    <img id="pageImg" alt="" />
+    <div class="err" id="errBox" style="display:none">
+      <div class="err-icon">⚠️</div>
+      <div class="err-msg" id="errMsg">Gagal memuat halaman</div>
+      <button class="btn btn-p" id="retryBtn">Coba lagi</button>
+    </div>
+  </div>
+
+  <div class="dots" id="dots"></div>
+
+  <div class="nav">
+    <button class="nav-btn" id="prevBtn" disabled>◀ Prev</button>
+    <span class="ind" id="ind">—</span>
+    <button class="nav-btn" id="nextBtn" disabled>Next ▶</button>
+    <span class="nav-sep"></span>
+    <button class="nav-btn nav-btn-sec" id="downloadBtn" title="Download halaman ini">⬇️ Download</button>
+    <button class="nav-btn nav-btn-sec" id="openTabBtn" title="Buka halaman ini di tab baru (view asli Firefox)">↗ Buka di tab</button>
+  </div>
+
+  <!-- Chrome MV3: Load polyfill SEBELUM module scripts supaya browser.* tersedia -->
+<script src="../lib/browser-polyfill.min.js"></script>
+<script type="module" src="viewer.js"></script>
+</body>
+</html>

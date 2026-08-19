@@ -1,0 +1,285 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "short_name": "RecallFox",
+  "version": "3.20.51",
+  "description": "__MSG_extDesc__",
+  "author": "RecallFox",
+  "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
+  "default_locale": "id",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "clipboardWrite",
+    "downloads",
+    "unlimitedStorage",
+    "browsingData",
+    "notifications",
+    "geolocation",
+    "alarms",
+    "sidePanel"
+  ],
+  "options_ui": {
+    "page": "settings/settings.html",
+    "open_in_tab": true
+  },
+  "host_permissions": [
+    "<all_urls>",
+    "https://api.aladhan.com/*",
+    "https://nominatim.openstreetmap.org/*",
+    "https://chat.z.ai/*",
+    "https://chatgpt.com/*",
+    "https://claude.ai/*",
+    "https://gemini.google.com/*",
+    "https://chat.deepseek.com/*",
+    "https://tongyi.aliyun.com/*",
+    "https://chat.qwen.ai/*",
+    "https://kimi.moonshot.cn/*",
+    "https://kimi.com/*",
+    "https://api.groq.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.x.ai/*",
+    "https://api.z.ai/*",
+    "https://api.openai.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*",
+    "https://drive.google.com/*",
+    "https://docs.google.com/*",
+    "https://www.googleapis.com/*",
+    "https://qmwofsfpxjptpyvncylp.supabase.co/*",
+    "https://*.supabase.co/*"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    },
+    "default_title": "RecallFox",
+    "default_popup": "popup/popup.html"
+  },
+  "side_panel": {
+    "default_path": "sidebar/sidebar.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.z.ai/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://chat.qwen.ai/*",
+        "https://kimi.moonshot.cn/*",
+        "https://kimi.com/*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/ai-resolvers.js",
+        "content/content.js"
+      ],
+      "css": [
+        "content/content.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/overlay.js",
+        "content/selection-ai.js"
+      ],
+      "css": [
+        "content/overlay.css"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "content/volume-hook.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/volume-shared.js",
+        "content/volume-cs.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": true
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://*.youtube-nocookie.com/*",
+        "https://*.youtubekids.com/*",
+        "https://*.x.com/*",
+        "https://*.twitter.com/*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/contentguard-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/elementblocker-cs.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/tape-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
+        "content/sidebar-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/capture.css",
+        "content/overlay.css",
+        "contentguard/takeover.html",
+        "contentguard/takeover.css",
+        "contentguard/takeover.js",
+        "contentguard/blocked.html",
+        "contentguard/blocked.css",
+        "contentguard/blocked.js",
+        "popup/viewer.html",
+        "popup/viewer.js",
+        "popup/viewer.css",
+        "lib/tape.js",
+        "lib/ai-detect.js",
+        "lib/vault-tree.js",
+        "lib/browser-polyfill.min.js",
+        "sidebar/sidebar.html",
+        "sidebar/sidebar.css",
+        "sidebar/sidebar.js",
+        "popup/popup.css",
+        "popup/popup.js",
+        "popup/popup.html",
+        "popup/upload-window.html",
+        "popup/upload-window.js",
+        "settings/settings.html",
+        "settings/settings.css",
+        "settings/settings.js",
+        "icons/icon-16.png",
+        "icons/icon-32.png",
+        "icons/icon-48.png",
+        "icons/icon-96.png",
+        "icons/icon-128.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "commands": {
+    "_execute_action": {
+      "description": "Buka popup RecallFox (klik toolbar icon atau set shortcut manual di chrome://extensions/shortcuts)"
+    },
+    "capture-page": {
+      "suggested_key": {
+        "default": "Alt+Shift+5",
+        "mac": "Alt+Shift+5"
+      },
+      "description": "__MSG_cmdCapturePage__"
+    },
+    "clear-cache": {
+      "suggested_key": {
+        "default": "Alt+Shift+C",
+        "mac": "Alt+Shift+C"
+      },
+      "description": "__MSG_cmdClearCache__"
+    },
+    "volume-up": {
+      "suggested_key": {
+        "default": "Alt+Shift+Up",
+        "mac": "Alt+Shift+Up"
+      },
+      "description": "__MSG_cmdVolumeUp__"
+    },
+    "volume-down": {
+      "suggested_key": {
+        "default": "Alt+Shift+Down",
+        "mac": "Alt+Shift+Down"
+      },
+      "description": "__MSG_cmdVolumeDown__"
+    },
+    "capture-area": {
+      "description": "Tangkap area terpilih (seret kotak) — set shortcut manual di chrome://extensions/shortcuts"
+    },
+    "capture-visible": {
+      "description": "Tangkap bagian terlihat (viewport saja) — set shortcut manual di chrome://extensions/shortcuts"
+    },
+    "volume-reset": {
+      "description": "__MSG_cmdVolumeReset__ — set shortcut manual di chrome://extensions/shortcuts"
+    },
+    "ask-ai": {
+      "description": "Tanya Si Pandai AI tentang teks terseleksi — set shortcut manual di chrome://extensions/shortcuts"
+    }
+  }
+}

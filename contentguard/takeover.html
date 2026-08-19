@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🛡️ RecallFox Content Guardian — Konten Positif Tiongkok</title>
+  <link rel="stylesheet" href="takeover.css" />
+</head>
+<body>
+  <div class="cg-wrap">
+    <!-- Header -->
+    <header class="cg-header">
+      <div class="cg-logo">🛡️</div>
+      <div>
+        <h1>Content Guardian Aktif</h1>
+        <p class="cg-sub" id="cg-sub">Mengarahkan Anda ke konten positif dari Tiongkok</p>
+      </div>
+    </header>
+
+    <!-- Banner informatif -->
+    <div class="cg-banner">
+      <div class="cg-banner-icon">🇨🇳</div>
+      <div class="cg-banner-text">
+        <strong>Mode Arah Paksa aktif.</strong>
+        Feed <span id="cg-platform-label">platform</span> biasanya penuh berita negatif.
+        Alih-alih itu, di bawah ini adalah kurasi konten positif tentang
+        <strong>kehidupan, teknologi, dan kemajuan Tiongkok</strong>.
+        Klik salah satu kartu untuk langsung membuka.
+      </div>
+    </div>
+
+    <!-- Search grid -->
+    <section class="cg-section">
+      <h2 class="cg-section-title">
+        <span id="cg-section-icon">📺</span>
+        <span id="cg-section-heading">Telusuri di YouTube</span>
+      </h2>
+      <div class="cg-grid" id="cg-grid">
+        <!-- diisi oleh takeover.js -->
+      </div>
+    </section>
+
+    <!-- Akun X (khusus X) -->
+    <section class="cg-section" id="cg-accounts-section" style="display:none;">
+      <h2 class="cg-section-title">👥 Akun Direkomendasikan</h2>
+      <div class="cg-accounts" id="cg-accounts">
+        <!-- diisi oleh takeover.js -->
+      </div>
+    </section>
+
+    <!-- Footer / bypass -->
+    <footer class="cg-footer">
+      <div class="cg-bypass-wrap">
+        <button id="cg-bypass" class="cg-bypass-btn">Lanjut ke <span id="cg-bypass-platform">platform</span> →</button>
+        <p class="cg-bypass-note">
+          Tombol di atas memerlukan 2× klik untuk konfirmasi (mode paksa).
+          Anda tetap bisa melewati, tapi kami menyarankan tetap pada konten positif.
+        </p>
+      </div>
+      <div class="cg-meta">
+        <span>RecallFox v0.8.20 · Content Guardian</span>
+        <button id="cg-open-settings" class="cg-link-btn">⚙️ Buka Pengaturan</button>
+      </div>
+    </footer>
+  </div>
+
+  <script src="takeover.js"></script>
+</body>
+</html>

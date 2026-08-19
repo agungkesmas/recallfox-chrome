@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RecallFox Vault</title>
+  <link rel="stylesheet" href="../popup/popup.css" />
+  <link rel="stylesheet" href="sidebar.css" />
+</head>
+<body class="rf-sidebar-body">
+
+<!-- ============ POPUP (sidebar mode — full viewport) ============ -->
+<div class="popup" id="popup">
+  <!-- Header -->
+  <div class="hd">
+    <div class="brand">
+      <div class="logo">🦊</div>
+      <div>
+        <div class="brand-t">RecallFox</div>
+        <div class="brand-s" id="ctxBadge"><span class="dot"></span>Vault · siap</div>
+      </div>
+    </div>
+    <div class="hd-actions">
+      <button class="iconbtn" id="tapeBtn" title="RecallTape — Kalkulator pita (CalcTape-style)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/></svg>
+      </button>
+      <button class="iconbtn" id="aiBtn" title="Buka / pindah AI tool"></button>
+      <button class="iconbtn" id="themeBtn" title="Ganti tema"></button>
+      <button class="iconbtn" id="settingsBtn" title="Pengaturan"></button>
+      <button class="iconbtn" id="sidebarInPageBtn" title="Tampilkan sidebar di halaman (popout)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+      </button>
+      <!-- v3.11.7-fix2 (Sesi 7, Issue #5): Tombol Stop Adzan global — muncul hanya saat adzan aktif -->
+      <button class="iconbtn" id="adzanStopBtn" title="Stop adzan" style="display:none;background:linear-gradient(135deg,#10b981,#059669);color:#fff">⏹</button>
+    </div>
+  </div>
+
+  <!-- v3.19.5: Command bar (search) — tambah ke sidebar supaya user bisa cari item vault -->
+  <div class="cmd" id="cmdWrap">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+    <input id="search" type="search" placeholder="Cari item atau ketik perintah…" autocomplete="off" spellcheck="false" enterkeyhint="search">
+    <button class="cmd-clear" id="searchClear" type="button" title="Hapus teks pencarian" aria-label="Hapus teks pencarian" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <span class="hint"><kbd>/</kbd></span>
+  </div>
+
+  <!-- Status strip -->
+  <div class="strip" id="strip">
+    <div class="strip-bar" id="stripBar">
+      <span class="strip-cell" id="stripPrayer">🕌 <b>—</b></span>
+      <span class="strip-sep"></span>
+      <span class="strip-cell">📖 <b id="stripQuran">0/2</b></span>
+      <span class="strip-sep fastsep"></span>
+      <span class="strip-cell fast" id="stripFast">🌙 <b>—</b></span>
+      <svg class="strip-chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="strip-detail">
+      <div class="strip-detail-in">
+        <div style="font-size:10.5px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.05em" id="stripLoc">Waktu Shalat</div>
+        <div class="pray-grid" id="prayGrid"></div>
+        <div class="habit-row">
+          <button class="habit" id="habitQuran">📖 Ngaji <span>0 juz</span></button>
+          <button class="habit" id="habitGym">🏃 Olahraga</button>
+        </div>
+        <!-- v3.11.5 (Issue 2): Pintasan web ngaji & olahraga -->
+        <div class="shortcuts-row" id="quranShortcutsRow"></div>
+        <div class="shortcuts-row" id="exerciseShortcutsRow"></div>
+        <div class="fast-note" id="fastNote">🌙 Memuat jadwal puasa…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- v3.12.3 (Issue #2): Quick actions grid — customizable via JS.
+       Container kosong, diisi dinamis oleh renderTiles() di popup.js.
+       Default: 6 tombol (Prompt/Konteks/Link/Bundle/Snapshot/Shot).
+       User bisa add/remove via tombol "+" dan "×". Max 6, 2 cols, auto-fit row. -->
+  <div class="tiles" id="tilesContainer"></div>
+
+  <!-- View: Beranda (Vault) -->
+  <div class="view" id="vaultView">
+        <div class="vault-hd">
+      <span class="t">Vault</span><span class="meta" id="vaultMeta"></span>
+      <button class="addbtn" id="addItemBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg><span class="btn-text"> Baru</span></button>
+        </div>
+        <div class="vault-actions">
+      <button class="addbtn" id="batchModeBtn" title="Mode batch" style="display:none">☑️<span class="btn-text"> Batch</span></button>
+      <button class="addbtn" id="aiGroupBtn" title="Auto Group AI">🪄<span class="btn-text"> Auto</span></button>
+      <!-- v3.20.33 FIX: Magic Command button ada di popup.html tapi HILANG di sidebar.html
+           → user yang pakai sidebar/popout tidak bisa akses fitur. Tambah tombol di sini. -->
+      <button class="addbtn" id="magicCommandBtn" title="Ketik perintah — mis. 'pindahkan link MDN ke folder Referensi'">💬<span class="btn-text"> Perintah</span></button>
+      <button class="addbtn" id="addGroupBtn" title="Buat Folder Baru">📁+<span class="btn-text"> Folder</span></button>
+      <select id="vaultSortSelect" title="Urutkan" style="font-size:11px;padding:4px 8px;border-radius:var(--r-full);border:1px solid var(--border);background:var(--surface);color:var(--text-2);cursor:pointer;outline:none">
+        <option value="recent">Terbaru</option>
+        <option value="name">Nama A-Z</option>
+        <option value="oldest">Terlama</option>
+        <option value="uses">Paling dipakai</option>
+        <option value="fav">Favorit dulu</option>
+      </select>
+      <button class="addbtn" id="collapseAllBtn" title="Collapse/Expand semua folder" style="padding:4px 8px">📂</button>
+      <button class="addbtn" id="tagFilterBtn" title="Filter by tag" style="padding:4px 8px">🏷️</button>
+        </div>
+    <div id="vaultBreadcrumb" style="padding:0 13px;font-size:11px;color:var(--muted);display:none"></div>
+    <div id="tagFilterBar" style="padding:0 13px;font-size:11px;display:none;gap:4px;flex-wrap:wrap"></div>
+    <!-- v3.11.14: Batch bar dengan tombol generik — tampil/sembunyi sesuai chip aktif via updateVaultBatchBarButtons() -->
+    <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
+      <span id="vaultBatchCount">0 dipilih</span>
+      <button class="btn btn-p" id="vaultBatchCopy" title="Copy screenshot + keterangan" style="padding:4px 8px;font-size:11px">📋 Copy + Keterangan</button>
+      <button class="btn btn-g" id="vaultBatchCopyImg" title="Copy gambar saja" style="padding:4px 8px;font-size:11px">🖼️ Copy Gambar Saja</button>
+      <button class="btn btn-g" id="vaultBatchCopyMeta" title="Copy teks metadata saja (URL, judul, waktu) — paste ke WA/Gemini/AI" style="display:none;padding:4px 8px;font-size:11px">📝 Copy Teks Saja</button>
+      <button class="btn btn-p" id="vaultBatchCopyText" title="Copy teks item (prompt/konteks/link/snapshot)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Teks</button>
+      <button class="btn btn-p" id="vaultBatchCopyBundle" title="Copy bundle (gabungan semua anggota)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Bundle</button>
+      <button class="btn btn-g" id="vaultBatchUnarchive" title="Keluarkan item dari arsip" style="display:none;padding:4px 8px;font-size:11px">📦 Unarsip</button>
+      <button class="btn btn-g" id="vaultBatchMoveFolder" title="Pindahkan semua item terpilih ke folder" style="display:none;padding:4px 8px;font-size:11px">📂 Pindah ke Folder</button>
+      <button class="btn btn-g" id="vaultBatchArchive" title="Arsipkan semua item terpilih" style="display:none;padding:4px 8px;font-size:11px">📦 Arsipkan</button>
+      <button class="btn btn-g" id="vaultBatchBundle" title="Tambahkan semua item terpilih ke bundle" style="display:none;padding:4px 8px;font-size:11px">📦 Tambah ke Bundle</button>
+      <button class="btn btn-d" id="vaultBatchDelete" title="Hapus item terpilih dari vault" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <!-- v3.17.7: Unparenting drop zone — muncul saat drag item dari folder. Posisi: antara chips dan list. -->
+    <div id="vaultRootDropzone" class="vault-root-dropzone" style="display:none">
+      📥 Lepaskan di sini untuk mengeluarkan dari Folder
+    </div>
+    <div class="list" id="list"></div>
+    <div class="cmdres" id="cmdres"></div>
+  </div>
+
+  <!-- View: Catatan (first-class) -->
+  <div class="view hide" id="notesView">
+    <!-- v3.11.2 (Issue dari Google Doc): Revert ke 1-row notes-bar dengan flex-wrap.
+         Versi V3.11.1 pakai 2-row vertical yang ternyata bikin wrap logic rusak
+         ("kotak ijo, logika wrap nya kyknya ga jalan lagi, makanya tabrakan").
+         Sekarang: title + meta + 2 action buttons dalam 1 baris flex-wrap.
+         Saat sidebar sempit, action buttons wrap ke baris berikutnya. -->
+    <div class="notes-bar notes-bar-flat">
+      <span class="notes-bar-t">📝 Catatan</span>
+      <span class="notes-bar-meta" id="notesCountMeta">0</span>
+      <span class="notes-bar-spacer"></span>
+      <button class="notes-action-btn" id="noteAddBtn" title="Tambah catatan baru">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span class="lbl">Catatan Baru</span>
+      </button>
+      <button class="notes-action-btn notes-action-secondary" id="noteBatchBtn" title="Mode batch: pilih multiple note untuk hapus/arsip sekaligus">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><polyline points="3 14 7 18 11 14"/><polyline points="14 14 18 18 22 14"/></svg>
+        <span class="lbl">Batch</span>
+      </button>
+    </div>
+    <!-- v3.9.0 (Issue 7): Batch action bar (hidden by default, shown when batch mode active) -->
+    <!-- v3.11.14: Tambah flex-wrap supaya tombol tidak ketutupan di sidebar sempit -->
+    <div id="notesBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
+      <span id="notesBatchCount">0 dipilih</span>
+      <button class="btn btn-g" id="notesBatchArchive" style="padding:4px 8px;font-size:11px">📦 Arsipkan</button>
+      <button class="btn btn-d" id="notesBatchDelete" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      <button class="btn btn-g" id="notesBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
+    </div>
+    <div class="notes-list" id="notesList"></div>
+  </div>
+
+  <!-- View: Alat -->
+  <div class="view hide" id="toolsView">
+    <div class="tools">
+      <div class="tools-header">
+        <span class="tools-h-t">🛠 Semua Alat</span>
+        <span class="tools-h-meta">11 alat tersedia</span>
+      </div>
+      <div class="toolgrid" id="toolgrid"></div>
+      <div class="hintbox">💡 Catatan naik kelas jadi tab sendiri (sering dipakai). Alat lain cukup 2 klik dari sini.</div>
+    </div>
+  </div>
+
+  <!-- Tab bar -->
+  <div class="tabbar">
+    <button class="tabbtn on" id="tabHome"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 10v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V10"/></svg>Beranda</button>
+    <button class="tabbtn" id="tabNotes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>Catatan<span class="badge" id="notesBadge" style="display:none">0</span></button>
+    <button class="tabbtn" id="tabTools"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>Alat</button>
+  </div>
+
+  <!-- Slide-in page -->
+  <div class="page" id="page">
+    <div class="page-hd">
+      <button class="backbtn" id="pageBack"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+      <div class="pt" id="pageTitle">Alat</div>
+      <div class="savestate" id="pageSaveState"></div>
+    </div>
+    <div class="page-body" id="pageBody"></div>
+    <div class="page-foot" id="pageFoot" style="display:none;flex:none;border-top:1px solid var(--border);padding:10px 13px;gap:8px;"></div>
+  </div>
+
+  <!-- Sheet + toast -->
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet" id="sheet">
+    <div class="sheet-grip"></div>
+    <div class="sheet-hd" id="sheetHd"></div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+  <div class="toasts" id="toasts"></div>
+</div>
+
+<!-- Prayer setup modal (location + method) -->
+<div id="prayerSetupOverlay" class="modal-overlay" style="display:none;">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h3>🕌 Setup Waktu Shalat</h3>
+      <button id="prayerSetupClose" class="modal-close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-field">
+        <label>Cari lokasi (kota/alamat)</label>
+        <input id="prayerAddr" type="text" placeholder="mis. Jakarta, Yogyakarta, Bandung..." />
+        <div id="prayerSugg" class="prayer-suggestions"></div>
+      </div>
+      <div class="form-field">
+        <label>Atau gunakan lokasi perangkat</label>
+        <button id="prayerGeo" class="btn btn-g" style="width:100%;">📍 Deteksi Lokasi Otomatis</button>
+      </div>
+      <div class="form-field">
+        <label>Lokasi saat ini</label>
+        <div id="prayerCurrent" class="prayer-current">— belum diset —</div>
+      </div>
+      <div class="form-row">
+        <div class="form-field form-field-narrow">
+          <label>Mazhab Asr</label>
+          <select id="prayerAsr">
+            <option value="0">Syafi'i (Indonesia)</option>
+            <option value="1">Hanafi</option>
+          </select>
+        </div>
+        <div class="form-field form-field-narrow">
+          <label>Format jam</label>
+          <select id="prayerFormat">
+            <option value="24h">24-jam</option>
+            <option value="12h">12-jam (AM/PM)</option>
+          </select>
+        </div>
+      </div>
+      <div class="prayer-method-info">
+        <strong>Metode:</strong> Muhammadiyah (Subuh -18°, Isya -18°)
+        <br><small>Sumber: Aladhan API dengan method=3 + methodSettings=18,18,0</small>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="prayerSetupCancel" class="btn btn-g">Batal</button>
+      <button id="prayerSetupSave" class="btn btn-p">Simpan &amp; Aktifkan</button>
+    </div>
+  </div>
+</div>
+
+<!-- Variables fill modal -->
+<div id="varsOverlay" class="modal-overlay" style="display:none;">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h3>⚙ Isi Variabel</h3>
+      <button id="varsClose" class="modal-close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div id="varsFields"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="varsCancel" class="btn btn-g">Batal</button>
+      <button id="varsInject" class="btn btn-p">Sisipkan</button>
+    </div>
+  </div>
+</div>
+
+<!-- Attach Links modal -->
+<div id="attachOverlay" class="modal-overlay" style="display:none;">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <h3>📎 Sisipkan dengan Lampiran</h3>
+      <button id="attachClose" class="modal-close">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="attach-search">
+        <input id="attachSearch" type="text" placeholder="Cari link di vault..." autocomplete="off" />
+      </div>
+      <div id="attachList" class="attach-list"></div>
+      <div class="attach-options">
+        <div class="attach-option">
+          <label>Posisi</label>
+          <select id="attachPosition">
+            <option value="below">Di bawah prompt</option>
+            <option value="above">Di atas prompt</option>
+          </select>
+        </div>
+        <div class="attach-option">
+          <label>Teks pengantar</label>
+          <input id="attachIntro" type="text" value="📎 Referensi terlampir untuk percakapan ini:" />
+        </div>
+      </div>
+      <div class="attach-preview-wrap">
+        <label>Preview teks yang akan disisipkan</label>
+        <div id="attachPreview" class="attach-preview"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button id="attachCancel" class="btn btn-g">Batal</button>
+      <button id="attachInject" class="btn btn-p">📎 Sisipkan dengan Lampiran</button>
+    </div>
+  </div>
+</div>
+
+<!-- Restore banner (shown when vault is empty + backup file exists) -->
+<div id="restoreBanner" class="restore-banner" style="display:none;">
+  <div class="restore-banner-icon">💾</div>
+  <div class="restore-banner-text">
+    <div class="restore-banner-title">Backup tersedia — settings hilang?</div>
+    <div class="restore-banner-desc">File: <code>~/Downloads/RecallFox/auto-backup.json</code></div>
+  </div>
+  <button id="restorePick" class="btn btn-p restore-banner-btn">📂 Restore</button>
+  <button id="restoreDismiss" class="iconbtn restore-banner-close" title="Tutup">×</button>
+  <input type="file" id="restoreInput" accept=".json,application/json" style="display:none;" />
+</div>
+
+<input type="file" id="screenshotFileInput" accept="image/*" style="display:none" />
+<input type="file" id="docFileInput" accept=".md,.markdown,.txt,.json,.html,.htm,.csv,.yaml,.yml" multiple style="display:none" />
+
+<script type="module" src="sidebar.js"></script>
+</body>
+</html>

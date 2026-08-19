@@ -1,0 +1,971 @@
+/* ============================================================
+   sidebar.css — Sidebar-specific overrides (v3.11.1)
+   Sidebar uses popup.css as base + this file for full-viewport mode
+   + responsive collapse rules for narrow widths.
+   ============================================================ */
+
+/* Sidebar body uses full viewport — drop the framed look */
+body.rf-sidebar-body{
+  background:var(--bg);
+  overflow:hidden;
+}
+
+body.rf-sidebar-body .popup{
+  width:100% !important;
+  height:100vh !important;
+  max-width:none !important;
+  border:none !important;
+  border-radius:0 !important;
+  box-shadow:none !important;
+}
+
+/* Modals should be relative to the sidebar viewport, not full screen */
+body.rf-sidebar-body .modal-overlay{
+  position:absolute;
+}
+
+/* Restore banner positioned within sidebar */
+body.rf-sidebar-body .restore-banner{
+  position:absolute;
+}
+
+/* Slightly larger touch targets in sidebar (more breathing room) */
+body.rf-sidebar-body .tile{
+  padding:12px 2px;
+}
+body.rf-sidebar-body .item{
+  padding:10px 10px;
+}
+body.rf-sidebar-body .tabbtn{
+  padding:8px 4px 5px;
+}
+
+/* No width-sm class needed in sidebar (always full width) */
+body.rf-sidebar-body .popup.w-sm .strip-cell.fast,
+body.rf-sidebar-body .popup.w-sm .strip-sep.fastsep{
+  display:flex;
+}
+
+/* v3.11.3: Quick-actions bar & qa-btn styles DIHAPUS — user request dari Google Doc:
+   "kotak ijo di hilangkan saja biar lega" + "tombol itu juga mubazir yang 4 tombol
+   di atas jadwal sholat". Tiles row sudah cover semua aksi yang sama. */
+
+/* ============================================================
+   v3.11.2 (Issue dari Google Doc): Notes bar — 1-row dengan flex-wrap
+   Revert dari V3.11.1 yang pakai 2-row vertical (bikin wrap rusak).
+   Layout: title + count + spacer + 2 action buttons, semua flex-wrap.
+   Saat sidebar sempit, action buttons wrap ke baris berikutnya.
+   ============================================================ */
+.notes-bar-flat{
+  display:flex;
+  flex-wrap:wrap;            /* FIX wrap logic — tombol wrap bila tidak muat */
+  align-items:center;
+  gap:6px 8px;
+  padding:8px 12px !important;
+  flex:none;
+  border-bottom:1px solid var(--border);
+  background:var(--surface);
+}
+.notes-bar-flat .notes-bar-t{
+  font-size:11px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  color:var(--text);
+  white-space:nowrap;
+  flex:none;
+}
+.notes-bar-flat .notes-bar-meta{
+  font-size:10.5px;
+  color:var(--muted);
+  white-space:nowrap;
+  flex:none;
+  background:var(--surface-2);
+  padding:1px 7px;
+  border-radius:999px;
+  font-weight:600;
+}
+.notes-bar-flat .notes-bar-spacer{
+  flex:1 1 auto;
+  min-width:0;
+}
+.notes-bar-flat .notes-action-btn{
+  flex:0 0 auto;             /* v3.11.2: jangan grow — biar wrap bila sempit */
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:5px;
+  padding:6px 10px;
+  border-radius:8px;
+  background:var(--primary-soft);
+  color:var(--primary);
+  font-size:11px;
+  font-weight:650;
+  cursor:pointer;
+  transition:.15s;
+  border:1px solid transparent;
+  white-space:nowrap;
+}
+.notes-bar-flat .notes-action-btn svg{
+  width:13px;
+  height:13px;
+  flex:none;
+}
+.notes-bar-flat .notes-action-btn .lbl{
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.notes-bar-flat .notes-action-btn:hover{
+  background:var(--primary);
+  color:#fff;
+  border-color:var(--primary);
+}
+.notes-bar-flat .notes-action-btn:active{
+  transform:scale(.97);
+}
+.notes-bar-flat .notes-action-secondary{
+  background:var(--surface-2);
+  color:var(--text-2);
+}
+.notes-bar-flat .notes-action-secondary:hover{
+  background:var(--text);
+  color:var(--bg);
+  border-color:var(--text);
+}
+
+/* ============================================================
+   v3.11.1 (Issue 3 fix): Tools header compact
+   ============================================================ */
+.tools-header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:6px 4px 10px;
+  min-width:0;
+  flex-wrap:wrap;            /* v3.11.2: wrap juga di tools header */
+}
+.tools-h-t{
+  font-size:11px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+.tools-h-meta{
+  font-size:10.5px;
+  color:var(--muted);
+  white-space:nowrap;
+  flex:none;
+}
+
+/* ============================================================
+   v3.11.1 (Issue 2 fix): RESPONSIVE COLLAPSE RULES
+   - w-sm: ≤360px (sidebar sempit normal)
+   - w-xs: ≤280px (sidebar sangat sempit)
+   - w-xxs: ≤220px (sidebar minimal)
+   ============================================================ */
+
+/* w-sm (≤360px) — sidebar sempit normal */
+.popup.w-sm .hd{
+  padding:10px 10px 6px;
+  gap:6px;
+}
+.popup.w-sm .logo{
+  width:26px;
+  height:26px;
+  font-size:14px;
+  border-radius:8px;
+}
+.popup.w-sm .brand-t{
+  font-size:12px;
+}
+.popup.w-sm .brand-s{
+  font-size:9.5px;
+}
+.popup.w-sm .hd-actions{
+  gap:2px;
+}
+.popup.w-sm .iconbtn{
+  width:26px;
+  height:26px;
+  border-radius:7px;
+}
+.popup.w-sm .iconbtn svg{
+  width:13px;
+  height:13px;
+}
+
+/* v3.11.3: Quick-actions rules di w-sm DIHAPUS — quick-actions bar sudah dihapus. */
+
+/* Tiles: lebih kompak */
+.popup.w-sm .tiles{
+  gap:5px;
+  padding:0 8px 8px;
+}
+.popup.w-sm .tile{
+  font-size:10px;
+  padding:8px 1px;
+  gap:3px;
+}
+.popup.w-sm .tile svg{
+  width:12px;
+  height:12px;
+}
+
+/* Strip */
+.popup.w-sm .strip{
+  margin:0 8px 6px;
+}
+.popup.w-sm .strip-bar{
+  padding:6px 8px;
+  font-size:10.5px;
+  gap:4px;
+}
+
+/* v3.11.2: Notes bar flat (1-row + flex-wrap) di w-sm */
+.popup.w-sm .notes-bar-flat{
+  padding:6px 8px !important;
+  gap:5px 6px;
+}
+.popup.w-sm .notes-bar-flat .notes-action-btn{
+  padding:5px 8px;
+  font-size:10.5px;
+}
+
+/* Tools header di w-sm */
+.popup.w-sm .tools-header{
+  padding:5px 2px 8px;
+}
+
+/* Tab bar di w-sm: text bisa di-hide kalau perlu */
+.popup.w-sm .tabbar{
+  padding:5px 6px 6px;
+}
+.popup.w-sm .tabbtn{
+  font-size:9.5px;
+  padding:5px 2px 3px;
+  gap:2px;
+}
+.popup.w-sm .tabbtn svg{
+  width:14px;
+  height:14px;
+}
+
+/* Tools grid di w-sm: tetap 2 kolom tapi lebih kompak */
+.popup.w-sm .toolgrid{
+  gap:6px;
+}
+.popup.w-sm .tool{
+  padding:8px 8px;
+  gap:6px;
+}
+.popup.w-sm .tool-ic{
+  width:28px;
+  height:28px;
+  border-radius:8px;
+}
+.popup.w-sm .tool-ic svg{
+  width:13px;
+  height:13px;
+}
+.popup.w-sm .tool-n{
+  font-size:11px;
+}
+.popup.w-sm .tool-d{
+  font-size:9.5px;
+}
+
+/* Notes cards di w-sm */
+.popup.w-sm .note-card{
+  padding:8px 9px;
+}
+.popup.w-sm .note-title{
+  font-size:12px;
+}
+.popup.w-sm .note-body-txt{
+  font-size:11.5px;
+}
+
+/* Items di vault */
+.popup.w-sm .item{
+  padding:8px 8px;
+  gap:8px;
+}
+.popup.w-sm .item-ic{
+  width:28px;
+  height:28px;
+  border-radius:8px;
+}
+.popup.w-sm .item-title{
+  font-size:12px;
+}
+.popup.w-sm .item-meta{
+  font-size:10px;
+}
+
+/* Page header di w-sm */
+.popup.w-sm .page-hd{
+  padding:10px 10px;
+  gap:6px;
+}
+.popup.w-sm .page-hd .pt{
+  font-size:12.5px;
+}
+.popup.w-sm .page-body{
+  padding:10px 10px;
+}
+
+/* ============================================================
+   v3.20.8: w-min (≤320px) — Chrome Side Panel minimum width
+   ------------------------------------------------------------
+   Chrome Side Panel punya minimum width ~300px yang TIDAK bisa
+   di-set oleh extension (browser-controlled, lihat
+   https://crbug.com/41148932). Saat user drag sidebar sampai
+   mentok, lebar akan terhenti di ~300px. Pada width itu, w-sm
+   (≤360px) sudah aktif tapi layout masih terasa "terlalu lebar"
+   karena padding/fonts belum kompak seperti w-xs (≤280px).
+
+   w-min adalah intermediate collapse level — trigger additional
+   padding/font reduction supaya sidebar terlihat proporsional
+   di Chrome minimum width, tanpa harus menunggu sampai w-xs
+   (yang tidak akan pernah tercapai di Chrome).
+
+   Firefox sidebar bisa dikecilkan sampai ~200px+ jadi w-xs/w-xxs
+   masih relevan di Firefox. w-min hanya aktif di range 280-320px
+   yang di Chrome adalah "minimum territory".
+   ============================================================ */
+
+/* Header: lebih kompak */
+.popup.w-min .hd{
+  padding:9px 9px 5px;
+  gap:5px;
+}
+.popup.w-min .logo{
+  width:27px;
+  height:27px;
+  font-size:14px;
+  border-radius:8px;
+}
+.popup.w-min .brand-t{
+  font-size:11.5px;
+}
+.popup.w-min .brand-s{
+  font-size:9px;
+}
+.popup.w-min .iconbtn{
+  width:27px;
+  height:27px;
+  border-radius:7px;
+}
+.popup.w-min .iconbtn svg{
+  width:13.5px;
+  height:13.5px;
+}
+
+/* Command bar: lebih ramping */
+.popup.w-min .cmd{
+  margin:2px 9px 7px;
+  height:34px;
+  padding:0 9px;
+  gap:6px;
+}
+.popup.w-min .cmd input{
+  font-size:12px;
+}
+
+/* Strip: lebih kompak */
+.popup.w-min .strip{
+  margin:0 9px 8px;
+}
+.popup.w-min .strip-bar{
+  padding:6px 9px;
+  font-size:10px;
+  gap:4px;
+}
+
+/* Tiles: padding lebih kecil */
+.popup.w-min .tiles{
+  gap:4px;
+  padding:0 9px 7px;
+}
+.popup.w-min .tile{
+  font-size:9.5px;
+  padding:7px 1px;
+  gap:2px;
+}
+.popup.w-min .tile svg{
+  width:13px;
+  height:13px;
+}
+
+/* Notes bar: lebih kecil */
+.popup.w-min .notes-bar-flat{
+  padding:6px 9px !important;
+  gap:4px 6px;
+}
+.popup.w-min .notes-bar-flat .notes-bar-t{
+  font-size:10px;
+}
+.popup.w-min .notes-bar-flat .notes-bar-meta{
+  font-size:9.5px;
+  padding:1px 6px;
+}
+.popup.w-min .notes-bar-flat .notes-action-btn{
+  padding:5px 7px;
+  font-size:11px;
+  gap:4px;
+}
+.popup.w-min .notes-bar-flat .notes-action-btn svg{
+  width:13px;
+  height:13px;
+}
+
+/* Tab bar: padding lebih kecil */
+.popup.w-min .tabbar{
+  padding:5px 5px 6px;
+  gap:1px;
+}
+.popup.w-min .tabbtn{
+  font-size:9.5px;
+  padding:6px 3px 4px;
+  gap:2px;
+}
+.popup.w-min .tabbtn svg{
+  width:15px;
+  height:15px;
+}
+
+/* Notes cards: padding/font lebih kecil */
+.popup.w-min .note-card{
+  padding:7px 8px;
+}
+.popup.w-min .note-title{
+  font-size:11.5px;
+}
+.popup.w-min .note-body-txt{
+  font-size:11px;
+}
+.popup.w-min .note-meta{
+  font-size:9.5px;
+}
+
+/* Items di vault: lebih kompak */
+.popup.w-min .item{
+  padding:7px 8px;
+  gap:7px;
+}
+.popup.w-min .item-ic{
+  width:29px;
+  height:29px;
+  border-radius:8px;
+}
+.popup.w-min .item-title{
+  font-size:11.5px;
+}
+.popup.w-min .item-meta{
+  font-size:9.5px;
+}
+
+/* Page header/body: lebih kecil */
+.popup.w-min .page-hd{
+  padding:9px 9px;
+  gap:5px;
+}
+.popup.w-min .page-hd .pt{
+  font-size:12px;
+}
+.popup.w-min .page-body{
+  padding:9px 9px;
+}
+
+/* Tools grid: gap lebih kecil */
+.popup.w-min .toolgrid{
+  gap:6px;
+}
+.popup.w-min .tool{
+  padding:9px 9px;
+  gap:8px;
+}
+.popup.w-min .tool-ic{
+  width:29px;
+  height:29px;
+  border-radius:8px;
+}
+
+/* ============================================================
+   w-xs (≤280px) — sidebar sangat sempit
+   ============================================================ */
+.popup.w-xs .hd{
+  padding:8px 8px 4px;
+  gap:4px;
+}
+.popup.w-xs .brand{
+  gap:5px;
+}
+.popup.w-xs .logo{
+  width:24px;
+  height:24px;
+  font-size:13px;
+  border-radius:7px;
+}
+.popup.w-xs .brand-t{
+  font-size:11px;
+}
+.popup.w-xs .brand-s{
+  font-size:9px;
+  max-width:80px;
+}
+.popup.w-xs .iconbtn{
+  width:24px;
+  height:24px;
+  border-radius:6px;
+}
+.popup.w-xs .iconbtn svg{
+  width:12px;
+  height:12px;
+}
+
+/* v3.11.3: Quick-actions rules di w-xs DIHAPUS — quick-actions bar sudah dihapus. */
+
+/* Tiles di w-xs: icon-only, 3 kolom. v3.11.2: gunakan display:inline-flex untuk anak-anak */
+.popup.w-xs .tiles{
+  gap:4px;
+  padding:0 6px 6px;
+  grid-template-columns:repeat(3,1fr);
+}
+.popup.w-xs .tile{
+  padding:8px 2px;
+  font-size:0; /* hide text label */
+  gap:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.popup.w-xs .tile svg{
+  width:14px;
+  height:14px;
+  display:block;
+}
+
+/* v3.11.2: Notes bar flat di w-xs — tombol wrap ke baris berikutnya, icon-only */
+.popup.w-xs .notes-bar-flat{
+  padding:5px 6px !important;
+  gap:4px 5px;
+}
+.popup.w-xs .notes-bar-flat .notes-bar-t{
+  font-size:10px;
+}
+.popup.w-xs .notes-bar-flat .notes-bar-meta{
+  font-size:9px;
+  padding:1px 5px;
+}
+.popup.w-xs .notes-bar-flat .notes-action-btn{
+  padding:6px 5px;
+  font-size:0;
+  flex:0 0 auto;
+}
+.popup.w-xs .notes-bar-flat .notes-action-btn .lbl{
+  display:none; /* icon-only */
+}
+.popup.w-xs .notes-bar-flat .notes-action-btn svg{
+  width:14px;
+  height:14px;
+}
+
+/* Tab bar di w-xs: icon-only */
+.popup.w-xs .tabbar{
+  padding:4px 4px 5px;
+}
+.popup.w-xs .tabbtn{
+  font-size:0; /* hide text label */
+  padding:6px 2px 4px;
+}
+.popup.w-xs .tabbtn svg{
+  width:16px;
+  height:16px;
+}
+.popup.w-xs .tabbtn .badge{
+  font-size:8px;
+  min-width:13px;
+  height:13px;
+  top:2px;
+  right:calc(50% - 18px);
+}
+
+/* Tools grid di w-xs: 1 kolom saja */
+.popup.w-xs .toolgrid{
+  grid-template-columns:1fr;
+  gap:5px;
+}
+.popup.w-xs .tool{
+  padding:9px 10px;
+}
+
+/* Notes cards di w-xs */
+.popup.w-xs .note-card{
+  padding:7px 8px;
+}
+
+/* Items di w-xs */
+.popup.w-xs .item{
+  padding:7px 6px;
+  gap:6px;
+}
+.popup.w-xs .item-ic{
+  width:26px;
+  height:26px;
+  border-radius:7px;
+}
+.popup.w-xs .item-ic svg{
+  width:13px;
+  height:13px;
+}
+.popup.w-xs .item-title{
+  font-size:11.5px;
+}
+.popup.w-xs .item-meta{
+  font-size:9.5px;
+}
+
+/* Vault chips di w-xs: wrap */
+.popup.w-xs .chips{
+  padding:0 8px 6px;
+  gap:4px;
+}
+.popup.w-xs .chip{
+  font-size:10px;
+  padding:4px 8px;
+}
+
+/* Strip di w-xs: hide some cells */
+.popup.w-xs .strip-bar{
+  padding:5px 6px;
+  font-size:10px;
+  gap:3px;
+}
+
+/* Page header di w-xs */
+.popup.w-xs .page-hd{
+  padding:9px 8px;
+  gap:5px;
+}
+.popup.w-xs .page-hd .pt{
+  font-size:12px;
+}
+.popup.w-xs .backbtn{
+  width:24px;
+  height:24px;
+}
+.popup.w-xs .page-body{
+  padding:9px 8px;
+}
+
+/* ============================================================
+   w-xxs (≤220px) — sidebar minimal (sempit banget)
+   ============================================================ */
+.popup.w-xxs .brand-t,
+.popup.w-xxs .brand-s{
+  display:none; /* hide brand text, logo only */
+}
+.popup.w-xxs .hd-actions{
+  gap:1px;
+}
+.popup.w-xxs .iconbtn{
+  width:22px;
+  height:22px;
+}
+.popup.w-xxs .iconbtn svg{
+  width:11px;
+  height:11px;
+}
+
+/* v3.11.3: Quick-actions rules di w-xxs DIHAPUS — quick-actions bar sudah dihapus. */
+
+/* Tab bar di w-xxs: padding super kecil */
+.popup.w-xxs .tabbar{
+  padding:3px 2px 4px;
+}
+.popup.w-xxs .tabbtn{
+  padding:5px 1px 3px;
+}
+.popup.w-xxs .tabbtn svg{
+  width:14px;
+  height:14px;
+}
+
+/* Tiles di w-xxs: 2 kolom saja */
+.popup.w-xxs .tiles{
+  grid-template-columns:repeat(2,1fr);
+  gap:3px;
+  padding:0 4px 4px;
+}
+
+/* Items: meta di-hide */
+.popup.w-xxs .item-meta{
+  display:none;
+}
+.popup.w-xxs .item{
+  padding:6px 4px;
+  gap:4px;
+}
+
+/* v3.11.2: Notes bar flat di w-xxs */
+.popup.w-xxs .notes-bar-flat{
+  padding:4px 5px !important;
+  gap:3px 4px;
+}
+.popup.w-xxs .notes-bar-flat .notes-bar-t{
+  font-size:9.5px;
+}
+.popup.w-xxs .notes-bar-flat .notes-bar-meta{
+  font-size:8.5px;
+  padding:0 4px;
+}
+.popup.w-xxs .notes-bar-flat .notes-action-btn{
+  padding:5px 4px;
+}
+.popup.w-xxs .notes-bar-flat .notes-action-btn svg{
+  width:13px;
+  height:13px;
+}
+
+/* Notes cards di w-xxs */
+.popup.w-xxs .note-meta{
+  font-size:8.5px;
+}
+.popup.w-xxs .note-title{
+  font-size:11.5px;
+}
+.popup.w-xxs .note-body-txt{
+  font-size:11px;
+  -webkit-line-clamp:2;
+}
+
+/* v3.18.0: SEMUA responsive hide rules DIHAPUS — tombol text SELALU visible.
+   User: "auto dan grup jika sidebar dikecilkan masih ada tulisannya bukan icon only"
+   Semua tombol (Batch, Auto, Grup, Baru) pakai class .addbtn, text selalu tampil. */
+
+/* v3.18.0: HAPUS font-size:0 rule yang nuke text di w-xxs mode */
+/* v3.18.0: HAPUS stale selectors untuk #aiGroupBtn/#addGroupBtn (sudah pakai .addbtn) */
+
+/* ============================================================
+   v3.11.14 (Issue #2): Responsive rules untuk batch bar, confirmstrip,
+   page-foot, btn-row — supaya tombol tidak ketutupan di sidebar sempit.
+   User feedback: "tombol hapusnya ketutong, harusnya ada logika mengikuti
+   sidebar ketika dikecilin tu tetap keliatan tombol hapus dan batalnya.
+   di menu lain juga sama untuk edit, tambah dsb itu tombolnya sering
+   ketutupan begini. harusnya ada logika mengikuti lebar sidebar."
+   ============================================================ */
+
+/* w-sm (≤360px): batch bar tombol lebih kecil + flex-wrap aktif */
+.popup.w-sm #vaultBatchBar,
+.popup.w-sm #notesBatchBar{
+  padding:5px 8px;
+  gap:4px;
+}
+.popup.w-sm #vaultBatchBar .btn,
+.popup.w-sm #notesBatchBar .btn{
+  padding:3px 6px;
+  font-size:10px;
+}
+.popup.w-sm #vaultBatchBar #vaultBatchCount,
+.popup.w-sm #notesBatchBar #notesBatchCount{
+  font-size:10px;
+}
+
+/* w-sm: confirmstrip (konfirmasi hapus dll) — tombol rapi */
+.popup.w-sm .confirmstrip{
+  padding:8px 6px;
+  gap:6px;
+  flex-wrap:wrap;
+}
+.popup.w-sm .confirmstrip > span{
+  flex:1 1 100%;
+  min-width:0;
+  font-size:11.5px;
+}
+.popup.w-sm .confirmstrip .btn{
+  flex:1;
+  padding:6px 8px;
+  font-size:11px;
+}
+
+/* w-sm: page-foot (catatan editor 5 tombol) — wrap rapi */
+.popup.w-sm .page-foot{
+  gap:5px;
+  padding:8px 10px;
+}
+.popup.w-sm .page-foot .btn{
+  flex:1 1 calc(50% - 5px);
+  min-width:0;
+  padding:6px 4px;
+  font-size:10.5px;
+  gap:3px;
+}
+.popup.w-sm .page-foot .btn svg{
+  width:11px;
+  height:11px;
+}
+
+/* w-sm: btn-row di sheet-form (Buat Bundle, Edit Bundle, dll) — wrap kalau sempit */
+.popup.w-sm .sheet-form .btn-row{
+  flex-wrap:wrap;
+  gap:5px;
+}
+.popup.w-sm .sheet-form .btn-row .btn{
+  flex:1 1 calc(50% - 5px);
+  min-width:0;
+  padding:6px 6px;
+  font-size:10.5px;
+}
+
+/* w-sm: sheet-form fields lebih kecil */
+.popup.w-sm .sheet-form{
+  padding:6px 8px;
+  gap:7px;
+}
+.popup.w-sm .sheet-form .f{
+  font-size:11.5px;
+  padding:6px 8px;
+}
+
+/* ============================================================
+   w-xs (≤280px): batch bar lebih kompak, tombol icon-only bila perlu
+   ============================================================ */
+.popup.w-xs #vaultBatchBar,
+.popup.w-xs #notesBatchBar{
+  padding:4px 6px;
+  gap:3px;
+}
+.popup.w-xs #vaultBatchBar .btn,
+.popup.w-xs #notesBatchBar .btn{
+  padding:3px 5px;
+  font-size:9.5px;
+}
+.popup.w-xs #vaultBatchBar #vaultBatchCount,
+.popup.w-xs #notesBatchBar #notesBatchCount{
+  font-size:9.5px;
+  flex:1 1 100%;
+  margin-bottom:2px;
+}
+
+/* w-xs: confirmstrip — tombol full width */
+.popup.w-xs .confirmstrip{
+  padding:6px 4px;
+  gap:4px;
+  flex-wrap:wrap;
+}
+.popup.w-xs .confirmstrip > span{
+  flex:1 1 100%;
+  min-width:0;
+  font-size:11px;
+  margin-bottom:4px;
+}
+.popup.w-xs .confirmstrip .btn{
+  flex:1 1 calc(50% - 4px);
+  padding:6px 4px;
+  font-size:10.5px;
+}
+
+/* w-xs: page-foot — 2 tombol per baris */
+.popup.w-xs .page-foot{
+  gap:4px;
+  padding:6px 8px;
+}
+.popup.w-xs .page-foot .btn{
+  flex:1 1 calc(50% - 4px);
+  min-width:0;
+  padding:5px 3px;
+  font-size:10px;
+  gap:2px;
+}
+.popup.w-xs .page-foot .btn svg{
+  width:10px;
+  height:10px;
+}
+
+/* w-xs: sheet-form btn-row */
+.popup.w-xs .sheet-form .btn-row{
+  flex-wrap:wrap;
+  gap:4px;
+}
+.popup.w-xs .sheet-form .btn-row .btn{
+  flex:1 1 calc(50% - 4px);
+  min-width:0;
+  padding:5px 4px;
+  font-size:10px;
+}
+
+/* ============================================================
+   w-xxs (≤220px): super kompak, icon-only bila perlu
+   ============================================================ */
+.popup.w-xxs #vaultBatchBar,
+.popup.w-xxs #notesBatchBar{
+  padding:3px 4px;
+  gap:3px;
+}
+.popup.w-xxs #vaultBatchBar .btn,
+.popup.w-xxs #notesBatchBar .btn{
+  padding:3px 4px;
+  font-size:9px;
+  flex:1 1 calc(50% - 3px);
+}
+.popup.w-xxs #vaultBatchBar #vaultBatchCount,
+.popup.w-xxs #notesBatchBar #notesBatchCount{
+  font-size:9px;
+  flex:1 1 100%;
+}
+
+.popup.w-xxs .confirmstrip{
+  padding:5px 3px;
+  gap:3px;
+}
+.popup.w-xxs .confirmstrip > span{
+  font-size:10.5px;
+  margin-bottom:3px;
+}
+.popup.w-xxs .confirmstrip .btn{
+  padding:5px 3px;
+  font-size:10px;
+}
+
+.popup.w-xxs .page-foot{
+  gap:3px;
+  padding:5px 6px;
+}
+.popup.w-xxs .page-foot .btn{
+  flex:1 1 calc(50% - 3px);
+  padding:4px 2px;
+  font-size:9.5px;
+}
+
+.popup.w-xxs .sheet-form .btn-row .btn{
+  flex:1 1 100%;
+  padding:5px 4px;
+  font-size:10px;
+}
+
+/* ============================================================
+   v3.11.14: General responsive — pastikan .btn-row selalu wrap bila sempit
+   dan tombol tidak overflow. Berlaku untuk semua lebar.
+   ============================================================ */
+.btn-row{
+  flex-wrap:wrap;
+}
+.btn-row .btn{
+  min-width:0;
+}
+
+/* confirmstrip default flex-wrap (sebelumnya tidak) */
+.confirmstrip{
+  flex-wrap:wrap;
+}
+
+/* page-foot default sudah flex-wrap, pastikan min-width:0 */
+.page-foot .btn{
+  min-width:0;
+}
