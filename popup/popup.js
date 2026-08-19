@@ -2043,7 +2043,7 @@ function renderItemHtml(it, indent, connector) {
   } else if (it.type === 'document') {
     ctaHtml = '<span class="cta-pill" data-shot-action="view">\uD83D\uDCC4 Lihat \u21B5</span>'
       + '<button class="link-mini-btn" data-shot-action="inject" title="Sisipkan URL dokumen ke chat AI">' + ICONS.zap + '</button>'
-      + '<button class="link-mini-btn" data-shot-action="download" title="Download halaman pertama">' + ICONS.download + '</button>';
+      + '<button class="link-mini-btn" data-shot-action="download" title="Download Dokumen">' + ICONS.download + '</button>';
   } else if (it.type === 'file') {
     ctaHtml = '<span class="cta-pill" data-file-action="inject" title="Sisipkan isi file ke chat AI">' + ICONS.zap + 'Sisip \u21B5</span>'
       + '<button class="link-mini-btn" data-file-action="copy" title="Salin isi file ke clipboard">' + ICONS.copy + '</button>'
@@ -5289,13 +5289,13 @@ function itemSheet(id) {
       + (it.type !== 'bundle' ? '<button class="act" data-a="bundle">' + ICONS.clipA + '<div>Tambah / pindah ke Bundle<div class="ad">Reassign item ke sesi troubleshooting lain</div></div></button>' : '<button class="act" data-a="editbundle">' + ICONS.edit + '<div>Edit bundle<div class="ad">Ubah nama, tambah / hapus anggota</div></div></button>')
       // v3.19.0: Pindahkan ke Folder (alternatif DnD untuk sidebar sempit)
       + (it.type !== 'bundle' ? '<button class="act" data-a="move-folder">' + ICONS.clipA + '<div>📂 Pindahkan ke Folder...<div class="ad">Pilih folder tujuan dari daftar</div></div></button>' : '')
-      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="dl">' + ICONS.download + '<div>Download ' + (it.type === 'document' ? 'halaman pertama' : 'gambar') + '</div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="dl">' + ICONS.download + '<div>Download ' + (it.type === 'document' ? 'Dokumen' : 'gambar') + '</div></button>' : '')
       // v3.11.6 (Issue 1 dari Google Doc): Tombol Salin Gambar & Salin + Keterangan
       // untuk item screenshot di Vault. Sebelumnya cuma ada "Lihat" dan "Download".
       // User bilang: "masih lihat dan download bukan seperti ini baik ikon maupun fungsinya"
       // v3.12.0 (Fase 7): Tombol yang sama juga tampil untuk dokumen (copy halaman pertama).
-      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin ' + (it.type === 'document' ? 'Halaman Pertama' : 'Gambar') + '<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
-      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">' + (it.type === 'document' ? 'Halaman pertama + judul, waktu, jumlah halaman' : 'Gambar + URL, judul, waktu, mode') + '</div></div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin ' + (it.type === 'document' ? 'Gambar' : 'Gambar') + '<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">' + (it.type === 'document' ? 'Gambar + URL, judul, waktu, jumlah halaman' : 'Gambar + URL, judul, waktu, mode') + '</div></div></button>' : '')
       // v3.11.36 (Sesi 2, Issue dari Google Doc): Tombol Salin Teks Metadata (text-only)
       // User feedback: "di chat ai maupun wa, paste itu kadang gambarnya doang, teksnya ga
       // ngikut, atau sebaliknya di gemini teks nya doang gambarnya ga ngikut. oleh karena
@@ -5498,9 +5498,9 @@ function openBundleEditorSheet(bundleId) {
   const bd = currentVault.bundles.find(b => b.id === bundleId);
   if (!bd) { toast('Bundle tidak ditemukan', false); return; }
   // v3.9.0 (Issue 2): Sort by type + add filter chips + color badges
-  const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5, file: 6 };
+  const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, document: 5, snapshot: 6, file: 7 };
   const allCandidates = (currentVault?.items || []).filter(i =>
-    ['prompt', 'context', 'link', 'screenshot', 'snapshot', 'file'].includes(i.type) && !i.archived
+    ['prompt', 'context', 'link', 'screenshot', 'document', 'snapshot', 'file'].includes(i.type) && !i.archived
   ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
                     (a.title || '').localeCompare(c.title || ''));
   // v3.10.2 (Issue 5 fix): Catatan candidates — selaras dengan Buat Bundle
@@ -5562,7 +5562,7 @@ function openBundleEditorSheet(bundleId) {
       // v3.20.44: Apply search filter + type filter
       const filtered = (activeFilter === 'all' || activeFilter === 'note'
         ? allCandidates
-        : allCandidates.filter(it => it.type === activeFilter)
+        : allCandidates.filter(it => it.type === activeFilter || (activeFilter === 'screenshot' && it.type === 'document'))
       ).filter(it => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
@@ -5671,7 +5671,7 @@ async function downloadScreenshot(id) {
   // v3.12.0 (Fase 7): Untuk dokumen, pakai format jpeg (PWA simpan sebagai JPEG).
   const fmt = item.type === 'document' ? 'jpeg' : (item.screenshotFormat || 'png');
   const res = await browser.runtime.sendMessage({ type: 'DOWNLOAD_SCREENSHOT', id, title: item.title, format: fmt });
-  if (res?.ok) toast(item.type === 'document' ? '📄 Download halaman pertama dimulai' : '🖼️ Download dimulai'); else toast('Gagal download: ' + (res?.error || ''), false);
+  if (res?.ok) toast(item.type === 'document' ? '📄 Download Dokumen dimulai' : '🖼️ Download dimulai'); else toast('Gagal download: ' + (res?.error || ''), false);
 }
 
 // v3.11.6 (Issue 1 dari Google Doc): Salin screenshot dari Vault ke clipboard.
@@ -5699,7 +5699,7 @@ async function copyScreenshotToClipboard(id, withCaption) {
   // v3.12.0 (Fase 7): Untuk dokumen, caption pakai buildDocumentCaption (📄 + halaman + note).
   const isDoc = item.type === 'document';
   try {
-    toast(withCaption ? (isDoc ? '📦 Menyalin halaman + keterangan…' : '📦 Menyalin gambar + keterangan…') : (isDoc ? '📋 Menyalin halaman pertama…' : '📋 Menyalin gambar…'));
+    toast(withCaption ? (isDoc ? '📦 Menyalin halaman + keterangan…' : '📦 Menyalin gambar + keterangan…') : (isDoc ? '📋 Menyalin Gambar…' : '📋 Menyalin gambar…'));
 
     // Ambil screenshot blob (data URL) dari storage.local
     // (untuk dokumen, GET_SCREENSHOT_BLOB mengembalikan halaman pertama — lihat supabase-sync.js)
@@ -6345,9 +6345,9 @@ function saveBundleSheet() {
     // v3.8.1 (Issue #5d): Item di-sort per tipe + badge warna (bukan cuma teks).
     // Sertakan juga screenshot & snapshot (v3.7.2 Issue 1).
     // v3.10.2 (Issue 3 fix): Tambah filter per tipe — selaras dengan Edit Bundle.
-    const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, snapshot: 5, file: 6 };
+    const TYPE_ORDER = { prompt: 1, context: 2, link: 3, screenshot: 4, document: 5, snapshot: 6, file: 7 };
     const itemCandidates = (currentVault?.items || []).filter(i =>
-      ['prompt', 'context', 'link', 'screenshot', 'snapshot', 'file'].includes(i.type) && !i.archived
+      ['prompt', 'context', 'link', 'screenshot', 'document', 'snapshot', 'file'].includes(i.type) && !i.archived
     ).sort((a, c) => (TYPE_ORDER[a.type] || 99) - (TYPE_ORDER[c.type] || 99) ||
                        (a.title || '').localeCompare(c.title || ''));
     const noteCandidates = (currentNotes || []).filter(n => !n.archived);
@@ -6401,7 +6401,7 @@ function saveBundleSheet() {
       // v3.20.44: Apply search filter + type filter
       const filteredItems = (activeFilter === 'all' || activeFilter === 'note'
         ? itemCandidates
-        : itemCandidates.filter(it => it.type === activeFilter)
+        : itemCandidates.filter(it => it.type === activeFilter || (activeFilter === 'screenshot' && it.type === 'document'))
       ).filter(it => {
         if (!searchQuery) return true;
         const q = searchQuery.toLowerCase();
