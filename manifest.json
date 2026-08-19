@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.20.51",
+  "version": "3.21.4",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
@@ -65,8 +65,7 @@
       "32": "icons/icon-32.png",
       "48": "icons/icon-48.png"
     },
-    "default_title": "RecallFox",
-    "default_popup": "popup/popup.html"
+    "default_title": "RecallFox"
   },
   "side_panel": {
     "default_path": "sidebar/sidebar.html"

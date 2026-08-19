@@ -36,7 +36,7 @@ import { getProviderList, getProviderInfo, chatWithFallback, isAssistantConfigur
 import { manualBackupWithTimestamp, getBackupMetadata, restoreFromFile } from '../lib/autobackup.js';
 // v3.11.34: Shared clipboard format helper — supaya sidebar/batch/preview-modal
 // semua pakai format yang sama persis.
-import { buildScreenshotCaption, buildBatchCaption, buildDocumentCaption, writeScreenshotToClipboard, writeImageOnlyToClipboard, buildCompositeImage } from '../lib/copy-format.js';
+import { buildScreenshotCaption, buildBatchCaption, buildDocumentCaption, writeScreenshotToClipboard, writeImageOnlyToClipboard, buildCompositeImage, buildBundleMediaReport } from '../lib/copy-format.js';
 // v3.4: Helper untuk hapus selector dari elementBlockerRules (per-domain picker list)
 async function removeElementBlockerSelector(domain, selector) {
   try {
@@ -3920,6 +3920,46 @@ async function copyBundle(id) {
   }
 }
 
+// v3.21.4: copyBundleLinkCaption — "📋 Salin Link + Keterangan"
+// Salin Link Cloud Gambar N + Keterangan/Catatan N berurutan per-media.
+// Format: Markdown terstruktur untuk AI Agent (lihat buildBundleMediaReport di copy-format.js).
+// Anti-freeze: try-catch, null-safety, async handler.
+async function copyBundleLinkCaption(bundleId) {
+  try {
+    const bundle = currentVault.bundles.find(b => b.id === bundleId);
+    if (!bundle) { toast('Bundle tidak ditemukan', false); return; }
+
+    // Resolve items + notes anggota bundle
+    const itemIds = bundle.injectOrder || bundle.itemIds || [];
+    const noteIds = bundle.noteIds || [];
+    const items = itemIds.map(iid => currentVault.items.find(i => i.id === iid)).filter(Boolean);
+    const notes = noteIds.map(nid => currentNotes.find(n => n.id === nid)).filter(Boolean);
+
+    if (items.length === 0 && notes.length === 0) {
+      toast('Bundle kosong — tidak ada anggota untuk disalin', false);
+      return;
+    }
+
+    // Build formatted markdown text
+    const text = buildBundleMediaReport(bundle, items, notes);
+    if (!text) {
+      toast('Gagal membuat teks laporan — cek console', false);
+      return;
+    }
+
+    // Copy to clipboard
+    const ok = await _copyTextWithFallback(text);
+    if (ok) {
+      toast('📋 Link + Keterangan tersalin — paste ke AI chat (' + (items.length + notes.length) + ' media)');
+    } else {
+      toast('Gagal salin — clipboard diblokir', false);
+    }
+  } catch (err) {
+    console.error('[RecallFox] copyBundleLinkCaption error:', err);
+    toast('⚠ Gagal: ' + (err.message || 'unknown error'), false);
+  }
+}
+
 // v3.20.45: getBundleContent — standarisasi logic sisip vs salin bundle.
 //   Dipakai oleh injectBundle (mode='insert') + vaultBatchCopyBundleAction (mode='copy').
 //
@@ -5271,6 +5311,10 @@ function itemSheet(id) {
       + (it.type === 'file' ? '<button class="act" data-a="copy-file-content">' + ICONS.copy + '<div>📋 Salin Konten<div class="ad">Salin isi file (teks) ke clipboard — paste ke AI chat</div></div></button>' : '')
       + (it.type === 'file' ? '<button class="act" data-a="copy-file-url">' + ICONS.copy + '<div>🔗 Salin Tautan<div class="ad">URL public file — paste ke AI chat, AI bisa fetch isi dari URL</div></div></button>' : '')
       + (it.type === 'file' ? '<button class="act" data-a="download-file">' + ICONS.download + '<div>⬇️ Unduh<div class="ad">Download file ke komputer</div></div></button>' : '')
+      // v3.21.4: Opsi baru khusus Bundle — "📋 Salin Link + Keterangan"
+      // Salin Link Cloud Gambar N + Keterangan/Catatan N berurutan per-media untuk AI Agent.
+      // Opsi lama "Salin Bundle" tetap dipertahankan (primary action: injectBundle/copyBundle).
+      + (it.type === 'bundle' ? '<button class="act" data-a="copy-link-caption">' + ICONS.copy + '<div>📋 Salin Link + Keterangan<div class="ad">Link cloud + catatan per-media — format AI Agent</div></div></button>' : '')
       // v3.11.25 (Sesi 15, Issue #3): Tambah catatan anotasi untuk screenshot
       // v3.12.0 (Fase 7): Juga tampil untuk dokumen — catatan disimpan di source.annotationNote.
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="annot-note">' + ICONS.edit + '<div>📝 Catatan Anotasi<div class="ad">Tulis penjelasan — ikut saat copy</div></div></button>' : '')
@@ -5349,6 +5393,8 @@ function itemSheet(id) {
       else if (k === 'copy-file-content') { closeSheet(); copyFileContentToClipboard(it.id); }
       else if (k === 'copy-file-url') { closeSheet(); copyFileUrlToClipboard(it.id); }
       else if (k === 'download-file') { closeSheet(); downloadFileItem(it.id); }
+      // v3.21.4: Handler "Salin Link + Keterangan" untuk Bundle
+      else if (k === 'copy-link-caption') { closeSheet(); copyBundleLinkCaption(it.id); }
       // v3.11.25 (Sesi 15, Issue #3): Handler untuk catatan anotasi
       else if (k === 'annot-note') { closeSheet(); openAnnotationNoteSheet(it.id); }
       else if (k === 'del') {
