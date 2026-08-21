@@ -3541,6 +3541,18 @@ async function copyLinkToClipboard(it) {
 async function copyItemBody(id) {
   const it = findItem(id);
   if (!it) { toast('Item tidak ditemukan', false); return; }
+  // v3.21.11: Prioritaskan resumeContext kalau sudah di-generate AI.
+  // Untuk snapshot yang sudah punya resumeContext (Handover Brief), salin itu
+  // instead of raw body — user laporan terstruktur, bukan percakapan mentah.
+  if (it.resumeContext && it.resumeContext.length > 20) {
+    console.log('[RecallFox] copyItemBody: using resumeContext (Handover Brief),', it.resumeContext.length, 'chars');
+    const ok = await _copyTextWithFallback(it.resumeContext);
+    if (ok) {
+      await incrementUseCount(it.id);
+      toast('📋 Handover Brief tersalin (dari cache AI)');
+    }
+    return;
+  }
   // Build final body dengan toppings (sama seperti doInject)
   const finalBody = await buildFinalPrompt(it.body || '', it.toppings || []);
   if (!finalBody || finalBody.trim() === '') {
@@ -3641,6 +3653,18 @@ async function doInject(body, itemId) {
   const settings = currentVault?.settings || {};
   const mode = settings.injectMode || 'append';
 
+  // v3.21.11: Prioritaskan resumeContext kalau sudah di-generate AI.
+  // Untuk snapshot yang sudah punya resumeContext (Handover Brief), inject itu
+  // instead of raw body — user dapat laporan terstruktur di chat AI.
+  if (itemId) {
+    const item = currentVault.items.find(i => i.id === itemId);
+    if (item && item.type === 'snapshot' && item.resumeContext && item.resumeContext.length > 20) {
+      console.log('[RecallFox] doInject: using resumeContext (Handover Brief),', item.resumeContext.length, 'chars');
+      body = item.resumeContext;
+      // Skip framing — resumeContext sudah terstruktur
+    }
+  }
+
   // v3.16.0 K5: Auto-prepend konteks aktif saat inject prompt.
   // Hanya untuk item type 'prompt' (bukan context/snapshot/link/bundle).
   // Sebelumnya: user harus ingat klik konteks manual tiap chat baru.
@@ -3733,6 +3757,67 @@ async function doInject(body, itemId) {
     }
   }
   await refreshVault();
+}
+
+// v3.21.10: On-Demand OmniRouter Copy Snapshot — panggil AI saat user klik Salin
+// TIDAK generate saat capture (0ms). Baru olah saat user minta.
+// Pakai RESUME_CONTEXT_SYSTEM_PROMPT (ADHD Skill) yang sudah ada di background.js.
+async function copySnapshotAdhd(itemId) {
+  try {
+    const it = currentVault.items.find(i => i.id === itemId);
+    if (!it || it.type !== 'snapshot') { toast('Item snapshot tidak ditemukan', false); return; }
+    if (!it.body || it.body.trim().length < 20) { toast('Snapshot terlalu pendek untuk disadur', false); return; }
+
+    // Cek apakah sudah ada resumeContext (dari auto-generate saat capture)
+    if (it.resumeContext && it.resumeContext.length > 20) {
+      // Sudah ada — langsung salin, tidak perlu panggil AI lagi
+      const ok = await _copyTextWithFallback(it.resumeContext);
+      if (ok) toast('📋 Saduran AI tersalin ke clipboard (dari cache)');
+      else toast('Gagal salin (clipboard diblokir)', false);
+      return;
+    }
+
+    // Belum ada — panggil OmniRouter on-demand
+    toast('⏳ Mengolah saduran AI via OmniRouter...');
+    const res = await browser.runtime.sendMessage({ type: 'GENERATE_RESUME_CONTEXT', itemId: it.id });
+    if (res?.ok && res.resumeContext) {
+      // Salin hasil ke clipboard
+      const ok = await _copyTextWithFallback(res.resumeContext);
+      if (ok) {
+        toast('📋 Saduran AI tersalin ke clipboard');
+      } else {
+        toast('⚠ Saduran sukses tapi gagal salin ke clipboard', false);
+      }
+      // Update lokal supaya next click instan (dari cache)
+      await refreshVault();
+    } else {
+      const err = res?.error || 'unknown';
+      let msg = 'Gagal: ' + err;
+      if (err === 'generate_failed') msg = 'Gagal generate — cek API key OmniRouter di Pengaturan → AI Assistant';
+      else if (err === 'snapshot_body_too_short') msg = 'Snapshot terlalu pendek untuk resume context';
+      else if (err === 'item_not_found_or_not_snapshot') msg = 'Item tidak ditemukan atau bukan snapshot';
+      else if (err === 'not_logged_in') msg = 'Belum login Supabase';
+      toast(msg, false);
+    }
+  } catch (e) {
+    console.error('[RecallFox] copySnapshotAdhd error:', e);
+    toast('⚠ Gagal: ' + (e.message || 'unknown error'), false);
+  }
+}
+
+// v3.21.10: Salin teks percakapan mentah asli (tanpa proses AI)
+async function copySnapshotRaw(itemId) {
+  try {
+    const it = currentVault.items.find(i => i.id === itemId);
+    if (!it || it.type !== 'snapshot') { toast('Item snapshot tidak ditemukan', false); return; }
+    if (!it.body) { toast('Snapshot kosong', false); return; }
+    const ok = await _copyTextWithFallback(it.body);
+    if (ok) toast('📄 Teks percakapan asli tersalin (' + it.body.length + ' karakter)');
+    else toast('Gagal salin (clipboard diblokir)', false);
+  } catch (e) {
+    console.error('[RecallFox] copySnapshotRaw error:', e);
+    toast('⚠ Gagal: ' + (e.message || 'unknown error'), false);
+  }
 }
 
 // v3.16.8 #7: Lanjutkan snapshot di AI lain — copy snapshot body + buka AI lain di tab baru
@@ -5268,20 +5353,10 @@ function itemSheet(id) {
           return '<button class="act" data-a="toggle-active">' + ICONS.zap + '<div>' + (isActive ? '🔴 Nonaktifkan Konteks' : '🟢 Aktifkan Konteks') + '<div class="ad">' + (isActive ? 'Tidak auto-prepend saat inject prompt' : 'Auto-prepend saat inject prompt (maks 3)') + '</div></div></button>';
         })() : '')
       + '<button class="act" data-a="edit">' + ICONS.edit + '<div>Edit judul, isi, tag…</div></button>'
-      // v3.16.5: Ringkas snapshot dengan AI — hemat token saat inject ke AI chat
-      + (it.type === 'snapshot' ? '<button class="act" data-a="summarize">' + ICONS.spark + '<div>🤖 Ringkas dengan AI<div class="ad">Ringkas snapshot sebelum sisipkan — hemat token</div></div></button>' : '')
-      // v3.16.8 #7: Lanjutkan snapshot di AI lain — copy snapshot body + buka AI lain di tab baru
-      // User bisa pindah percakapan dari satu AI ke AI lain dengan konteks yang sama.
-      + (it.type === 'snapshot' ? '<button class="act" data-a="continue-ai">' + ICONS.spark + '<div>🔄 Lanjutkan di AI Lain<div class="ad">Salin snapshot + buka AI lain (Claude/Gemini/dll) di tab baru</div></div></button>' : '')
-      // v3.20.16: Relay Point — Copy Resume Context (jika sudah di-generate).
-      // Resume context = ringkasan status kerja terakhir, di-generate via OmniRouter
-      // saat snapshot diambil di AI domain. User paste ke akun AI baru untuk melanjutkan.
-      // Hanya muncul kalau it.resumeContext sudah ada — kalau belum, tampilkan tombol Generate.
-      + (it.type === 'snapshot' && it.resumeContext ? '<button class="act" data-a="copy-resume">' + ICONS.copy + '<div>📋 Copy Resume Context<div class="ad">Paste ke akun AI baru untuk melanjutkan pekerjaan</div></div></button>' : '')
-      // v3.20.16: Relay Point — Generate Resume Context (jika belum ada, atau retry).
-      // Manual trigger — berguna kalau auto-generate saat capture gagal (mis. OmniRouter
-      // belum dikonfigurasi saat itu, atau generate pertama gagal).
-      + (it.type === 'snapshot' && !it.resumeContext ? '<button class="act" data-a="gen-resume">' + ICONS.spark + '<div>🔄 Generate Resume Context<div class="ad">Buat ringkasan status kerja via OmniRouter — untuk pindah akun AI</div></div></button>' : '')
+      // v3.21.10: Snapshot menu — 2 tombol baru (On-Demand OmniRouter + Raw Copy)
+      // Hapus 4 tombol lama: summarize, continue-ai, copy-resume, gen-resume
+      + (it.type === 'snapshot' ? '<button class="act" data-a="copy-adhd">' + ICONS.copy + '<div>📋 Salin Handover Brief (AI)<div class="ad">Olah via OmniRouter on-demand → Handover Brief ke clipboard</div></div></button>' : '')
+      + (it.type === 'snapshot' ? '<button class="act" data-a="copy-raw">' + ICONS.copy + '<div>📄 Salin Teks Percakapan (Asli)<div class="ad">Salin riwayat mentah tanpa diproses AI</div></div></button>' : '')
       + '<button class="act" data-a="fav">' + ICONS.star + '<div>' + (it.favorite ? 'Hapus dari favorit' : 'Jadikan favorit') + '</div></button>'
       // v3.7.2 (Issue 1): Arsipkan / Unarsipkan — item tetap tersimpan, hanya disembunyikan dari list default.
       + (it.type !== 'bundle' ? '<button class="act" data-a="archive">' + ICONS.archive + '<div>' + (it.archived ? 'Keluarkan dari arsip' : 'Arsipkan item') + '<div class="ad">Disembunyikan dari list utama tanpa dihapus</div></div></button>' : '')
@@ -5329,48 +5404,9 @@ function itemSheet(id) {
       }
       else if (k === 'attach') { closeSheet(); openAttachModal(it.id); }
       else if (k === 'edit') { closeSheet(); openEditorSheet(it.id); }
-      // v3.16.5: Ringkas snapshot dengan AI
-      else if (k === 'summarize') { closeSheet(); summarizeAndInject(it.id); }
-      // v3.16.8 #7: Lanjutkan snapshot di AI lain
-      else if (k === 'continue-ai') { closeSheet(); continueInOtherAI(it.id); }
-      // v3.20.16: Relay Point — Copy resume context ke clipboard
-      else if (k === 'copy-resume') {
-        closeSheet();
-        if (!it.resumeContext) { toast('Resume context belum ada', false); }
-        else {
-          try {
-            await navigator.clipboard.writeText(it.resumeContext);
-            toast('📋 Resume context tersalin — paste ke akun AI baru');
-          } catch (e) {
-            // Fallback: delegate ke background (clipboard di content script context)
-            try {
-              await browser.runtime.sendMessage({ type: 'COPY_TO_CLIPBOARD', text: it.resumeContext });
-              toast('📋 Resume context tersalin — paste ke akun AI baru');
-            } catch (e2) { toast('⚠ Gagal menyalin resume context', false); }
-          }
-        }
-      }
-      // v3.20.16: Relay Point — Generate resume context manual (via OmniRouter)
-      else if (k === 'gen-resume') {
-        closeSheet();
-        toast('🔄 Membuat resume context via OmniRouter...');
-        try {
-          const res = await browser.runtime.sendMessage({ type: 'GENERATE_RESUME_CONTEXT', itemId: it.id });
-          if (res?.ok) {
-            await refreshVault();
-            toast('✓ Resume context siap — klik item lagi untuk copy');
-          } else {
-            const err = res?.error || 'unknown';
-            let msg = 'Gagal: ' + err;
-            if (err === 'generate_failed') msg = 'Gagal generate — cek API key OmniRouter di Pengaturan';
-            else if (err === 'snapshot_body_too_short') msg = 'Snapshot terlalu pendek untuk resume context';
-            else if (err === 'item_not_found_or_not_snapshot') msg = 'Item tidak ditemukan atau bukan snapshot';
-            toast(msg, false);
-          }
-        } catch (e) {
-          toast('Gagal: ' + e.message, false);
-        }
-      }
+      // v3.21.10: Snapshot on-demand handlers
+      else if (k === 'copy-adhd') { closeSheet(); await copySnapshotAdhd(it.id); }
+      else if (k === 'copy-raw') { closeSheet(); await copySnapshotRaw(it.id); }
       else if (k === 'editbundle') { closeSheet(); openBundleEditorSheet(it.id); }
       else if (k === 'fav') { toggleFav(it.id).then(() => { closeSheet(); toast(it.favorite ? '★ Dihapus dari favorit' : '★ Jadikan favorit'); }); }
       // v3.16.0 K5: Toggle konteks aktif (auto-prepend saat inject prompt)
@@ -8774,10 +8810,11 @@ async function renderGDrivePage(B) {
 
     // Supabase Login Form / User Info
     + '<div class="card"><h3>🔐 Login Supabase</h3>'
-    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d">'
+    + '<details style="margin:0 0 10px"><summary style="cursor:pointer;font-size:11px;font-weight:600;color:#14532d;padding:6px 10px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px">💡 Petunjuk & Cara Pakai Supabase Sync (klik untuk buka)</summary>'
+    + '<div class="hintbox" style="margin:8px 0 0;font-size:11px;line-height:1.55;background:#f0fdf4;border:1px solid #bbf7d0;color:#14532d;padding:8px 10px;border-radius:6px">'
     + '<b>Kenapa Supabase?</b> Apps Script ribet (URL + Token + deploy). Supabase cukup <b>login email/password</b> sekali → semua data (vault, catatan, screenshot, settings) <b>otomatis sync</b> ke cloud. Screenshot full image disimpan di Supabase Storage (tidak ke-limit Apps Script 10MB).<br>'
     + '<b>Setup:</b> 1) Login email/password di bawah (atau klik "Buat akun baru" untuk signup). 2) Klik "Push ke Cloud" untuk upload state lokal. 3) Di PC lain: login sama → klik "Pull dari Cloud".'
-    + '</div>';
+    + '</div></details>';
 
   if (supabaseStatus.loggedIn) {
     // User sudah login — tampilkan info + tombol sync
@@ -8831,7 +8868,8 @@ async function renderGDrivePage(B) {
     // Fix: Pakai istilah yang familiar — "Hubungkan" (bukan "Konfigurasi"), "Kunci" (bukan "Lock"),
     // "Sandi" (bukan "Token"). Tambah penjelasan singkat di atas: Bukan login, ini jembatan.
     + '<div class="card"><h3>🔗 Hubungkan ke Google Drive</h3>'
-    + '<div class="hintbox" style="margin:0 0 10px;font-size:11px;line-height:1.55;background:#f0f9ff;border:1px solid #bae6fd;color:#0c4a6e">'
+    + '<details style="margin:0 0 10px"><summary style="cursor:pointer;font-size:11px;font-weight:600;color:#0c4a6e;padding:6px 10px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px">💡 Panduan & Cara Hubungkan Google Drive (klik untuk buka)</summary>'
+    + '<div class="hintbox" style="margin:8px 0 0;font-size:11px;line-height:1.55;background:#f0f9ff;border:1px solid #bae6fd;color:#0c4a6e;padding:8px 10px;border-radius:6px">'
     +   '<b>💡 Ini BUKAN login akun.</b> RecallFox tidak punya server, tidak punya akun. '
     +   'Anda hanya perlu menghubungkan addon ini ke <b>Apps Script milik Anda sendiri</b> '
     +   '(yang Anda buat dari Spreadsheet Anda). Seperti menghubungkan Bluetooth — perlu kode '
@@ -8844,7 +8882,7 @@ async function renderGDrivePage(B) {
     +   '4. Tempel <b>URL Web App</b> + <b>sandi</b> di bawah → klik <b>Simpan</b><br>'
     +   '5. Klik <b>Test Koneksi</b> → harus "✅ Terhubung!"<br>'
     +   '6. Untuk pakai di PC lain: copy URL+sandi, paste di PC lain (tidak perlu deploy ulang)'
-    + '</div>'
+    + '</div></details>'
     + '<div style="margin:8px 0">'
     +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
     +     '<label style="font-size:11px;color:var(--muted)"><b>Aktifkan sinkronisasi</b> (master switch)</label>'
@@ -10873,9 +10911,9 @@ function bindEvents() {
   if (batchCancelBtn) batchCancelBtn.addEventListener('click', exitNotesBatchMode);
 
   // Tab bar
-  $('#tabHome').addEventListener('click', () => setView('home'));
-  $('#tabNotes').addEventListener('click', () => setView('notes'));
-  $('#tabTools').addEventListener('click', () => setView('tools'));
+  $('#tabHome')?.addEventListener('click', () => setView('home'));
+  $('#tabNotes')?.addEventListener('click', () => setView('notes'));
+  $('#tabTools')?.addEventListener('click', () => setView('tools'));
 
   // Search / command bar
   // v3.11.1: Search bar sudah dihapus dari sidebar (ganti quick-actions).
