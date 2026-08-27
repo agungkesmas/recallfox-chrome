@@ -70,6 +70,11 @@ body.rf-sidebar-body .popup{
 .iconbtn:hover{background:var(--hover);color:var(--text)}
 .iconbtn:active{transform:scale(.92)}
 .iconbtn svg{width:15px;height:15px}
+/* RecallNote vs Tape - beda warna biar tidak ketuker (safe, tidak ganggu tombol lain) */
+#tapeBtn{ color:#FBBF24; border:1px solid rgba(245,158,11,0.25); }
+#tapeBtn:hover{ background:rgba(245,158,11,0.12); color:#FCD34D; }
+#noteBtn{ color:#34D399; border:1px solid rgba(16,185,129,0.25); }
+#noteBtn:hover{ background:rgba(16,185,129,0.12); color:#6EE7B7; }
 
 /* Command bar */
 .cmd{margin:2px 12px 8px;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:0 10px;height:38px;transition:.15s;flex:none}
