@@ -29,6 +29,7 @@ import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGr
 import { parseMagicCommand, parseMultiStepCommand, applyMagicCommand, applyMultiStepMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
 import * as Pomodoro from '../lib/pomodoro.js';
+import { parseTodoInput } from '../lib/todoist-parse.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
 import { getUserBlocklist, addUserBlocklistEntry, removeUserBlocklistEntry } from '../lib/storage.js';
@@ -7202,32 +7203,38 @@ function notesSorted() {
   // v3.21.18: Filter done/aktif/selesai ala Todoist
   if (notesFilterDone === 'active') arr = arr.filter(n => !n.done);
   else if (notesFilterDone === 'done') arr = arr.filter(n => n.done);
-  // v3.21.18: done=false di atas, done=true di bawah (sebelum pinned)
+  // v3.21.19: done=false di atas, done=true di bawah, lalu priority P1->P4, lalu pinned, lalu dueAt terdekat
   const doneFirst = (a,b) => (a.done?1:0) - (b.done?1:0);
-  // v3.13.0 (Issue #3): Apply sort mode (done dulu, lalu pinned).
+  const prioFirst = (a,b) => ((a.priority||4) - (b.priority||4));
+  const dueFirst = (a,b) => {
+    if (!a.dueAt && !b.dueAt) return 0;
+    if (!a.dueAt) return 1;
+    if (!b.dueAt) return -1;
+    return new Date(a.dueAt) - new Date(b.dueAt);
+  };
   const pinnedFirst = (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
   if (notesSortMode === 'title') {
-    // Sort by title A-Z (done dulu, pinned tetap di atas dalam grup)
     return arr.slice().sort((a, b) => {
       const d = doneFirst(a,b); if(d!==0) return d;
-      const p = pinnedFirst(a, b);
-      if (p !== 0) return p;
+      const pr = prioFirst(a,b); if(pr!==0) return pr;
+      const p = pinnedFirst(a, b); if(p!==0) return p;
       return (a.title || '').localeCompare(b.title || '', 'id', { sensitivity: 'base' });
     });
   } else if (notesSortMode === 'created') {
-    // Sort by createdAt desc (newest first), done dulu, pinned di atas
     return arr.slice().sort((a, b) => {
       const d = doneFirst(a,b); if(d!==0) return d;
-      const p = pinnedFirst(a, b);
-      if (p !== 0) return p;
+      const pr = prioFirst(a,b); if(pr!==0) return pr;
+      const p = pinnedFirst(a, b); if(p!==0) return p;
+      const du = dueFirst(a,b); if(du!==0) return du;
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
   }
-  // Default: 'recent' — by updatedAt desc (done dulu, pinned di atas)
+  // Default: 'recent' — done, prio, pinned, dueAt, updatedAt
   return arr.slice().sort((a, b) => {
     const d = doneFirst(a,b); if(d!==0) return d;
-    const p = pinnedFirst(a, b);
-    if (p !== 0) return p;
+    const pr = prioFirst(a,b); if(pr!==0) return pr;
+    const p = pinnedFirst(a, b); if(p!==0) return p;
+    const du = dueFirst(a,b); if(du!==0) return du;
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
   });
 }
@@ -7318,7 +7325,18 @@ async function renderNotes() {
       ? '<div style="font-size:10px;color:var(--green);margin-top:2px">\uD83D\uDCCD ' + esc((noteLoc.address || (noteLoc.lat?.toFixed(4) + ', ' + noteLoc.lng?.toFixed(4))).slice(0, 40)) + '</div>'
       : '';
     const doneCls = n.done ? ' done' : '';
-    return '<div class="note-card nc-' + (n.color || 'default') + doneCls + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative"' : ' style="position:relative' + (n.done?' ;opacity:0.55;background:var(--surface-2)':'') + '"') + '>'
+    const prio = [1,2,3,4].includes(n.priority)?n.priority:4;
+    const prioColor = {1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[prio];
+    const prioLabel = {1:'P1',2:'P2',3:'P3',4:'P4'}[prio];
+    const prioPill = prio!==4 ? '<span style="background:'+prioColor+';color:#fff;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">'+prioLabel+'</span>' : '';
+    let dueHtml = '';
+    if (n.dueAt) {
+      const isOverdue = new Date(n.dueAt) < new Date() && !n.done;
+      const dueStr = (()=>{ try{ const d=new Date(n.dueAt); return d.toLocaleDateString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return n.dueAt; } })();
+      dueHtml = '<span style="color:'+(isOverdue?'#F87171':'#FBBF24')+';font-weight:600">📅 '+esc(dueStr)+(isOverdue?' • Terlambat':'')+'</span>';
+    }
+    const labelsHtml = (n.labels||[]).length ? '<span style="color:var(--primary)">'+(n.labels||[]).map(l=>'#'+esc(l)).join(' ')+'</span>' : '';
+    return '<div class="note-card nc-' + (n.color || 'default') + doneCls + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative;border-left:4px solid '+prioColor+'"' : ' style="position:relative;border-left:4px solid '+prioColor+';' + (n.done?' opacity:0.55;background:var(--surface-2)':'') + '"') + '>'
       + '<div style="display:flex;align-items:flex-start;gap:6px">'
       + '<input type="checkbox" class="note-done-check" data-done="' + n.id + '" ' + (n.done?'checked':'') + ' title="' + (n.done?'Tandai belum selesai':'Tandai selesai') + '" style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);margin-top:2px;flex:none">'
       + batchHtml
@@ -7328,7 +7346,8 @@ async function renderNotes() {
       + '<div class="note-title" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + (n.title?esc(n.title):'') + '</div>'
       + '<div class="note-body-txt" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + previewHtml + '</div>'
       + noteLocHtml
-      + '<div class="note-meta">' + (n.pinned ? '<span class="pin">📌</span>' : '') + (n.done ? '<span style="color:var(--green);font-weight:600">✓ Selesai</span><span class="cdot"></span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
+      + (dueHtml || labelsHtml ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;font-size:11px">'+ dueHtml + (dueHtml&&labelsHtml?' <span style="color:var(--muted)">•</span> ':'') + labelsHtml +'</div>' : '')
+      + '<div class="note-meta">' + prioPill + (prioPill?' <span class="cdot"></span>':'') + (n.pinned ? '<span class="pin">📌</span>' : '') + (n.done ? '<span style="color:var(--green);font-weight:600">✓ Selesai</span><span class="cdot"></span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
       + '</div>'
       + '</div>';
   }).join('');
@@ -7519,6 +7538,22 @@ function openNoteEditor(noteId) {
     + '<input class="f" id="nGroup" value="' + esc(n.group || '') + '" placeholder="mis. Proyek A, Riset B (opsional)" style="margin-bottom:8px">'
     + '<div class="hintbox" style="font-size:11px">Catatan dengan nama grup yang sama akan terkumpul di filter grup di atas daftar.</div>'
     + '</div>'
+    + '<div class="card"><h3>Prioritas & Tanggal</h3>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button class="btn ' + (n.priority===1?'btn-p':'btn-g') + '" data-prio="1" style="padding:4px 8px;font-size:11px">🔴 P1</button>'
+    + '<button class="btn ' + (n.priority===2?'btn-p':'btn-g') + '" data-prio="2" style="padding:4px 8px;font-size:11px">🟠 P2</button>'
+    + '<button class="btn ' + (n.priority===3?'btn-p':'btn-g') + '" data-prio="3" style="padding:4px 8px;font-size:11px">🔵 P3</button>'
+    + '<button class="btn ' + ((n.priority===4||!n.priority)?'btn-p':'btn-g') + '" data-prio="4" style="padding:4px 8px;font-size:11px">⚪ P4</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
+    + '<input class="f" id="nDueAt" type="datetime-local" value="' + (n.dueAt ? new Date(n.dueAt).toISOString().slice(0,16) : '') + '" style="flex:1;min-width:140px">'
+    + '<button class="btn btn-g" id="nDueClear" style="padding:4px 8px;font-size:11px">Hapus tgl</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center">'
+    + '<input class="f" id="nLabels" value="' + esc((n.labels||[]).join(', ')) + '" placeholder="#tag, pisah koma (mis. #rumah, #kerja)" style="flex:1">'
+    + '</div>'
+    + '<div class="hintbox" style="font-size:11px;margin-top:6px">Ketik <code>besok jam 7 !1 #tag</code> di judul/isi → otomatis jadi tanggal & prioritas (Todoist)</div>'
+    + '</div>'
     + '<div class="card"><h3>Warna</h3><div class="ndots">' + NCOLORS.map(c => '<button class="d-' + c + (n.color === c ? ' on' : '') + '" data-c="' + c + '" title="' + c + '"></button>').join('') + '</div></div>'
     + '<div class="hintbox">🕑 Terakhir disimpan: <b id="nMeta">' + timeAgo(n.updatedAt || n.createdAt) + '</b> · Catatan tersimpan lokal & ikut backup otomatis.</div>';
   // v3.11.7-fix (Issue #2 gap): Note editor footer konsisten dengan editor lain.
@@ -7538,16 +7573,51 @@ function openNoteEditor(noteId) {
     const st = $('#pageSaveState'); st.textContent = 'Tersimpan ✓'; st.classList.add('ok');
     renderNotes();
   }
-  // v3.7.2 (Issue 5): Auto-save title + body + group dengan debounce yang sama.
-  // v3.13.0 (Issue #4): Body sekarang HTML (dari contenteditable), bukan plain text.
+  // v3.21.19: Auto-save dengan parse Todoist natural language + priority/due/labels
   function scheduleSave() {
     const st = $('#pageSaveState'); st.textContent = 'Menyimpan…'; st.classList.remove('ok');
     clearTimeout(noteSaveTimer);
     noteSaveTimer = setTimeout(async () => {
+      let titleVal = titleInput.value.trim();
+      let bodyHtml = ta.innerHTML;
+      let bodyText = stripHtmlForPreview(bodyHtml);
+      // Parse natural language dari title + body preview
+      let parsed = null;
+      try{ parsed = parseTodoInput((titleVal + ' ' + bodyText).slice(0,500)); }catch(e){}
+      // Ambil dari UI kalau ada
+      const dueInput = document.getElementById('nDueAt');
+      const labelsInput = document.getElementById('nLabels');
+      let dueAt = dueInput && dueInput.value ? new Date(dueInput.value).toISOString() : (parsed && parsed.dueAt ? parsed.dueAt : n.dueAt || null);
+      let labels = labelsInput ? labelsInput.value.split(',').map(s=>s.trim().replace(/^#/,'')).filter(Boolean) : (parsed ? parsed.labels : n.labels||[]);
+      // Jika parse menemukan labels/priority, merge
+      let priority = n.priority||4;
+      // Cek tombol priority yang aktif
+      const activePrioBtn = document.querySelector('[data-prio].btn-p');
+      if (activePrioBtn) priority = parseInt(activePrioBtn.dataset.prio)||priority;
+      else if (parsed && parsed.priority) priority = parsed.priority;
+      if (parsed && parsed.labels && parsed.labels.length) {
+        // merge labels dari parse + input
+        const set = new Set([...(labels||[]), ...parsed.labels]);
+        labels = Array.from(set);
+        if (labelsInput) labelsInput.value = labels.join(', ');
+      }
+      // Jika parse menemukan dueAt dan input kosong, isi
+      if (parsed && parsed.dueAt && (!dueInput || !dueInput.value)) {
+        dueAt = parsed.dueAt;
+        if (dueInput) dueInput.value = new Date(dueAt).toISOString().slice(0,16);
+      }
+      // Bersihkan body/title dari syntax !1 #tag besok kalau sudah diparse
+      if (parsed && parsed.body && parsed.body !== (titleVal + ' ' + bodyText).slice(0,500)) {
+        // Jika body asli mengandung syntax, update body/title yang sudah dibersihkan
+        // Untuk simpel, kita biarkan body tetap, tapi priority/labels sudah diambil
+      }
       await updateNote(n.id, {
-        title: titleInput.value.trim(),
-        body: ta.innerHTML,
+        title: titleVal,
+        body: bodyHtml,
         group: groupInput.value.trim(),
+        priority,
+        dueAt,
+        labels,
         updatedAt: new Date().toISOString()
       });
       markSaved();
@@ -7556,6 +7626,23 @@ function openNoteEditor(noteId) {
   ta.addEventListener('input', scheduleSave);
   titleInput.addEventListener('input', scheduleSave);
   groupInput.addEventListener('input', scheduleSave);
+  const dueInputEl = document.getElementById('nDueAt');
+  if (dueInputEl) dueInputEl.addEventListener('change', scheduleSave);
+  const labelsEl = document.getElementById('nLabels');
+  if (labelsEl) labelsEl.addEventListener('input', scheduleSave);
+  document.querySelectorAll('[data-prio]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('[data-prio]').forEach(b=>{ b.classList.remove('btn-p'); b.classList.add('btn-g'); });
+      btn.classList.remove('btn-g'); btn.classList.add('btn-p');
+      scheduleSave();
+    });
+  });
+  const dueClear = document.getElementById('nDueClear');
+  if (dueClear) dueClear.addEventListener('click', ()=>{
+    const dueEl = document.getElementById('nDueAt');
+    if (dueEl) dueEl.value = '';
+    scheduleSave();
+  });
   // v3.13.0 (Issue #4): Paste handler — sanitize HTML dari clipboard.
   // Whitelist tag + atribut aman, buang script/style/iframe/on* handler/javascript: URLs.
   // Kalau clipboard hanya punya plain text (mis. dari Notepad), escape + convert newline → <br>.
