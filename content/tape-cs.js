@@ -46,7 +46,7 @@
     return;
   }
   const { evaluate, formatNumber, toPlainText, toMarkdown, loadSession, saveSession, savePinState } = tape;
-
+  let floatSync=null; try{ floatSync = await import(browser.runtime.getURL('lib/float-sync.js')); }catch(e){}
   let host = null, shadow = null, popover = null, textarea = null;
   let statusAutosave = null;
   let pinBtn = null, isVisible = false, pinned = true;
@@ -98,8 +98,10 @@
     // awal transparan (hover-only)
     try{ popover.classList.add('rft-idle'); }catch(e){}
     setTimeout(() => { textarea.focus(); }, 50);
+    try{ if(floatSync) await floatSync.saveFloatState('tape', {isOpen:true, text: textarea.value}); }catch(e){}
   }
-  function hide() { if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } isVisible=false; }
+  function hide() { if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } isVisible=false;
+    try{ if(floatSync) floatSync.saveFloatState('tape', {isOpen:false}); }catch(e){} }
   async function toggle() { if (isVisible) hide(); else await show(); }
 
   // ============================================================================
@@ -407,6 +409,7 @@
     }
     saveTimer = setTimeout(async () => {
       try { await saveSession(textarea.value); } catch (e) {}
+      try{ if(floatSync && isVisible) await floatSync.saveFloatState('tape', {isOpen:true, text: textarea.value}); }catch(e){}
       updateStatus();
     }, 400);
   }
@@ -752,7 +755,14 @@
     else if (msg.type === 'HIDE_TAPE') hide();
   });
 
-  loadSession().then((s) => { pinned = s.pinned; });
+  loadSession().then((s) => { if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
+  try{
+    if(floatSync) floatSync.loadFloatState('tape').then(st=>{
+      if(st && st.isOpen){
+        show().then(()=>{ if(typeof st.text==='string' && st.text) { textarea.value=st.text; updateStatus(); } });
+      }
+    });
+  }catch(e){}
 
   // ===== Template (HTML + CSS inlined in Shadow DOM) =====
   // v3.14.12: HAPUS footer BLOCK + GRAND TOTAL.

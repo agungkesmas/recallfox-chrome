@@ -4644,6 +4644,53 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // v3.21.16: Floater pill 4 tombol — RF_OPEN_NOTE/TAPE dari sidebar-cs.js floater
+  if (msg.type === 'RF_OPEN_NOTE') {
+    (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id){
+          try{ await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE'}); }
+          catch(e){ await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/notes-cs.js']}); await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE'}); }
+        }
+        sendResponse({ok:true});
+      }catch(e){ sendResponse({ok:false, error:e.message}); }
+    })();
+    return true;
+  }
+  if (msg.type === 'RF_OPEN_TAPE') {
+    (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id){
+          try{ await browser.tabs.sendMessage(tab.id, {type:'OPEN_TAPE'}); }
+          catch(e){ await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/tape-cs.js']}); await browser.tabs.sendMessage(tab.id, {type:'OPEN_TAPE'}); }
+        }
+        sendResponse({ok:true});
+      }catch(e){ sendResponse({ok:false, error:e.message}); }
+    })();
+    return true;
+  }
+  if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
+    (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id && msg.msgType){
+          try{ await browser.tabs.sendMessage(tab.id, {type: msg.msgType}); }
+          catch(e){
+            const file = msg.msgType==='OPEN_NOTE'?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js':'content/sidebar-cs.js';
+            await browser.scripting.executeScript({target:{tabId:tab.id}, files:[file]});
+            await browser.tabs.sendMessage(tab.id, {type: msg.msgType});
+          }
+        }
+        sendResponse({ok:true});
+      }catch(e){ sendResponse({ok:false, error:e.message}); }
+    })();
+    return true;
+  }
 
   // v3.20.34-dev: RF_ASSISTANT_FETCH — relay fetch API call dari iframe popout sidebar.
   // Root cause "NetworkError when attempting to fetch resource" di popout sidebar
@@ -4985,3 +5032,40 @@ async function generateResumeContextSync(body, title) {
   }
   return content;
 }
+
+// v3.21.16: Cross-tab floating sync — broadcast show to new tab + all tabs on change
+try {
+  browser.tabs.onActivated.addListener(async (info) => {
+    try {
+      const r = await browser.storage.local.get(['floatNoteState','floatTapeState']);
+      for (const key of ['floatNoteState','floatTapeState']) {
+        const float = r[key];
+        if (float && float.isOpen) {
+          const tab = await browser.tabs.get(info.tabId);
+          if (tab && tab.url && /^(https?|file):/i.test(tab.url)) {
+            const type = key==='floatNoteState' ? 'SHOW_NOTE' : 'SHOW_TAPE';
+            browser.tabs.sendMessage(info.tabId, {type}).catch(()=>{});
+          }
+        }
+      }
+    } catch(e){}
+  });
+  browser.storage.onChanged.addListener((changes, area)=>{
+    if (area!=='local') return;
+    for (const key of ['floatNoteState','floatTapeState']) {
+      if (changes[key]) {
+        const float = changes[key].newValue;
+        if (float && float.isOpen) {
+          browser.tabs.query({}).then(tabs=>{
+            tabs.forEach(t=>{
+              if (t.id && t.url && /^(https?:|file):/i.test(t.url)) {
+                const type = key==='floatNoteState' ? 'SHOW_NOTE' : 'SHOW_TAPE';
+                browser.tabs.sendMessage(t.id, {type}).catch(()=>{});
+              }
+            });
+          });
+        }
+      }
+    }
+  });
+} catch(e){}

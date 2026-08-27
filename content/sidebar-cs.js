@@ -25,9 +25,11 @@
   let host = null;
   let iframe = null;
   let resizeHandle = null;
-  let floaterPair = null;  // container untuk "rf" + "sc" berdampingan
+  let floaterPair = null;  // container untuk 4 tombol: rf + sc + note + tape
   let rfBtn = null;
   let scBtn = null;
+  let noteBtn = null;
+  let tapeBtn = null;
   let pinBtn = null;
   let isVisible = false;
   let currentWidth = DEFAULT_WIDTH;
@@ -44,10 +46,10 @@
       return {
         visible: !!s.visible,
         width: Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, s.width || DEFAULT_WIDTH)),
-        pinned: !!s.pinned,
+        pinned: s.pinned !== false,
         userResized: !!s.userResized
       };
-    } catch (e) { return { visible: false, width: DEFAULT_WIDTH, pinned: false, userResized: false }; }
+    } catch (e) { return { visible: false, width: DEFAULT_WIDTH, pinned: true, userResized: false }; }
   }
   async function saveState(state) {
     try { await browser.storage.local.set({ [STORAGE_KEY]: state }); } catch (e) {}
@@ -88,9 +90,18 @@
     host.style.cssText = [
       'all:initial', 'position:fixed', 'top:0', 'right:0',
       'height:100vh', 'width:' + currentWidth + 'px',
-      'z-index:2147483646', 'pointer-events:none'
+      'z-index:2147483646', 'pointer-events:none',
+      'opacity:0.35', 'transition:opacity .2s ease'
     ].join(';');
     document.documentElement.appendChild(host);
+    // Hover transparan — default 0.35, hover 1.0 (pin tetap, tidak auto-hide)
+    host.addEventListener('mouseenter', ()=>{ host.style.opacity='1'; });
+    host.addEventListener('mouseleave', ()=>{ host.style.opacity='0.35'; });
+    // Iframe hover via postMessage dari sidebar.html
+    window.addEventListener('message', (e)=>{
+      if (e.data?.type==='RF_SIDEBAR_HOVER_ENTER') host.style.opacity='1';
+      if (e.data?.type==='RF_SIDEBAR_HOVER_LEAVE') host.style.opacity='0.35';
+    });
 
     // Resize handle
     resizeHandle = document.createElement('div');
@@ -149,55 +160,92 @@
   function mountFloater() {
     if (floaterPair) return;
 
-    // Container untuk 2 button berdampingan
+    // Container untuk 4 tombol: rf + sc + note + tape (pill transparan hover)
     floaterPair = document.createElement('div');
     floaterPair.id = FLOATER_ID;
     floaterPair.style.cssText = [
       'all:initial', 'position:fixed',
       'display:flex', 'gap:4px',
       'z-index:2147483645', 'pointer-events:auto',
-      'user-select:none'
+      'user-select:none',
+      'opacity:0.35', 'transition:opacity .2s ease',
+      'padding:4px', 'border-radius:12px',
+      'background:rgba(255,255,255,0.55)', 'backdrop-filter:blur(8px)',
+      'border:1px solid rgba(109,61,245,0.15)',
+      'box-shadow:0 4px 16px rgba(0,0,0,.12)'
     ].join(';');
+    floaterPair.addEventListener('mouseenter', ()=>{ floaterPair.style.opacity='1'; });
+    floaterPair.addEventListener('mouseleave', ()=>{ floaterPair.style.opacity='0.35'; });
 
     // "rf" button — toggle popout sidebar
     rfBtn = document.createElement('div');
     rfBtn.setAttribute('role', 'button');
     rfBtn.setAttribute('tabindex', '0');
-    rfBtn.textContent = 'rf';
+    rfBtn.innerHTML = '🦊';
     rfBtn.title = 'Buka/Tutup RecallFox sidebar';
     rfBtn.style.cssText = [
       'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
       'background:#6d3df5', 'color:#fff', 'cursor:pointer',
       'display:grid', 'place-items:center',
-      'font-size:13px', 'font-weight:700',
-      'font-family:monospace', 'line-height:1',
-      'box-shadow:0 4px 12px rgba(109,61,245,.4)',
-      'transition:transform .1s ease', 'user-select:none'
+      'font-size:16px', 'line-height:1',
+      'box-shadow:0 2px 8px rgba(109,61,245,.3)',
+      'transition:transform .1s ease, opacity .2s ease', 'user-select:none'
     ].join(';');
 
-    // "sc" button — trigger screenshot (sama seperti sidebar asli)
+    // "sc" button — trigger screenshot
     scBtn = document.createElement('div');
     scBtn.setAttribute('role', 'button');
     scBtn.setAttribute('tabindex', '0');
-    scBtn.textContent = 'sc';
+    scBtn.innerHTML = '📸';
     scBtn.title = 'Ambil screenshot';
     scBtn.style.cssText = [
       'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
       'background:#8a54ff', 'color:#fff', 'cursor:pointer',
       'display:grid', 'place-items:center',
-      'font-size:13px', 'font-weight:700',
-      'font-family:monospace', 'line-height:1',
-      'box-shadow:0 4px 12px rgba(138,84,255,.4)',
+      'font-size:16px', 'line-height:1',
+      'box-shadow:0 2px 8px rgba(138,84,255,.3)',
+      'transition:transform .1s ease', 'user-select:none'
+    ].join(';');
+
+    // "note" button — buka catatan mengambang
+    noteBtn = document.createElement('div');
+    noteBtn.setAttribute('role', 'button');
+    noteBtn.setAttribute('tabindex', '0');
+    noteBtn.innerHTML = '📝';
+    noteBtn.title = 'Buka Catatan Mengambang';
+    noteBtn.style.cssText = [
+      'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
+      'background:#0F2E2A', 'color:#6EE7B7', 'border:1px solid rgba(16,185,129,0.25)',
+      'cursor:pointer', 'display:grid', 'place-items:center',
+      'font-size:16px', 'line-height:1',
+      'box-shadow:0 2px 8px rgba(16,185,129,.2)',
+      'transition:transform .1s ease', 'user-select:none'
+    ].join(';');
+
+    // "tape" button — buka kalkulator pita
+    tapeBtn = document.createElement('div');
+    tapeBtn.setAttribute('role', 'button');
+    tapeBtn.setAttribute('tabindex', '0');
+    tapeBtn.innerHTML = '🧾';
+    tapeBtn.title = 'Buka Kalkulator Pita';
+    tapeBtn.style.cssText = [
+      'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
+      'background:#3A1F00', 'color:#FCD34D', 'border:1px solid rgba(245,158,11,0.25)',
+      'cursor:pointer', 'display:grid', 'place-items:center',
+      'font-size:16px', 'line-height:1',
+      'box-shadow:0 2px 8px rgba(245,158,11,.2)',
       'transition:transform .1s ease', 'user-select:none'
     ].join(';');
 
     floaterPair.appendChild(rfBtn);
     floaterPair.appendChild(scBtn);
+    floaterPair.appendChild(noteBtn);
+    floaterPair.appendChild(tapeBtn);
 
-    // Restore position
+    // Restore position — 4 buttons need ~170px width
     const savedPos = loadFloaterPos();
     if (savedPos) {
-      floaterPair.style.left = Math.max(0, Math.min(window.innerWidth - 80, savedPos.x)) + 'px';
+      floaterPair.style.left = Math.max(0, Math.min(window.innerWidth - 170, savedPos.x)) + 'px';
       floaterPair.style.top = Math.max(0, Math.min(window.innerHeight - 36, savedPos.y)) + 'px';
     } else {
       floaterPair.style.bottom = '24px';
@@ -235,7 +283,7 @@
       const dy = cy - dragState.startY;
       if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragState.moved = true;
       if (!dragState.moved) return;
-      let newX = Math.max(0, Math.min(window.innerWidth - 80, dragState.origX + dx));
+      let newX = Math.max(0, Math.min(window.innerWidth - 170, dragState.origX + dx));
       let newY = Math.max(0, Math.min(window.innerHeight - 36, dragState.origY + dy));
       floaterPair.style.left = newX + 'px';
       floaterPair.style.top = newY + 'px';
@@ -254,7 +302,7 @@
         const rect = floaterPair.getBoundingClientRect();
         saveFloaterPos(rect.left, rect.top);
       } else {
-        // Click — determine which button was clicked
+        // Click — determine which button was clicked (4 buttons)
         if (dragState.target === rfBtn || rfBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
@@ -263,6 +311,20 @@
           e.preventDefault();
           e.stopPropagation();
           triggerScreenshot();
+        } else if (dragState.target === noteBtn || noteBtn.contains(dragState.target)) {
+          e.preventDefault();
+          e.stopPropagation();
+          // Buka catatan mengambang di tab aktif (via background forward)
+          browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(()=>{});
+          browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
+          // Fallback: coba langsung show di tab ini (jika notes-cs sudah loaded di tab yang sama)
+          try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
+        } else if (dragState.target === tapeBtn || tapeBtn.contains(dragState.target)) {
+          e.preventDefault();
+          e.stopPropagation();
+          browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).catch(()=>{});
+          browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{});
+          try{ window.dispatchEvent(new CustomEvent('rf-open-tape')); }catch(e){}
         }
       }
     }
@@ -289,6 +351,12 @@
     });
     scBtn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerScreenshot(); }
+    });
+    noteBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(()=>{}); browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{}); }
+    });
+    tapeBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).catch(()=>{}); browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{}); }
     });
 
     document.documentElement.appendChild(floaterPair);
