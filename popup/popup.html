@@ -63,6 +63,12 @@
     <div class="strip-detail">
       <div class="strip-detail-in">
         <div style="font-size:10.5px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.05em" id="stripLoc">Waktu Shalat</div>
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+          <span style="font-size:11px;color:var(--text)">🔊 Adzan</span>
+          <button class="btn btn-g" id="adzanSoundToggle" style="padding:4px 10px;font-size:11px">On</button>
+          <button class="btn btn-g" id="adzanTestBtn" style="padding:4px 10px;font-size:11px">▶ Test</button>
+          <span style="font-size:10px;color:var(--muted)">Suara adzan saat waktu tiba (bell pomodoro terpisah)</span>
+        </div>
         <div class="pray-grid" id="prayGrid"></div>
         <div class="habit-row">
           <button class="habit" id="habitQuran">📖 Ngaji <span>0 juz</span></button>
@@ -73,10 +79,47 @@
     </div>
   </div>
 
-  <!-- v3.12.3 (Issue #2): Quick actions grid — customizable via JS.
-       Container kosong, diisi dinamis oleh renderTiles() di popup.js.
-       Default: 6 tombol (Prompt/Konteks/Link/Bundle/Snapshot/Shot).
-       User bisa add/remove via tombol "+" dan "×". Max 6, 2 cols, auto-fit row. -->
+  <!-- Pomodoro sticky — clone strip sholat (v3.21.14) -->
+  <div class="pomodoro-strip" id="pomodoroStrip">
+    <div class="pomodoro-bar" id="pomodoroBar">
+      <span class="pomodoro-cell" id="pomodoroTimer">🍅 25:00</span>
+      <span class="pomodoro-sep"></span>
+      <span class="pomodoro-cell" id="pomodoroMode">Fokus</span>
+      <span class="pomodoro-sep"></span>
+      <button class="pomodoro-btn" id="pomodoroStart" title="Mulai">▶</button>
+      <button class="pomodoro-btn" id="pomodoroPause" title="Pause" style="display:none">⏸</button>
+      <button class="pomodoro-btn" id="pomodoroReset" title="Reset">↺</button>
+      <span class="pomodoro-preset" id="pomodoroPreset">25/5</span>
+      <button class="pomodoro-sound" id="pomodoroSound" title="Suara bell on/off" style="margin-left:auto;border:none;background:none;cursor:pointer;font-size:13px">🔊</button>
+      <svg class="pomodoro-chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="pomodoro-detail" id="pomodoroDetail" style="display:none">
+      <div class="pomodoro-detail-in">
+        <div style="font-size:10.5px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.05em">Pomodoro</div>
+        <div class="pomodoro-chips" id="pomodoroChips" style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
+          <button class="addbtn" data-preset="25/5">25/5</button>
+          <button class="addbtn" data-preset="50/10">50/10</button>
+          <button class="addbtn" data-preset="52/17">52/17</button>
+          <button class="addbtn" data-preset="90/20">90/20</button>
+          <button class="addbtn" data-preset="custom">Custom</button>
+        </div>
+        <div id="pomodoroCustom" style="display:none;gap:6px;align-items:center;margin-bottom:8px">
+          <input id="pomodoroCustomWork" type="number" min="1" max="120" value="25" style="width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"> <span style="font-size:11px">/</span>
+          <input id="pomodoroCustomBreak" type="number" min="1" max="30" value="5" style="width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"> menit
+          <button class="btn btn-p" id="pomodoroCustomApply" style="padding:4px 8px;font-size:11px">Terapkan</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-2)">
+          <span>Siklus: <b id="pomodoroCycles">0/4</b></span>
+          <span class="pomodoro-sep"></span>
+          <span>Suara bell: <button class="btn btn-g" id="pomodoroSoundToggle" style="padding:3px 8px;font-size:11px">On</button></span>
+          <button class="btn btn-g" id="pomodoroTestBell" style="padding:3px 8px;font-size:11px">▶ Test Bell</button>
+          <span style="font-size:10px;color:var(--muted)">(beda dari adzan)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- v3.21.14: Quick actions dirampingkan 6→2 (Prompt+Link) biar hemat tempat untuk pomodoro sticky -->
   <div class="tiles" id="tilesContainer"></div>
 
   <!-- View: Beranda (Vault) -->

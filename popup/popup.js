@@ -28,6 +28,7 @@ import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGr
 // v3.20.32: Magic Command — natural language move items to folder + folder archive
 import { parseMagicCommand, parseMultiStepCommand, applyMagicCommand, applyMultiStepMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
+import * as Pomodoro from '../lib/pomodoro.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
 import { getUserBlocklist, addUserBlocklistEntry, removeUserBlocklistEntry } from '../lib/storage.js';
@@ -63,16 +64,13 @@ async function removeElementBlockerSelector(domain, selector) {
     return { ok: false, error: e.message };
   }
 }
-// v3.4: Toggle floating Guardian panel
-async function setGuardianFloatingEnabled(enabled) {
-  await saveSettings({ contentGuardShowFloating: !!enabled });
-  // Broadcast ke semua tab supaya panel langsung update
-  try {
-    const tabs = await browser.tabs.query({});
-    for (const t of tabs) {
-      browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
-    }
-  } catch (e) {}
+// v3.21.0: setGuardianFloatingEnabled dihapus — panel mengambang Pelindung Konten
+// sudah dibongkar (lihat instruksi §4.7). Fungsi ini tetap dipertahankan sebagai
+// no-op wrapper supaya kode lama yang memanggilnya tidak crash.
+async function setGuardianFloatingEnabled(_enabled) {
+  // No-op: setting contentGuardShowFloating tetap ditulis (untuk migrasi) tapi
+  // content script tidak lagi menampilkan panel mengambang.
+  return { ok: true };
 }
 
 // ============ State ============
@@ -5353,6 +5351,7 @@ function itemSheet(id) {
           return '<button class="act" data-a="toggle-active">' + ICONS.zap + '<div>' + (isActive ? '🔴 Nonaktifkan Konteks' : '🟢 Aktifkan Konteks') + '<div class="ad">' + (isActive ? 'Tidak auto-prepend saat inject prompt' : 'Auto-prepend saat inject prompt (maks 3)') + '</div></div></button>';
         })() : '')
       + '<button class="act" data-a="edit">' + ICONS.edit + '<div>Edit judul, isi, tag…</div></button>'
+      // v3.16.5: Ringkas snapshot dengan AI — hemat token saat inject ke AI chat
       // v3.21.10: Snapshot menu — 2 tombol baru (On-Demand OmniRouter + Raw Copy)
       // Hapus 4 tombol lama: summarize, continue-ai, copy-resume, gen-resume
       + (it.type === 'snapshot' ? '<button class="act" data-a="copy-adhd">' + ICONS.copy + '<div>📋 Salin Handover Brief (AI)<div class="ad">Olah via OmniRouter on-demand → Handover Brief ke clipboard</div></div></button>' : '')
@@ -7690,8 +7689,8 @@ const TILE_DEFS = [
   { id: 'keys',      label: 'Pintasan', icon: ICONS.kb,       type: 'tool', action: 'toolPage', arg: 'keys' }
 ];
 
-const DEFAULT_ACTIVE_TILES = ['qaPrompt', 'qaKonteks', 'qaLink', 'qaBundle', 'qaSnap', 'qaShot'];
-const MAX_ACTIVE_TILES = 6;
+const DEFAULT_ACTIVE_TILES = ['qaPrompt', 'qaLink'];
+const MAX_ACTIVE_TILES = 2;
 
 /**
  * Get active tile IDs from vault.settings, fallback to default.
@@ -10035,15 +10034,24 @@ async function renderKontrolSitusPage(B) {
     });
   }
   if (s.contentGuardEnabled !== false) {
+    // v3.21.0: Pelindung Konten aktif — tampilkan profil aktif (Mode Fokus).
+    let profileName = '—';
+    try {
+      const tp = s.contentGuardTopicProfiles;
+      if (tp && Array.isArray(tp.profiles) && tp.activeProfileId) {
+        const p = tp.profiles.find(x => x.id === tp.activeProfileId);
+        if (p) profileName = (p.emoji || '👤') + ' ' + (p.name || 'Profil');
+      }
+    } catch (e) {}
     rules.push({
-      type: 'KONTEN', name: 'Content Guard aktif',
-      desc: 'Filter konten negatif di YouTube & X',
+      type: 'KONTEN', name: 'Pelindung Konten aktif',
+      desc: 'Profil: ' + profileName,
       toggleKey: 'contentGuardEnabled',
       toggleOn: s.contentGuardEnabled !== false
     });
   } else {
     rules.push({
-      type: 'KONTEN', name: 'Content Guard (mati)',
+      type: 'KONTEN', name: 'Pelindung Konten (mati)',
       desc: 'Klik toggle untuk aktifkan kembali',
       toggleKey: 'contentGuardEnabled',
       toggleOn: false
@@ -10059,6 +10067,58 @@ async function renderKontrolSitusPage(B) {
   });
 
   let activeTab = 'home';
+  // v3.21.0: Persiapan data Pelindung Konten (untuk kartu W2 di home view + tab Pengaturan W2b).
+  let cgTopicProfiles = s.contentGuardTopicProfiles;
+  if (!cgTopicProfiles || !Array.isArray(cgTopicProfiles.profiles)) {
+    cgTopicProfiles = { profiles: [], activeProfileId: null };
+  }
+  const cgActiveProfileId = cgTopicProfiles.activeProfileId;
+  const cgActiveProfile = cgTopicProfiles.profiles.find(p => p.id === cgActiveProfileId) || null;
+  const cgMasterOn = s.contentGuardEnabled !== false;
+  const cgFocusActive = cgMasterOn && cgActiveProfile
+    && ((cgActiveProfile.topics && cgActiveProfile.topics.length > 0)
+        || (cgActiveProfile.channels && cgActiveProfile.channels.length > 0));
+  const cgActiveName = cgActiveProfile ? ((cgActiveProfile.emoji || '👤') + ' ' + (cgActiveProfile.name || 'Profil')) : '—';
+  const cgActiveTopicsPreview = cgActiveProfile && Array.isArray(cgActiveProfile.topics)
+    ? cgActiveProfile.topics.slice(0, 3).join(', ') + (cgActiveProfile.topics.length > 3 ? ', …' : '')
+    : '';
+
+  function buildPelindungKontenCardHTML() {
+    const cards = cgTopicProfiles.profiles.map(p => {
+      const isActive = p.id === cgActiveProfileId;
+      const emoji = p.emoji || '👤';
+      const name = p.name || 'Profil';
+      const isEmpty = (!p.topics || p.topics.length === 0) && (!p.channels || p.channels.length === 0);
+      const dim = cgMasterOn ? '' : 'opacity:.5;cursor:not-allowed;';
+      const border = isActive ? '#16a34a' : 'rgba(255,255,255,.2)';
+      const bg = isActive ? 'rgba(34,197,94,0.18)' : 'rgba(255,255,255,0.06)';
+      return '<button class="ks-cg-profile-card" data-cg-profile-id="' + esc(p.id) + '" '
+        + 'style="display:flex;flex-direction:column;gap:2px;align-items:flex-start;padding:8px 10px;border-radius:8px;cursor:pointer;min-width:120px;max-width:170px;'
+        + 'background:' + bg + ';border:1px solid ' + border + ';' + dim + '">'
+        +   '<span style="font-size:11px;color:' + (isActive ? '#86efac' : 'rgba(255,255,255,.7)') + ';">' + (isActive ? '●' : '○') + ' ' + esc(emoji) + ' ' + esc(name) + '</span>'
+        +   '<span style="font-size:10px;color:rgba(255,255,255,.6);line-height:1.3;">' + (isEmpty ? '<em>Profil kosong</em>' : esc((p.topics || []).slice(0, 2).join(', '))) + '</span>'
+        + '</button>';
+    }).join('');
+    return '<div class="card" style="background:linear-gradient(135deg,#0f766e,#1e40af);color:#fff;border:none;margin-bottom:12px">'
+      +   '<div style="display:flex;align-items:center;gap:12px">'
+      +     '<div style="font-size:32px">🛡️</div>'
+      +     '<div style="flex:1">'
+      +       '<div style="font-size:14px;font-weight:700">Pelindung Konten</div>'
+      +       '<div style="font-size:11px;opacity:.9;line-height:1.45;margin-top:2px">'
+      +         (cgMasterOn ? ('Aktif — ' + esc(cgActiveName) + (cgActiveTopicsPreview ? ' · topik: ' + esc(cgActiveTopicsPreview) : ''))
+                           : 'Nonaktif — nyalakan master untuk memfilter')
+      +       '</div>'
+      +     '</div>'
+      +     '<button class="ks-toggle' + (cgMasterOn ? ' on' : '') + '" id="ksCgMasterToggle" aria-label="Toggle Pelindung Konten" style="flex:none"><i></i></button>'
+      +   '</div>'
+      +   '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">' + cards + '</div>'
+      +   '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">'
+      +     '<button class="btn" id="ksCgManage" style="background:rgba(255,255,255,.15);color:#fff;border:none;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;">Kelola topik &amp; channel →</button>'
+      +     '<span style="font-size:10px;opacity:.85;">' + (cgFocusActive ? '🔒 Kunci Pencarian aktif' : '') + '</span>'
+      +   '</div>'
+      + '</div>';
+  }
+
   function render() {
     B.innerHTML =
       // Site bar
@@ -10068,8 +10128,7 @@ async function renderKontrolSitusPage(B) {
       +   '<div class="right"><small>' + (siteActive ? 'Aktif' : 'Nonaktif') + '</small><button class="ks-toggle' + (siteActive ? ' on' : '') + '" id="ksMasterToggle" aria-label="Toggle kontrol"><i></i></button></div>'
       + '</div>'
 
-      // Tabs — v3.4: tambah tab "Diblokir" (daftar selector domain aktif) + "Pengaturan" (floating Guardian toggle)
-      // v3.6: Counter "Diblokir" sekarang juga include filter konten (keyword/channel/account/x_post_url)
+      // Tabs — v3.21.0: tab "Pengaturan" sekarang = "Pengaturan Pelindung Konten" (W2b)
       + '<nav class="ks-tabs">'
       +   '<button class="ks-tab' + (activeTab === 'home' ? ' active' : '') + '" data-tab="home">Ringkasan</button>'
       +   '<button class="ks-tab' + (activeTab === 'blocked' ? ' active' : '') + '" data-tab="blocked">Diblokir (' + allBlockedForCurrent.length + ')</button>'
@@ -10079,18 +10138,8 @@ async function renderKontrolSitusPage(B) {
 
       // Home view
       + '<div class="ks-view' + (activeTab === 'home' ? ' active' : '') + '" id="ksViewHome">'
-      // v3.7.2 (Issue 6): Kartu Mode Anak — 1 klik untuk amankan laptop saat dipinjam anak.
-      // Mengaktifkan: contentGuardYoutubeKidsOnly + contentGuardBlockShorts.
-      +   '<div class="card" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;margin-bottom:12px">'
-      +     '<div style="display:flex;align-items:center;gap:12px">'
-      +       '<div style="font-size:32px">👶</div>'
-      +       '<div style="flex:1">'
-      +         '<div style="font-size:14px;font-weight:700">Mode Anak</div>'
-      +         '<div style="font-size:11px;opacity:.9;line-height:1.45;margin-top:2px">Arahkan semua YouTube ke YouTube Kids & blokir YouTube Shorts. Aktifkan saat laptop dipinjam anak — 1 klik.</div>'
-      +       '</div>'
-      +       '<button class="ks-toggle' + (s.contentGuardYoutubeKidsOnly === true ? ' on' : '') + '" id="ksKidModeToggle" aria-label="Toggle Mode Anak" style="flex:none"><i></i></button>'
-      +     '</div>'
-      +   '</div>'
+      // v3.21.0: Kartu Pelindung Konten (menggantikan kartu "Mode Anak" ungu lama).
+      + buildPelindungKontenCardHTML()
       +   '<div class="ks-intro">'
       +     '<div><h2>Hapus elemen yang mengganggu</h2><p>Tutup komentar, iklan, rekomendasi, dan elemen UI yang tidak perlu di situs mana pun.</p></div>'
       +     '<button class="ks-primary" id="ksAddRule">+ Aturan baru</button>'
@@ -10173,38 +10222,54 @@ async function renderKontrolSitusPage(B) {
       +   (userBlocklist.length ? '<div class="ks-rule-summary"><div class="ks-rs-head">Filter tersimpan (' + userBlocklist.length + ')</div>' + userBlocklist.slice(0, 20).map(b => '<div class="ks-rule"><span class="ks-tag content">' + esc((b.type || 'keyword').toUpperCase().slice(0, 8)) + '</span><div class="ks-rule-main"><b>' + esc((b.value || b.text || '').slice(0, 60)) + '</b><span>' + esc(b.type || 'keyword') + (b.domain ? ' · ' + b.domain : '') + '</span></div><button class="ks-dots" data-del="' + esc(b.id) + '">✕</button></div>').join('') + '</div>' : '')
       + '</div>'
 
-      // v3.4: Settings view — toggle floating Guardian + info
+      // v3.21.0: Settings view — Pengaturan Pelindung Konten (W2b) — editor profil ringkas.
+      // Menggantikan toggle floating panel / Nuclear mode / Filter feeds / Mode Anak (semua dibongkar).
       + '<div class="ks-view' + (activeTab === 'settings' ? ' active' : '') + '" id="ksViewSettings">'
-      +   '<div class="ks-intro"><div><h2>Pengaturan Guardian</h2><p>Konfigurasi tampilan & perilaku RecallFox Guardian di YouTube & X.</p></div></div>'
+      +   '<div class="ks-intro"><div><h2>Pengaturan Pelindung Konten</h2><p>Kelola profil &amp; topik Mode Fokus. Buka halaman Settings lengkap untuk opsi tambahan (blocklist manual, filter X, mode debug).</p></div></div>'
       +   '<div class="card">'
       +     '<div class="krow" style="padding:10px 0">'
-      +       '<div><b>Panel mengambang Guardian</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tampilkan panel kontrol mengambang di pojok halaman YouTube/X. Anak-anak bisa melihat dan mematikannya — lebih aman dimatikan.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardShowFloating === true ? ' on' : '') + '" id="ksFloatingToggle" aria-label="Toggle floating panel"><i></i></button>'
+      +       '<div><b>Profil</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Pilih profil untuk diedit (profil aktif ditandai).</div></div>'
+      +       '<select id="ksCgProfileSelect" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;">'
+      +         cgTopicProfiles.profiles.map(p => {
+                const isActive = p.id === cgActiveProfileId;
+                const emoji = p.emoji || '👤';
+                const name = p.name || 'Profil';
+                return '<option value="' + esc(p.id) + '"' + (isActive ? ' selected' : '') + '>' + esc(emoji + ' ' + name + (isActive ? ' (aktif)' : '')) + '</option>';
+              }).join('')
+      +       '</select>'
       +     '</div>'
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>Nuclear mode</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Blokir semua konten yang menyebut politisi/partai/lembaga politik Indonesia.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardNuclearMode !== false ? ' on' : '') + '" id="ksNuclearToggle" aria-label="Toggle nuclear mode"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Nama profil</label>'
+      +       '<input type="text" id="ksCgProfileName" placeholder="mis. Fokus Belajar" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />'
       +     '</div>'
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>Filter feed</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Sembunyikan video/postingan negatif di feed YouTube/X.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardFilterFeeds !== false ? ' on' : '') + '" id="ksFilterFeedsToggle" aria-label="Toggle filter feeds"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Topik (pisah koma — dicocokkan dengan judul &amp; channel)</label>'
+      +       '<input type="text" id="ksCgProfileTopics" placeholder="mis. python, machine learning" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />'
       +     '</div>'
-      // v3.7.2 (Issue 6): Toggle individu — YouTube Shorts Block
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>🚫 Blokir YouTube Shorts</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Sembunyikan semua Short dari feed YouTube & cegah navigasi ke /shorts/. Tidak mengubah jenis konten lain.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardBlockShorts === true ? ' on' : '') + '" id="ksBlockShortsToggle" aria-label="Toggle Block Shorts"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Channel whitelist (pisah koma — opsional)</label>'
+      +       '<input type="text" id="ksCgProfileChannels" placeholder="mis. Nussa Official, FreeCodeCamp" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />'
       +     '</div>'
-      // v3.7.2 (Issue 6): Toggle individu — Mode Anak (filter, no redirect)
-      // v3.10.0 (Issue 2): Ubah dari redirect youtubekids.com → filter di youtube.com biasa
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>👶 Mode Anak (Filter Konten)</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tetap di youtube.com, tapi sembunyikan video non-ramah-anak. Hanya video edukasi/kartun/lagu anak yang tampil. Shorts juga di-hide.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardKidModeFilter === true ? ' on' : '') + '" id="ksKidsOnlyToggle" aria-label="Toggle Mode Anak"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Halaman watch (video di luar topik):</label>'
+      +       '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="ksCgStrict" value="false" /><span>Peringatan + "Tetap tonton" 30 dtk</span></label>'
+      +       '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="ksCgStrict" value="true" /><span>Blokir total → beranda</span></label>'
+      +     '</div>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Lapisan tambahan:</label>'
+      +       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><span style="font-size:12px;">🚫 Blokir YouTube Shorts</span><button class="ks-toggle' + (s.contentGuardBlockShorts === true ? ' on' : '') + '" id="ksBlockShortsToggle" aria-label="Toggle Block Shorts"><i></i></button></div>'
+      +     '</div>'
+      +     '<div class="ks-save-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">'
+      +       '<button class="btn btn-p" id="ksCgSave">💾 Simpan</button>'
+      +       '<button class="btn btn-d" id="ksCgDelete">🗑️ Hapus</button>'
+      +       '<button class="btn" id="ksCgActivate">Aktifkan profil ini</button>'
+      +       '<button class="btn" id="ksCgAddNew">+ Tambah profil baru</button>'
       +     '</div>'
       +   '</div>'
-      +   '<p class="hintbox" style="margin:10px 3px">🔒 <b>Mode aman anak:</b> Matikan panel mengambang supaya anak tidak bisa toggle-off Guardian dari halaman. Kontrol tetap bisa diakses lewat popup RecallFox (hanya Anda yang tahu).</p>'
+      +   '<p class="hintbox" style="margin:10px 3px">🔒 <b>Mode aman anak:</b> Profil Anak (strictWatch=true) memblokir total video di luar topik — tanpa tombol lewati. Profil Saya (strictWatch=false) hanya tampilkan peringatan.</p>'
       + '</div>'
 
-      + '<p class="hintbox" style="margin:15px 3px">💡 <b>Kontrol Situs</b> menggabungkan Element Blocker (sembunyikan elemen UI) dan Content Guard (filter konten negatif). Kedua fitur tetap berjalan di background — halaman ini hanya untuk konfigurasi.</p>';
+      + '<p class="hintbox" style="margin:15px 3px">💡 <b>Kontrol Situs</b> menggabungkan Element Blocker (sembunyikan elemen UI) dan Pelindung Konten (Mode Fokus Allowlist). Kedua fitur tetap berjalan di background — halaman ini hanya untuk konfigurasi.</p>';
 
     // Bind tab clicks
     $$('.ks-tab').forEach(t => t.addEventListener('click', () => {
@@ -10225,22 +10290,44 @@ async function renderKontrolSitusPage(B) {
       toast(newOn ? '🛡 Kontrol Situs diaktifkan' : 'Kontrol Situs dimatikan');
     });
 
-    // v3.7.2 (Issue 6): Mode Anak — 1 klik toggle (YouTube Kids + Block Shorts sekaligus)
-    const kidModeBtn = $('#ksKidModeToggle');
-    if (kidModeBtn) kidModeBtn.addEventListener('click', async () => {
-      const newOn = !(s.contentGuardYoutubeKidsOnly === true);
-      // Pastikan contentGuardEnabled tetap on agar redirect jalan
-      await saveSettings({
-        contentGuardEnabled: true,
-        contentGuardYoutubeKidsOnly: newOn,
-        contentGuardBlockShorts: newOn
-      });
+    // v3.21.0: Pelindung Konten — master toggle di kartu (hanya contentGuardEnabled, tidak sentuh EB).
+    const cgMasterBtn = $('#ksCgMasterToggle');
+    if (cgMasterBtn) cgMasterBtn.addEventListener('click', async () => {
+      const newOn = !cgMasterOn;
+      await saveSettings({ contentGuardEnabled: newOn });
       await refreshVault();
       renderKontrolSitusPage(B);
-      toast(newOn ? '👶 Mode Anak AKTIF — YouTube → Kids, Shorts diblokir' : 'Mode Anak dimatikan');
+      toast(newOn ? '🛡 Pelindung Konten diaktifkan' : 'Pelindung Konten dimatikan');
     });
 
-    // v3.7.2 (Issue 6): Toggle individu — Block Shorts saja
+    // v3.21.0: Klik kartu profil di home view = ganti profil aktif (1-klik switch).
+    $$('.ks-cg-profile-card').forEach(card => {
+      card.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (!cgMasterOn) { toast('Nyalakan master Pelindung Konten dulu'); return; }
+        const pid = card.dataset.cgProfileId;
+        if (!pid) return;
+        try {
+          const res = await browser.runtime.sendMessage({ type: 'CG_SET_ACTIVE_PROFILE', profileId: pid });
+          if (res?.ok) {
+            await refreshVault();
+            renderKontrolSitusPage(B);
+            toast('Profil aktif diganti');
+          } else {
+            toast('Gagal: ' + (res?.error || 'unknown'));
+          }
+        } catch (err) { toast('Error: ' + err.message); }
+      });
+    });
+
+    // v3.21.0: Tombol "Kelola topik & channel →" → pindah ke tab Pengaturan + buka Settings lengkap.
+    const cgManageBtn = $('#ksCgManage');
+    if (cgManageBtn) cgManageBtn.addEventListener('click', () => {
+      activeTab = 'settings';
+      render();
+    });
+
+    // v3.7.2 (Issue 6): Toggle individu — Block Shorts saja (tetap dipertahankan).
     const blockShortsBtn = $('#ksBlockShortsToggle');
     if (blockShortsBtn) blockShortsBtn.addEventListener('click', async () => {
       const newOn = !(s.contentGuardBlockShorts === true);
@@ -10253,16 +10340,119 @@ async function renderKontrolSitusPage(B) {
       toast(newOn ? '🚫 YouTube Shorts diblokir' : 'YouTube Shorts diizinkan');
     });
 
-    // v3.7.2 (Issue 6): Toggle individu — YouTube Kids Only
-    const kidsOnlyBtn = $('#ksKidsOnlyToggle');
-    if (kidsOnlyBtn) kidsOnlyBtn.addEventListener('click', async () => {
-      // v3.10.0 (Issue 2): Mode Anak pakai contentGuardKidModeFilter (no redirect)
-      const newOn = !(s.contentGuardKidModeFilter === true);
-      const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: newOn });
-      const finalOn = r?.enabled ?? newOn;
-      await refreshVault();
-      renderKontrolSitusPage(B);
-      toast(finalOn ? '👶 Mode Anak AKTIF — feed YouTube hanya konten ramah anak' : 'Mode Anak dimatikan');
+    // v3.21.0: Editor profil ringkas (tab Pengaturan) — dropdown, name, topics, channels, strictWatch.
+    const cgProfileSelect = $('#ksCgProfileSelect');
+    const cgProfileName = $('#ksCgProfileName');
+    const cgProfileTopics = $('#ksCgProfileTopics');
+    const cgProfileChannels = $('#ksCgProfileChannels');
+
+    function loadCgProfileIntoEditor(pid) {
+      const p = cgTopicProfiles.profiles.find(x => x.id === pid) || null;
+      if (!p) return;
+      if (cgProfileName) cgProfileName.value = p.name || '';
+      if (cgProfileTopics) cgProfileTopics.value = (Array.isArray(p.topics) ? p.topics : []).join(', ');
+      if (cgProfileChannels) cgProfileChannels.value = (Array.isArray(p.channels) ? p.channels : []).join(', ');
+      const radios = document.querySelectorAll('input[name="ksCgStrict"]');
+      radios.forEach(r => {
+        r.checked = (r.value === 'true') ? (p.strictWatch === true) : (p.strictWatch !== true);
+      });
+      // Disable delete jika profil aktif atau hanya 1 profil tersisa.
+      const delBtn = $('#ksCgDelete');
+      if (delBtn) {
+        const isActive = p.id === cgActiveProfileId;
+        const onlyOne = cgTopicProfiles.profiles.length <= 1;
+        delBtn.disabled = isActive || onlyOne;
+        delBtn.title = isActive ? 'Profil sedang aktif — pindah ke profil lain dulu'
+                      : onlyOne ? 'Minimal 1 profil harus tersisa' : '';
+      }
+    }
+
+    if (cgProfileSelect) {
+      // Initial: muat profil aktif (atau profil pertama) ke editor.
+      const initialPid = cgActiveProfileId || (cgTopicProfiles.profiles[0] && cgTopicProfiles.profiles[0].id);
+      if (initialPid) {
+        cgProfileSelect.value = initialPid;
+        loadCgProfileIntoEditor(initialPid);
+      }
+      cgProfileSelect.addEventListener('change', () => {
+        loadCgProfileIntoEditor(cgProfileSelect.value);
+      });
+    }
+
+    const cgSaveBtn = $('#ksCgSave');
+    if (cgSaveBtn) cgSaveBtn.addEventListener('click', async () => {
+      const pid = cgProfileSelect ? cgProfileSelect.value : null;
+      if (!pid) { toast('Pilih profil dulu'); return; }
+      const name = (cgProfileName?.value || '').trim();
+      const topics = (cgProfileTopics?.value || '').split(',').map(x => x.trim()).filter(Boolean);
+      const channels = (cgProfileChannels?.value || '').split(',').map(x => x.trim()).filter(Boolean);
+      const strictRadio = document.querySelector('input[name="ksCgStrict"]:checked');
+      const strictWatch = strictRadio ? strictRadio.value === 'true' : false;
+      if (!name) { toast('Nama profil tidak boleh kosong'); return; }
+      try {
+        const res = await browser.runtime.sendMessage({
+          type: 'CG_SAVE_TOPIC_PROFILE',
+          profileId: pid,
+          profile: { name, emoji: (cgTopicProfiles.profiles.find(p => p.id === pid)?.emoji) || '👤', topics, channels, strictWatch }
+        });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Profil disimpan');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+
+    const cgDeleteBtn = $('#ksCgDelete');
+    if (cgDeleteBtn) cgDeleteBtn.addEventListener('click', async () => {
+      const pid = cgProfileSelect ? cgProfileSelect.value : null;
+      if (!pid || cgDeleteBtn.disabled) return;
+      if (!confirm('Hapus profil ini? Topik & channel whitelist akan hilang.')) return;
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_DELETE_TOPIC_PROFILE', profileId: pid });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Profil dihapus');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+
+    const cgActivateBtn = $('#ksCgActivate');
+    if (cgActivateBtn) cgActivateBtn.addEventListener('click', async () => {
+      const pid = cgProfileSelect ? cgProfileSelect.value : null;
+      if (!pid) return;
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_SET_ACTIVE_PROFILE', profileId: pid });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Profil diaktifkan');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+
+    const cgAddNewBtn = $('#ksCgAddNew');
+    if (cgAddNewBtn) cgAddNewBtn.addEventListener('click', async () => {
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_ADD_TOPIC_PROFILE', profile: { name: 'Profil Baru', emoji: '👤', topics: [], channels: [], strictWatch: false } });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          // Re-select dropdown ke profil baru
+          const sel = $('#ksCgProfileSelect');
+          if (sel) sel.value = res.newProfileId;
+          toast('Profil baru ditambahkan — isi topik lalu Simpan');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
     });
 
     // Add rule buttons (open same sheet)
@@ -10367,46 +10557,9 @@ async function renderKontrolSitusPage(B) {
       toast('✕ Aturan dihapus');
     }));
 
-    // v3.4: Floating panel toggle
-    const floatingToggle = $('#ksFloatingToggle');
-    if (floatingToggle) floatingToggle.addEventListener('click', async () => {
-      const newOn = s.contentGuardShowFloating !== true;
-      await setGuardianFloatingEnabled(newOn);
-      // Re-read settings
-      const v = await getVault();
-      s.contentGuardShowFloating = v.settings.contentGuardShowFloating;
-      render();
-      toast(newOn ? '🛡 Panel mengambang diaktifkan' : '🔒 Panel mengambang dimatikan (lebih aman untuk anak)');
-    });
-
-    // v3.4: Nuclear mode toggle
-    const nuclearToggle = $('#ksNuclearToggle');
-    if (nuclearToggle) nuclearToggle.addEventListener('click', async () => {
-      const newOn = s.contentGuardNuclearMode === false;
-      await saveSettings({ contentGuardNuclearMode: newOn });
-      s.contentGuardNuclearMode = newOn;
-      // Broadcast
-      try {
-        const tabs = await browser.tabs.query({});
-        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
-      } catch (e) {}
-      render();
-      toast(newOn ? '☢️ Nuclear mode aktif' : 'Nuclear mode dimatikan');
-    });
-
-    // v3.4: Filter feeds toggle
-    const filterFeedsToggle = $('#ksFilterFeedsToggle');
-    if (filterFeedsToggle) filterFeedsToggle.addEventListener('click', async () => {
-      const newOn = s.contentGuardFilterFeeds === false;
-      await saveSettings({ contentGuardFilterFeeds: newOn });
-      s.contentGuardFilterFeeds = newOn;
-      try {
-        const tabs = await browser.tabs.query({});
-        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
-      } catch (e) {}
-      render();
-      toast(newOn ? '🛡 Filter feed aktif' : 'Filter feed dimatikan');
-    });
+    // v3.21.0: Toggle floating panel / Nuclear mode / Filter feeds DIHAPUS — fitur dibongkar,
+    // diganti Mode Fokus Allowlist. Setting contentGuardShowFloating / contentGuardNuclearMode /
+    // contentGuardFilterFeeds tetap disimpan untuk migrasi tapi tidak dipakai kode baru.
 
     // Pick element button (triggers element picker in active tab)
     const pickBtn = $('#ksPickElement');
@@ -10446,19 +10599,21 @@ async function renderKontrolSitusPage(B) {
       }
     });
 
-    // Auto-hide preset button (toggle content guard + element blocker presets)
+    // v3.21.0: "Tutup otomatis" — nyalakan master Pelindung Konten + Element Blocker + lapisan
+    // blacklist channel/akun. TIDAK menyalakan setting CG yang sudah dibongkar (FilterFeeds,
+    // NuclearMode, ScanDescription, BlockSearchQueries). Pesan toast yang akurat (tanpa klaim
+    // preset komentar/iklan/rekomendasi yang tidak benar — tombol ini hanya mengaktifkan toggle).
     const autoBtn = $('#ksAutoHide');
     if (autoBtn) autoBtn.addEventListener('click', async () => {
       await saveSettings({
         elementBlockerEnabled: true,
         contentGuardEnabled: true,
         contentGuardBlockYtChannels: true,
-        contentGuardBlockXAccounts: true,
-        contentGuardFilterFeeds: true
+        contentGuardBlockXAccounts: true
       });
       await refreshVault();
       renderKontrolSitusPage(B);
-      toast('✓ Preset otomatis aktif (komentar, iklan, rekomendasi)');
+      toast('✓ Pelindung Konten + Element Blocker diaktifkan');
     });
 
     // Save filter button
@@ -10679,6 +10834,7 @@ async function init() {
   await renderNotes();
 
   bindEvents();
+  try{ await initPomodoro(); }catch(e){ console.warn('initPomodoro failed',e); }
   renderVault();
   // v3.9.0 (Issue 5): Sidebar auto-close after idle (only in sidebar mode)
   try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
@@ -10702,6 +10858,95 @@ async function init() {
   // v3.11.1: Focus search — di-skip karena search bar sudah dihapus.
   // Quick-actions bar tidak perlu auto-focus (user pilih tombol yang mau).
 }
+
+// ========== Pomodoro sticky (v3.21.14) — safe isolated ==========
+let pomodoroState = null;
+let pomodoroInterval = null;
+function playBell() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.3, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    o.start(); o.stop(ctx.currentTime + 0.5);
+  } catch (e) {}
+}
+function playAdzanTest() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [523,659,784].forEach((freq,i)=>{
+      const o=ctx.createOscillator(); const g=ctx.createGain();
+      o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.2, ctx.currentTime+i*0.2); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime+i*0.2+0.3);
+      o.start(ctx.currentTime+i*0.2); o.stop(ctx.currentTime+i*0.2+0.3);
+    });
+  } catch(e){}
+}
+async function initPomodoro() {
+  try {
+    const s = await Pomodoro.loadState();
+    if (s) pomodoroState = s;
+    else pomodoroState = Pomodoro.createInitialState('25/5');
+    renderPomodoro();
+    if (pomodoroState.running) startPomodoroTick();
+    // adzan toggle init
+    try {
+      const vault = await getVault();
+      const soundOn = vault.settings?.prayerSoundOn !== false;
+      const btn = document.getElementById('adzanSoundToggle');
+      if (btn) btn.textContent = soundOn ? 'On' : 'Off';
+    } catch(e){}
+  } catch(e){ console.warn('initPomodoro failed',e); }
+}
+function renderPomodoro() {
+  try {
+    if (!pomodoroState) return;
+    const timerEl = document.getElementById('pomodoroTimer');
+    const modeEl = document.getElementById('pomodoroMode');
+    const presetEl = document.getElementById('pomodoroPreset');
+    const cyclesEl = document.getElementById('pomodoroCycles');
+    const startBtn = document.getElementById('pomodoroStart');
+    const pauseBtn = document.getElementById('pomodoroPause');
+    const soundBtn = document.getElementById('pomodoroSound');
+    const soundToggle = document.getElementById('pomodoroSoundToggle');
+    if (timerEl) timerEl.textContent = '🍅 ' + Pomodoro.formatMMSS(pomodoroState.remaining);
+    if (modeEl) modeEl.textContent = pomodoroState.mode==='focus'?'Fokus':pomodoroState.mode==='break'?'Istirahat':'Long Break';
+    if (presetEl) presetEl.textContent = pomodoroState.preset==='custom'?`Custom ${pomodoroState.customWork}/${pomodoroState.customBreak}`:pomodoroState.preset;
+    if (cyclesEl) cyclesEl.textContent = (pomodoroState.cycles%4)+'/4';
+    if (startBtn) startBtn.style.display = pomodoroState.running?'none':'inline-block';
+    if (pauseBtn) pauseBtn.style.display = pomodoroState.running?'inline-block':'none';
+    if (soundBtn) soundBtn.textContent = pomodoroState.soundOn?'🔊':'🔇';
+    if (soundToggle) soundToggle.textContent = pomodoroState.soundOn?'On':'Off';
+    // chips active
+    document.querySelectorAll('#pomodoroChips [data-preset]').forEach(b=>{ b.classList.toggle('on', b.dataset.preset===pomodoroState.preset); });
+    // custom inputs
+    const customBox = document.getElementById('pomodoroCustom');
+    if (customBox) customBox.style.display = pomodoroState.preset==='custom'?'flex':'none';
+  } catch(e){}
+}
+function startPomodoroTick() {
+  if (pomodoroInterval) clearInterval(pomodoroInterval);
+  pomodoroInterval = setInterval(async()=>{
+    if (!pomodoroState || !pomodoroState.running) return;
+    pomodoroState.remaining -= 1;
+    if (pomodoroState.remaining <= 0) {
+      // selesai
+      const wasFocus = pomodoroState.mode==='focus';
+      if (pomodoroState.soundOn) { try{ playBell(); }catch(e){} try{ browser.notifications.create({type:'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: wasFocus?'Selesai Fokus':'Selesai Istirahat', message: wasFocus?'Waktunya istirahat':'Waktunya fokus lagi'});}catch(e){} }
+      else { try{ browser.notifications.create({type:'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: wasFocus?'Selesai Fokus':'Selesai Istirahat', message: wasFocus?'Istirahat':'Fokus'});}catch(e){} }
+      pomodoroState = Pomodoro.nextState(pomodoroState);
+      pomodoroState.running = true; // auto lanjut
+      await Pomodoro.saveState(pomodoroState);
+      renderPomodoro();
+    } else {
+      renderPomodoro();
+      await Pomodoro.saveState(pomodoroState);
+    }
+  }, 1000);
+}
+async function startPomodoro(){ if(!pomodoroState) pomodoroState=Pomodoro.createInitialState('25/5'); pomodoroState.running=true; pomodoroState.updatedAt=Date.now(); await Pomodoro.saveState(pomodoroState); renderPomodoro(); startPomodoroTick(); }
+async function pausePomodoro(){ if(!pomodoroState) return; pomodoroState.running=false; if(pomodoroInterval) clearInterval(pomodoroInterval); await Pomodoro.saveState(pomodoroState); renderPomodoro(); }
+async function resetPomodoro(){ if(!pomodoroState) return; const p=Pomodoro.getPreset(pomodoroState.preset, pomodoroState.customWork, pomodoroState.customBreak); pomodoroState.remaining = (pomodoroState.mode==='focus'?p.work:p.break)*60; if(pomodoroState.mode==='longBreak') pomodoroState.remaining=Pomodoro.LONG_BREAK_MIN*60; pomodoroState.running=false; if(pomodoroInterval) clearInterval(pomodoroInterval); await Pomodoro.saveState(pomodoroState); renderPomodoro(); }
 
 function bindEvents() {
   // v3.20.7: Jika di iframe (popout), kirim activity ke parent untuk reset idle timer
@@ -10933,9 +11178,9 @@ function bindEvents() {
   if (batchCancelBtn) batchCancelBtn.addEventListener('click', exitNotesBatchMode);
 
   // Tab bar
-  $('#tabHome')?.addEventListener('click', () => setView('home'));
-  $('#tabNotes')?.addEventListener('click', () => setView('notes'));
-  $('#tabTools')?.addEventListener('click', () => setView('tools'));
+  $('#tabHome').addEventListener('click', () => setView('home'));
+  $('#tabNotes').addEventListener('click', () => setView('notes'));
+  $('#tabTools').addEventListener('click', () => setView('tools'));
 
   // Search / command bar
   // v3.11.1: Search bar sudah dihapus dari sidebar (ganti quick-actions).
@@ -11034,6 +11279,59 @@ function bindEvents() {
   $('#attachSearch').addEventListener('input', renderAttachList);
   $('#attachIntro').addEventListener('input', renderAttachPreview);
   $('#attachPosition').addEventListener('change', renderAttachPreview);
+
+  // Pomodoro sticky — safe isolated wiring
+  try {
+    const pBar = document.getElementById('pomodoroBar');
+    if (pBar) pBar.addEventListener('click', (e)=>{
+      if (e.target.closest('button')) return;
+      const strip = document.getElementById('pomodoroStrip');
+      if (strip) { strip.classList.toggle('open'); const det=document.getElementById('pomodoroDetail'); if(det) det.style.display = strip.classList.contains('open')?'block':'none'; }
+    });
+    const pStart=document.getElementById('pomodoroStart');
+    if(pStart) pStart.addEventListener('click', (e)=>{ e.stopPropagation(); startPomodoro(); });
+    const pPause=document.getElementById('pomodoroPause');
+    if(pPause) pPause.addEventListener('click', (e)=>{ e.stopPropagation(); pausePomodoro(); });
+    const pReset=document.getElementById('pomodoroReset');
+    if(pReset) pReset.addEventListener('click', (e)=>{ e.stopPropagation(); resetPomodoro(); });
+    const pSound=document.getElementById('pomodoroSound');
+    if(pSound) pSound.addEventListener('click', async(e)=>{ e.stopPropagation(); if(!pomodoroState) return; pomodoroState.soundOn=!pomodoroState.soundOn; await Pomodoro.saveState(pomodoroState); renderPomodoro(); });
+    const pSoundToggle=document.getElementById('pomodoroSoundToggle');
+    if(pSoundToggle) pSoundToggle.addEventListener('click', async()=>{ if(!pomodoroState) return; pomodoroState.soundOn=!pomodoroState.soundOn; await Pomodoro.saveState(pomodoroState); renderPomodoro(); });
+    const pTest=document.getElementById('pomodoroTestBell');
+    if(pTest) pTest.addEventListener('click', ()=>{ playBell(); });
+    document.querySelectorAll('#pomodoroChips [data-preset]').forEach(b=>{
+      b.addEventListener('click', async()=>{
+        const preset=b.dataset.preset;
+        if(preset==='custom'){ const box=document.getElementById('pomodoroCustom'); if(box) box.style.display='flex'; return; }
+        pomodoroState = Pomodoro.createInitialState(preset);
+        pomodoroState.soundOn = (await Pomodoro.loadState())?.soundOn ?? true;
+        await Pomodoro.saveState(pomodoroState); renderPomodoro(); if(pomodoroInterval) clearInterval(pomodoroInterval);
+      });
+    });
+    const pCustomApply=document.getElementById('pomodoroCustomApply');
+    if(pCustomApply) pCustomApply.addEventListener('click', async()=>{
+      const w=document.getElementById('pomodoroCustomWork')?.value||25;
+      const br=document.getElementById('pomodoroCustomBreak')?.value||5;
+      pomodoroState = Pomodoro.createInitialState('custom', w, br);
+      await Pomodoro.saveState(pomodoroState); renderPomodoro(); if(pomodoroInterval) clearInterval(pomodoroInterval);
+    });
+  } catch(e){ console.warn('pomodoro bind failed',e); }
+  // Adzan sound toggle — pisah dari pomodoro
+  try {
+    const adzanToggle=document.getElementById('adzanSoundToggle');
+    if(adzanToggle){
+      const updateAdzanBtn=async()=>{
+        try{ const v=await getVault(); const on=v.settings?.prayerSoundOn!==false; adzanToggle.textContent=on?'On':'Off'; }catch(e){}
+      };
+      updateAdzanBtn();
+      adzanToggle.addEventListener('click', async()=>{
+        try{ const v=await getVault(); if(!v.settings) v.settings={}; v.settings.prayerSoundOn = !(v.settings.prayerSoundOn!==false); await saveVault(v); currentVault=v; adzanToggle.textContent=v.settings.prayerSoundOn?'On':'Off'; toast(v.settings.prayerSoundOn?'🔊 Adzan On':'🔇 Adzan Off'); }catch(e){}
+      });
+    }
+    const adzanTest=document.getElementById('adzanTestBtn');
+    if(adzanTest) adzanTest.addEventListener('click', ()=>{ playAdzanTest(); toast('🔊 Test adzan'); });
+  } catch(e){}
 }
 
 // Listen for storage changes (sync) — guard for non-extension contexts
