@@ -74,6 +74,8 @@
     else if(msg.type==='ADD_TO_NOTE'){ vaultNoteId=null; show(); textarea.value+=(textarea.value?'\n':'')+(msg.text||''); updateStatus(); scheduleSave();}
     else if(msg.type==='SHOW_NOTE') show();
     else if(msg.type==='HIDE_NOTE') hide();
+    else if(msg.type==='RF_HIDE_FOR_CAPTURE'){ if(host) host.style.display='none'; }
+    else if(msg.type==='RF_RESTORE_AFTER_CAPTURE'){ if(host) host.style.display=''; if(isVisible && popover) popover.classList.add('rfn-show'); }
   });
   loadSession().then(s=>{ if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
   // cross-tab auto-show if was open in other tab

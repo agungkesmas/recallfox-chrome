@@ -21,25 +21,7 @@
   // Don't run on about: / moz-extension: pages
   if (!/^https?:/.test(location.protocol)) return;
 
-  // ===== Chrome MV3: Fallback keyboard shortcuts for commands without suggested_key =====
-  // Chrome MV3 hanya allow 4 suggested_key di manifest. Commands lainnya (capture-area,
-  // capture-visible, volume-reset, ask-ai) tidak punya shortcut default. User bisa set
-  // manual di chrome://extensions/shortcuts, ATAU pakai keydown listener ini sebagai fallback.
-  //
-  // Shortcut fallback (Alt+Shift+6/7/0) — same as Firefox addon defaults.
-  // Kirim message ke background → background handle via existing onCommand handler.
-  document.addEventListener('keydown', (e) => {
-    if (!e.altKey || !e.shiftKey) return;
-    let cmd = null;
-    if (e.key === '6') cmd = 'capture-area';
-    else if (e.key === '7') cmd = 'capture-visible';
-    else if (e.key === '0') cmd = 'volume-reset';
-    else return;
-    e.preventDefault();
-    e.stopPropagation();
-    console.log('[RecallFox] Fallback shortcut triggered:', cmd);
-    browser.runtime.sendMessage({ type: 'RF_COMMAND_FALLBACK', command: cmd }).catch(() => {});
-  }, true);
+  // Fallback shortcuts removed — 0 shortcut, all via click (FAB/pill/popup)
 
   // ===== Stylesheet =====
   function ensureStyles() {

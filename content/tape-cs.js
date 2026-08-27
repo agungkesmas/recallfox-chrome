@@ -753,6 +753,8 @@
     }
     else if (msg.type === 'SHOW_TAPE') show();
     else if (msg.type === 'HIDE_TAPE') hide();
+    else if (msg.type === 'RF_HIDE_FOR_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display='none'; }catch(e){} }
+    else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display=''; }catch(e){} }
   });
 
   loadSession().then((s) => { if(s && typeof s.pinned==='boolean') pinned=s.pinned; });

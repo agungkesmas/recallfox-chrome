@@ -1260,88 +1260,9 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
   }, delay);
 }
 
-// ===== Keyboard commands listener =====
-//
-// Wired in manifest.json commands map. Three capture commands:
-//   capture-page     → Alt+Shift+5  → full-page capture (scroll-stitch)
-//   capture-area     → Alt+Shift+6  → drag-to-select area capture
-//   capture-visible  → Alt+Shift+7  → current viewport only
-
-browser.commands.onCommand.addListener(async (cmd) => {
-  if (cmd === 'capture-page' || cmd === 'capture-area' || cmd === 'capture-visible') {
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    const mode = cmd === 'capture-area' ? 'selection'
-               : cmd === 'capture-visible' ? 'visible'
-               : 'entire';
-    console.log('[RecallFox] Command →', cmd, '(mode:', mode + ') on tab', tab.id);
-    try {
-      await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP', mode });
-    } catch (e) {
-      console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
-      await triggerScreenshot(tab, mode);
-    }
-    return;
-  }
-
-  if (cmd === 'clear-cache') {
-    console.log('[RecallFox] Command → clear cache');
-    const settings = await getSettings();
-    const { clearBrowsingData } = await import('./lib/clearcache.js');
-    const res = await clearBrowsingData({
-      dataTypes: settings.clearCacheDataTypes,
-      timePeriod: settings.clearCacheTimePeriod,
-      currentTabOnly: settings.clearCacheCurrentTabOnly,
-      reload: settings.clearCacheReload,
-      notify: settings.clearCacheNotify
-    });
-    browser.runtime.sendMessage({
-      type: 'CLEAR_CACHE_RESULT',
-      result: res
-    }).catch(() => {});
-    return;
-  }
-
-  // === Volume control commands ===
-  if (cmd === 'volume-up' || cmd === 'volume-down' || cmd === 'volume-reset') {
-    const { normalizeDb, getSiteVolume, setSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !tab.url || isRestrictedUrl(tab.url)) return;
-
-    const domain = extractDomain(tab.url);
-    const currentDb = await getSiteVolume(domain);
-    let newDb;
-    if (cmd === 'volume-up') newDb = normalizeDb(currentDb + 1);
-    else if (cmd === 'volume-down') newDb = normalizeDb(currentDb - 1);
-    else newDb = 0;  // reset
-
-    await setSiteVolume(domain, newDb);
-    try {
-      await browser.tabs.sendMessage(tab.id, { command: 'setVolume', dB: newDb });
-    } catch (e) { /* volume-cs.js might not be loaded yet */ }
-    console.log('[RecallFox] Volume:', cmd, '→', newDb, 'dB for', domain);
-    return;
-  }
-
-  if (cmd === 'ask-ai') {
-    // Alt+Shift+A — get selected text from active tab and send to AI
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    try {
-      const results = await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => window.getSelection().toString().trim()
-      });
-      const text = results?.[0]?.result || '';
-      if (text.length < 3) return;
-      console.log('[RecallFox] Ask AI (keyboard shortcut):', text.slice(0, 80));
-      await routeAiQuery(text, { sourceUrl: tab.url || '', sourceTitle: tab.title || '' });
-    } catch (e) {
-      console.warn('[RecallFox] Ask AI shortcut failed:', e.message);
-    }
-    return;
-  }
-});
+// ===== Keyboard commands removed — 0 shortcut (click-only) =====
+// All triggers via click: FAB sc, pill 📝/🧾, popup/sidebar, mode picker.
+// Hide-before-capture still via RF_HIDE_FOR_CAPTURE broadcast (capture.js).
 
 // ===== Message router =====
 
