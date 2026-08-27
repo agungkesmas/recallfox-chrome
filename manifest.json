@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.21.11",
+  "version": "3.21.12",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
@@ -190,6 +190,19 @@
       ],
       "js": [
         "lib/browser-polyfill.min.js",
+        "content/notes-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
         "content/sidebar-cs.js"
       ],
       "run_at": "document_idle",
@@ -211,6 +224,7 @@
         "popup/viewer.js",
         "popup/viewer.css",
         "lib/tape.js",
+        "lib/notes.js",
         "lib/ai-detect.js",
         "lib/vault-tree.js",
         "lib/browser-polyfill.min.js",

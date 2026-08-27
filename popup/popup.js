@@ -8050,6 +8050,23 @@ async function openTapePopover() {
     toast('Gagal membuka RecallTape: ' + e.message, false);
   }
 }
+// RecallNote — floating note trigger (safe, sama pattern openTapePopover)
+async function openNotesPopover() {
+  if (window !== window.top) { window.parent.postMessage({ type: 'RF_OPEN_NOTE' }, '*'); try { toast('📝 Catatan mengambang dibuka'); } catch (e) {} return; }
+  try {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0]) {
+      const tab = tabs[0];
+      if (/^(https?|file):/i.test(tab.url || '')) {
+        try { await browser.tabs.sendMessage(tab.id, { type: 'OPEN_NOTE' }); toast('📝 Catatan mengambang dibuka'); if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},400); return; }
+        catch (e) { try { await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/notes-cs.js'] }); await browser.tabs.sendMessage(tab.id, { type: 'OPEN_NOTE' }); toast('📝 Catatan mengambang dibuka'); if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},400); return; } catch (e2) { console.warn('[RecallFox/Notes] Fallback inject failed:', e2.message); } }
+      }
+    }
+    try { openPage('📝 Catatan Mengambang'); } catch (e) {}
+    const B2 = document.getElementById('pageBody');
+    if (B2) B2.innerHTML = `<div class="card" style="text-align:center;padding:20px 16px"><div style="font-size:36px;margin-bottom:8px">📝</div><h3 style="font-size:14px;margin-bottom:6px">Catatan Mengambang</h3><p style="font-size:11.5px;color:var(--text-2);line-height:1.6">Buka halaman web (http/https), lalu klik 📝 di header untuk memunculkan catatan mengambang.</p></div>`;
+  } catch (e) { console.error('[RecallFox/Notes] openNotesPopover failed:', e); try { toast('Gagal membuka catatan: '+(e.message||e)); } catch (ee) {} }
+}
 function renderShalatPage(B) {
   const s = currentVault?.settings || {};
   if (!s.prayerEnabled || typeof s.prayerLatitude !== 'number') {
@@ -10750,6 +10767,11 @@ function bindEvents() {
   // v3.14.0: RecallTape — tombol 🧾 di header → toggle popover di tab aktif
   const tapeBtn = $('#tapeBtn');
   if (tapeBtn) tapeBtn.addEventListener('click', openTapePopover);
+  // RecallNote — tombol 📝 di header → floating note ala Tape (safe isolated)
+  try {
+    const noteBtn = document.getElementById('noteBtn');
+    if (noteBtn) noteBtn.addEventListener('click', () => { try { openNotesPopover(); } catch (e) { console.error('[RecallFox/Notes] click failed:', e); } });
+  } catch (e) { console.warn('[RecallFox/Notes] bind failed:', e); }
   $('#scrim').addEventListener('click', closeSheet);
   $('#pageBack').addEventListener('click', closePage);
 
