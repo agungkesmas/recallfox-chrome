@@ -29,7 +29,7 @@ import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGr
 import { parseMagicCommand, parseMultiStepCommand, applyMagicCommand, applyMultiStepMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
 import * as Pomodoro from '../lib/pomodoro.js';
-import { parseTodoInput } from '../lib/todoist-parse.js';
+import { parseTodoInput, formatRecurring } from '../lib/todoist-parse.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
 import { getUserBlocklist, addUserBlocklistEntry, removeUserBlocklistEntry } from '../lib/storage.js';
@@ -117,6 +117,8 @@ let notesFilterDone = 'all';         // all | active | done — v3.21.18 todo al
 let notesFilterDue = 'all';        // all | today | overdue
 let notesFilterPriority = 'all';   // all | 1 | 2 | 3 | 4
 let notesFilterLabel = '';         // '' = semua, atau nama label spesifik (lowercase)
+// P2 — filter recurring
+let notesFilterRecurring = 'all';  // all | recurring
 
 // ============ Helpers ============
 const $ = (s) => document.querySelector(s);
@@ -7230,6 +7232,10 @@ function notesSorted() {
     const lab = notesFilterLabel.toLowerCase();
     arr = arr.filter(n => (n.labels||[]).map(x=>String(x).toLowerCase()).includes(lab));
   }
+  // P2: Filter recurring (🔁)
+  if (notesFilterRecurring==='recurring') {
+    arr = arr.filter(n => !!n.recurring);
+  }
   // v3.21.19: done=false di atas, done=true di bawah, lalu priority P1->P4, lalu pinned, lalu dueAt terdekat
   const doneFirst = (a,b) => (a.done?1:0) - (b.done?1:0);
   const prioFirst = (a,b) => ((a.priority||4) - (b.priority||4));
@@ -7310,6 +7316,7 @@ async function renderNotes() {
   const isToday = (d)=>{ const n=new Date(); return d.getFullYear()===n.getFullYear() && d.getMonth()===n.getMonth() && d.getDate()===n.getDate(); };
   const todayCount = baseForChips.filter(n=> n.dueAt && isToday(new Date(n.dueAt))).length;
   const overdueCount = baseForChips.filter(n=> n.dueAt && new Date(n.dueAt) < new Date() && !n.done).length;
+  const recurringCount = baseForChips.filter(n=> !!n.recurring).length;
   const prioCounts = [1,2,3,4].map(p=> baseForChips.filter(n=> (n.priority||4)===p).length);
   const labelCounts = {};
   baseForChips.forEach(n=> (n.labels||[]).forEach(l=>{ const k=String(l).toLowerCase(); labelCounts[k]=(labelCounts[k]||0)+1; }));
@@ -7319,9 +7326,10 @@ async function renderNotes() {
     todoChipsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
       + (todayCount? '<button class="addbtn'+(notesFilterDue==='today'?' on':'')+'" data-due-filter="today" style="padding:4px 8px;font-size:11px;'+(notesFilterDue==='today'?'':'')+'">Hari ini '+todayCount+'</button>' : '')
       + (overdueCount? '<button class="addbtn'+(notesFilterDue==='overdue'?' on':'')+'" data-due-filter="overdue" style="padding:4px 8px;font-size:11px;background:'+(notesFilterDue==='overdue'?'#F87171;color:#fff;border-color:#F87171':'')+'">Terlambat '+overdueCount+'</button>' : '')
+      + (recurringCount? '<button class="addbtn'+(notesFilterRecurring==='recurring'?' on':'')+'" data-recurring-filter="recurring" style="padding:4px 8px;font-size:11px;'+(notesFilterRecurring==='recurring'?'background:#10B981;color:#fff;border-color:#10B981':'')+'">🔁 '+recurringCount+'</button>' : '')
       + prioCounts.map((c,pIdx)=>{ if(!c) return ''; const p=pIdx+1; const col={1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[p]; const on=notesFilterPriority===String(p); return '<button class="addbtn'+(on?' on':'')+'" data-prio-filter="'+p+'" style="padding:4px 8px;font-size:11px;border-left:3px solid '+col+';'+(on?'background:'+col+';color:#fff':'' )+'">P'+p+' '+c+'</button>'; }).join('')
       + topLabels.map(([lab,cnt])=>{ const on=notesFilterLabel===lab; return '<button class="addbtn'+(on?' on':'')+'" data-label-filter="'+esc(lab)+'" style="padding:4px 8px;font-size:11px;'+(on?'background:var(--primary);color:#fff':'' )+'">#'+esc(lab)+' '+cnt+'</button>'; }).join('')
-      + ((notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel) ? '<button class="addbtn" data-clear-todo-filter style="padding:4px 8px;font-size:11px">✕ Clear</button>' : '')
+      + ((notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel || notesFilterRecurring!=='all') ? '<button class="addbtn" data-clear-todo-filter style="padding:4px 8px;font-size:11px">✕ Clear</button>' : '')
       + '</div>';
   }
   if (!currentNotes.length) {
@@ -7339,7 +7347,7 @@ async function renderNotes() {
     let emptyMsg;
     if (notesSearchQuery) {
       emptyMsg = '<div class="notes-empty"><div class="big">🔍</div>Tidak ada catatan cocok dengan "<b>' + esc(notesSearchQuery) + '</b>".<br><span style="font-size:11px">Coba kata kunci lain atau hapus filter pencarian.</span></div>';
-    } else if (notesFilterDone!=='all' || notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel) {
+    } else if (notesFilterDone!=='all' || notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel || notesFilterRecurring!=='all') {
       emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan cocok filter.<br><span style="font-size:11px">Clear filter atau ganti kriteria.</span></div>';
     } else {
       emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan di grup "' + esc(currentNoteGroup) + '".<br><span style="font-size:11px">Pilih grup lain atau buat catatan baru di grup ini.</span></div>';
@@ -7397,6 +7405,7 @@ async function renderNotes() {
       dueHtml = '<button data-due-click="'+dueFilterVal+'" title="Filter '+dueFilterVal+'" style="background:transparent;border:none;color:'+(isOverdue?'#F87171':'#FBBF24')+';font-weight:600;cursor:pointer;padding:0;font-size:11px">📅 '+esc(dueStr)+(isOverdue?' • Terlambat':'')+'</button>';
     }
     const labelsHtml = (n.labels||[]).length ? (n.labels||[]).map(l=>'<button data-label-click="'+esc(l.toLowerCase())+'" title="Filter #'+esc(l)+'" style="background:transparent;border:none;color:var(--primary);cursor:pointer;padding:0;font-size:11px">#'+esc(l)+'</button>').join(' ') : '';
+    const recurringHtml = n.recurring ? '<button data-recurring-click="recurring" title="Filter berulang" style="background:transparent;border:none;color:#10B981;cursor:pointer;padding:0;font-size:11px">'+esc(formatRecurring(n.recurring))+'</button>' : '';
     return '<div class="note-card nc-' + (n.color || 'default') + doneCls + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative;border-left:4px solid '+prioColor+'"' : ' style="position:relative;border-left:4px solid '+prioColor+';' + (n.done?' opacity:0.55;background:var(--surface-2)':'') + '"') + '>'
       + '<div style="display:flex;align-items:flex-start;gap:6px">'
       + '<input type="checkbox" class="note-done-check" data-done="' + n.id + '" ' + (n.done?'checked':'') + ' title="' + (n.done?'Tandai belum selesai':'Tandai selesai') + '" style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);margin-top:2px;flex:none">'
@@ -7408,14 +7417,14 @@ async function renderNotes() {
       + '<div class="note-body-txt" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + previewHtml + '</div>'
       + noteLocHtml
       + subtasksHtml
-      + (dueHtml || labelsHtml ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;font-size:11px">'+ dueHtml + (dueHtml&&labelsHtml?' <span style="color:var(--muted)">•</span> ':'') + labelsHtml +'</div>' : '')
+      + (dueHtml || labelsHtml || recurringHtml ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;font-size:11px">'+ [dueHtml, labelsHtml, recurringHtml].filter(Boolean).join(' <span style="color:var(--muted)">•</span> ') +'</div>' : '')
       + '<div class="note-meta">' + prioPill + (prioPill?' <span class="cdot"></span>':'') + (n.pinned ? '<span class="pin">📌</span>' : '') + (n.done ? '<span style="color:var(--green);font-weight:600">✓ Selesai</span><span class="cdot"></span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
       + '</div>'
       + '</div>';
   }).join('');
   list.querySelectorAll('.note-card').forEach(c => c.addEventListener('click', (e) => {
-    // Jika klik tombol mengambang, checkbox done, pill P1/#tag/📅, atau subtask toggle, jangan buka editor
-    if (e.target.closest('[data-float]') || e.target.closest('[data-done]') || e.target.closest('[data-prio-click]') || e.target.closest('[data-due-click]') || e.target.closest('[data-label-click]') || e.target.closest('[data-subtoggle]')) return;
+    // Jika klik tombol mengambang, checkbox done, pill P1/#tag/📅/🔁, atau subtask toggle, jangan buka editor
+    if (e.target.closest('[data-float]') || e.target.closest('[data-done]') || e.target.closest('[data-prio-click]') || e.target.closest('[data-due-click]') || e.target.closest('[data-label-click]') || e.target.closest('[data-recurring-click]') || e.target.closest('[data-subtoggle]')) return;
     // v3.9.0 (Issue 7): In batch mode, toggle selection instead of opening editor
     if (notesBatchMode) {
       const nid = c.dataset.nid;
@@ -7604,12 +7613,14 @@ function bindTodoChips() {
     notesFilterLabel = (notesFilterLabel===v ? '' : v);
     renderNotes();
   }));
+  $$('[data-recurring-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterRecurring = (notesFilterRecurring==='recurring' ? 'all' : 'recurring'); renderNotes(); }));
   const clr = $('[data-clear-todo-filter]');
-  if (clr) clr.addEventListener('click', ()=>{ notesFilterDue='all'; notesFilterPriority='all'; notesFilterLabel=''; renderNotes(); });
+  if (clr) clr.addEventListener('click', ()=>{ notesFilterDue='all'; notesFilterPriority='all'; notesFilterLabel=''; notesFilterRecurring='all'; renderNotes(); });
   // Card pills clickable → set filter (delegated after render)
   $$('[data-prio-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.prioClick; notesFilterPriority=(notesFilterPriority===v?'all':v); renderNotes(); }));
   $$('[data-due-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.dueClick; notesFilterDue=(notesFilterDue===v?'all':v); renderNotes(); }));
   $$('[data-label-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.labelClick; notesFilterLabel=(notesFilterLabel===v?'':v); renderNotes(); }));
+  $$('[data-recurring-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); notesFilterRecurring=(notesFilterRecurring==='recurring'?'all':'recurring'); renderNotes(); }));
 }
 async function newNote() {
   // v3.7.2 (Issue 5): Catatan baru otomatis masuk grup yang sedang difilter.
@@ -7650,6 +7661,22 @@ function openNoteEditor(noteId) {
     + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
     + '<input class="f" id="nDueAt" type="datetime-local" value="' + (n.dueAt ? new Date(n.dueAt).toISOString().slice(0,16) : '') + '" style="flex:1;min-width:140px">'
     + '<button class="btn btn-g" id="nDueClear" style="padding:4px 8px;font-size:11px">Hapus tgl</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'
+    + '<select class="f" id="nRecurring" style="flex:1">'
+    + '<option value="" ' + (!n.recurring?'selected':'') + '>Tidak berulang</option>'
+    + '<option value="daily" ' + (n.recurring&&n.recurring.freq==='daily'?'selected':'') + '>🔁 Tiap hari</option>'
+    + '<option value="weekly" ' + (n.recurring&&n.recurring.freq==='weekly'&&!n.recurring.byDay?'selected':'') + '>🔁 Tiap minggu</option>'
+    + '<option value="weekly:senin" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='senin'?'selected':'') + '>🔁 Tiap Senin</option>'
+    + '<option value="weekly:selasa" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='selasa'?'selected':'') + '>🔁 Tiap Selasa</option>'
+    + '<option value="weekly:rabu" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='rabu'?'selected':'') + '>🔁 Tiap Rabu</option>'
+    + '<option value="weekly:kamis" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='kamis'?'selected':'') + '>🔁 Tiap Kamis</option>'
+    + '<option value="weekly:jumat" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='jumat'?'selected':'') + '>🔁 Tiap Jumat</option>'
+    + '<option value="weekly:sabtu" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='sabtu'?'selected':'') + '>🔁 Tiap Sabtu</option>'
+    + '<option value="weekly:minggu" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='minggu'?'selected':'') + '>🔁 Tiap Minggu</option>'
+    + '<option value="monthly" ' + (n.recurring&&n.recurring.freq==='monthly'?'selected':'') + '>🔁 Tiap bulan</option>'
+    + '<option value="yearly" ' + (n.recurring&&n.recurring.freq==='yearly'?'selected':'') + '>🔁 Tiap tahun</option>'
+    + '</select>'
     + '</div>'
     + '<div style="display:flex;gap:6px;align-items:center">'
     + '<input class="f" id="nLabels" value="' + esc((n.labels||[]).join(', ')) + '" placeholder="#tag, pisah koma (mis. #rumah, #kerja)" style="flex:1">'
@@ -7784,12 +7811,33 @@ function openNoteEditor(noteId) {
         dueAt = parsed.dueAt;
         if (dueInput) dueInput.value = new Date(dueAt).toISOString().slice(0,16);
       }
+      // P2: recurring — dari select atau parse
+      const recInput = document.getElementById('nRecurring');
+      let recurring = n.recurring || null;
+      if (recInput) {
+        const v = recInput.value;
+        if (!v) recurring = null;
+        else if (v==='daily') recurring={freq:'daily', interval:1};
+        else if (v==='weekly') recurring={freq:'weekly', interval:1};
+        else if (v.startsWith('weekly:')) recurring={freq:'weekly', byDay:[v.split(':')[1]], interval:1};
+        else if (v==='monthly') recurring={freq:'monthly', interval:1};
+        else if (v==='yearly') recurring={freq:'yearly', interval:1};
+      }
+      if (parsed && parsed.recurring && !recurring) {
+        recurring = parsed.recurring;
+        // sync ke select kalau parse menemukan recurring tapi select masih kosong
+        if (recInput && !recInput.value) {
+          const rv = recurring.byDay ? 'weekly:'+recurring.byDay[0] : recurring.freq;
+          if ([...recInput.options].some(o=>o.value===rv)) recInput.value=rv;
+        }
+      }
+      // Jika parse menemukan recurring dueAt dan input kosong, pakai dueAt dari parse sudah di atas
       // Bersihkan body/title dari syntax !1 #tag besok kalau sudah diparse
       if (parsed && parsed.body && parsed.body !== (titleVal + ' ' + bodyText).slice(0,500)) {
         // Jika body asli mengandung syntax, update body/title yang sudah dibersihkan
         // Untuk simpel, kita biarkan body tetap, tapi priority/labels sudah diambil
       }
-      // P1: keep subtasks from editor to avoid overwriting checklist
+      // P1: keep subtasks from editor to avoid overwriting checklist + P2 recurring
       await updateNote(n.id, {
         title: titleVal,
         body: bodyHtml,
@@ -7797,6 +7845,7 @@ function openNoteEditor(noteId) {
         priority,
         dueAt,
         labels,
+        recurring,
         subtasks: editorSubtasks,
         updatedAt: new Date().toISOString()
       });
@@ -7810,6 +7859,8 @@ function openNoteEditor(noteId) {
   if (dueInputEl) dueInputEl.addEventListener('change', scheduleSave);
   const labelsEl = document.getElementById('nLabels');
   if (labelsEl) labelsEl.addEventListener('input', scheduleSave);
+  const recEl = document.getElementById('nRecurring');
+  if (recEl) recEl.addEventListener('change', scheduleSave);
   document.querySelectorAll('[data-prio]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       document.querySelectorAll('[data-prio]').forEach(b=>{ b.classList.remove('btn-p'); b.classList.add('btn-g'); });
