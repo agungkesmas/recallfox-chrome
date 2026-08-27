@@ -111,6 +111,7 @@ let currentNoteGroup = '';
 let notesSortMode = 'recent';        // 'recent' | 'title' | 'created'
 let notesViewMode = 'list';          // 'list' | 'grid'
 let notesSearchQuery = '';           // string, case-insensitive
+let notesFilterDone = 'all';         // all | active | done — v3.21.18 todo ala Todoist
 
 // ============ Helpers ============
 const $ = (s) => document.querySelector(s);
@@ -7198,25 +7199,33 @@ function notesSorted() {
       return title.includes(q) || body.includes(q);
     });
   }
-  // v3.13.0 (Issue #3): Apply sort mode (pinned selalu di atas kecuali sort by title).
+  // v3.21.18: Filter done/aktif/selesai ala Todoist
+  if (notesFilterDone === 'active') arr = arr.filter(n => !n.done);
+  else if (notesFilterDone === 'done') arr = arr.filter(n => n.done);
+  // v3.21.18: done=false di atas, done=true di bawah (sebelum pinned)
+  const doneFirst = (a,b) => (a.done?1:0) - (b.done?1:0);
+  // v3.13.0 (Issue #3): Apply sort mode (done dulu, lalu pinned).
   const pinnedFirst = (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
   if (notesSortMode === 'title') {
-    // Sort by title A-Z (pinned tetap di atas)
+    // Sort by title A-Z (done dulu, pinned tetap di atas dalam grup)
     return arr.slice().sort((a, b) => {
+      const d = doneFirst(a,b); if(d!==0) return d;
       const p = pinnedFirst(a, b);
       if (p !== 0) return p;
       return (a.title || '').localeCompare(b.title || '', 'id', { sensitivity: 'base' });
     });
   } else if (notesSortMode === 'created') {
-    // Sort by createdAt desc (newest first), pinned di atas
+    // Sort by createdAt desc (newest first), done dulu, pinned di atas
     return arr.slice().sort((a, b) => {
+      const d = doneFirst(a,b); if(d!==0) return d;
       const p = pinnedFirst(a, b);
       if (p !== 0) return p;
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
   }
-  // Default: 'recent' — by updatedAt desc (pinned di atas)
+  // Default: 'recent' — by updatedAt desc (done dulu, pinned di atas)
   return arr.slice().sort((a, b) => {
+    const d = doneFirst(a,b); if(d!==0) return d;
     const p = pinnedFirst(a, b);
     if (p !== 0) return p;
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
@@ -7261,29 +7270,35 @@ async function renderNotes() {
         }).join('')
       + '</div>';
   }
+  const doneFilterHtml = '<div style="display:flex;gap:6px;margin-bottom:8px"><button class="addbtn' + (notesFilterDone==='all'?' on':'') + '" data-done-filter="all" style="padding:4px 8px;font-size:11px">Semua</button><button class="addbtn' + (notesFilterDone==='active'?' on':'') + '" data-done-filter="active" style="padding:4px 8px;font-size:11px">Aktif</button><button class="addbtn' + (notesFilterDone==='done'?' on':'') + '" data-done-filter="done" style="padding:4px 8px;font-size:11px">Selesai</button></div>';
   if (!currentNotes.length) {
-    list.innerHTML = toolbarHtml + groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
+    list.innerHTML = toolbarHtml + doneFilterHtml + groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
     bindNotesToolbar();
     bindGroupChips();
+    // bind done filter
+    list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
     return;
   }
   const sorted = notesSorted();
   if (!sorted.length) {
-    // v3.13.0: Empty state bisa karena grup kosong ATAU search tidak ketemu
+    // v3.13.0: Empty state bisa karena grup kosong ATAU search tidak ketemu ATAU filter done
     let emptyMsg;
     if (notesSearchQuery) {
       emptyMsg = '<div class="notes-empty"><div class="big">🔍</div>Tidak ada catatan cocok dengan "<b>' + esc(notesSearchQuery) + '</b>".<br><span style="font-size:11px">Coba kata kunci lain atau hapus filter pencarian.</span></div>';
+    } else if (notesFilterDone!=='all') {
+      emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan ' + (notesFilterDone==='done'?'selesai':'aktif') + '.<br><span style="font-size:11px">Ganti filter atau buat baru.</span></div>';
     } else {
       emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan di grup "' + esc(currentNoteGroup) + '".<br><span style="font-size:11px">Pilih grup lain atau buat catatan baru di grup ini.</span></div>';
     }
-    list.innerHTML = toolbarHtml + groupChipsHtml + emptyMsg;
+    list.innerHTML = toolbarHtml + doneFilterHtml + groupChipsHtml + emptyMsg;
     bindNotesToolbar();
     bindGroupChips();
+    list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
     return;
   }
   // v3.13.0: Tambah class 'notes-grid-mode' ke list kalau viewMode = 'grid'
   list.className = 'notes-list' + (notesViewMode === 'grid' ? ' notes-grid-mode' : '');
-  list.innerHTML = toolbarHtml + groupChipsHtml + sorted.map(n => {
+  list.innerHTML = toolbarHtml + doneFilterHtml + groupChipsHtml + sorted.map(n => {
     const titleHtml = n.title ? '<div class="note-title">' + esc(n.title) + '</div>' : '';
     // v3.13.0 (Issue #4): Strip HTML untuk preview — catatan body sekarang bisa berisi HTML
     // (paste tabel, bold, list, dll). Preview di list harus plain text.
@@ -7302,18 +7317,24 @@ async function renderNotes() {
     const noteLocHtml = noteLoc
       ? '<div style="font-size:10px;color:var(--green);margin-top:2px">\uD83D\uDCCD ' + esc((noteLoc.address || (noteLoc.lat?.toFixed(4) + ', ' + noteLoc.lng?.toFixed(4))).slice(0, 40)) + '</div>'
       : '';
-    return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative"' : ' style="position:relative"') + '>'
+    const doneCls = n.done ? ' done' : '';
+    return '<div class="note-card nc-' + (n.color || 'default') + doneCls + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative"' : ' style="position:relative' + (n.done?' ;opacity:0.55;background:var(--surface-2)':'') + '"') + '>'
+      + '<div style="display:flex;align-items:flex-start;gap:6px">'
+      + '<input type="checkbox" class="note-done-check" data-done="' + n.id + '" ' + (n.done?'checked':'') + ' title="' + (n.done?'Tandai belum selesai':'Tandai selesai') + '" style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);margin-top:2px;flex:none">'
       + batchHtml
+      + '</div>'
       + '<button class="note-float-btn" data-float="' + n.id + '" title="Buka mengambang — nyambung autosave" style="position:absolute;top:6px;right:6px;padding:3px 6px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--primary);cursor:pointer;z-index:2">⧉</button>'
-      + '<div class="note-card-main">'
-      + titleHtml
-      + '<div class="note-body-txt">' + previewHtml + '</div>'
+      + '<div class="note-card-main" style="' + (n.done?'opacity:0.7':'') + '">'
+      + '<div class="note-title" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + (n.title?esc(n.title):'') + '</div>'
+      + '<div class="note-body-txt" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + previewHtml + '</div>'
       + noteLocHtml
-      + '<div class="note-meta">' + (n.pinned ? '<span class="pin">📌</span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
+      + '<div class="note-meta">' + (n.pinned ? '<span class="pin">📌</span>' : '') + (n.done ? '<span style="color:var(--green);font-weight:600">✓ Selesai</span><span class="cdot"></span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
       + '</div>'
       + '</div>';
   }).join('');
   list.querySelectorAll('.note-card').forEach(c => c.addEventListener('click', (e) => {
+    // Jika klik tombol mengambang atau checkbox done, jangan buka editor
+    if (e.target.closest('[data-float]') || e.target.closest('[data-done]')) return;
     // v3.9.0 (Issue 7): In batch mode, toggle selection instead of opening editor
     if (notesBatchMode) {
       const nid = c.dataset.nid;
@@ -7334,9 +7355,15 @@ async function renderNotes() {
     const note = currentNotes.find(n=>n.id===nid);
     if (!note) return;
     try {
-      const tabs = await browser.tabs.query({active:true, currentWindow:true});
+      // Cek tab aktif — support http/https/file + PDF viewer
+      let tabs = [];
+      try { tabs = await browser.tabs.query({active:true, currentWindow:true}); } catch(e){
+        // Fallback untuk sidebar iframe di Firefox (browser.tabs undefined)
+        try{ window.parent.postMessage({type:'RF_OPEN_NOTE_VAULT', noteId: nid, text: note.body||''}, '*'); toast('📝 Mengambang nyambung'); return; }catch(ee){}
+      }
       const tab = tabs && tabs[0];
-      if (tab && tab.id && /^https?:/i.test(tab.url||'')) {
+      const isWebOrFile = tab && tab.id && (/^(https?|file):/i.test(tab.url||'') || /\.pdf(\?|#|$)/i.test(tab.url||''));
+      if (isWebOrFile) {
         try {
           await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
           toast('📝 Mengambang nyambung vault');
@@ -7348,12 +7375,33 @@ async function renderNotes() {
             await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
             toast('📝 Mengambang nyambung');
             return;
-          }catch(e2){ console.warn('float inject failed',e2.message); }
+          }catch(e2){
+            console.warn('float inject failed',e2.message);
+            // PDF viewer resource:// fallback: buka popup window kecil
+            if (tab.url && /\.pdf/i.test(tab.url)) {
+              try{
+                const url = browser.runtime.getURL('popup/popup.html?floatNote=' + encodeURIComponent(nid));
+                await browser.windows.create({url, type:'popup', width:360, height:560});
+                toast('📝 Dibuka di jendela popup (PDF)');
+                return;
+              }catch(e3){}
+            }
+          }
         }
       }
+      // Fallback: coba via parent postMessage (untuk sidebar iframe)
+      try{ window.parent.postMessage({type:'RF_OPEN_NOTE_VAULT', noteId: nid, text: note.body||''}, '*'); toast('📝 Mengambang'); return; }catch(e){}
       toast('Buka halaman web dulu untuk mengambang', false);
     } catch(e){ console.warn('float failed',e); }
   }));
+  // v3.21.18: done filter chips
+  list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
+  // v3.21.18: todo checkbox — coret + pindah bawah
+  list.querySelectorAll('[data-done]').forEach(cb=>{
+    const handler = async (e)=>{ e.stopPropagation(); const nid=cb.dataset.done; const n=currentNotes.find(x=>x.id===nid); if(!n) return; const newDone = cb.checked !== undefined ? cb.checked : !n.done; await updateNote(nid, {done: newDone, doneAt: newDone?new Date().toISOString():null}); renderNotes(); };
+    cb.addEventListener('click', handler);
+    cb.addEventListener('change', handler);
+  });
   bindNotesToolbar();
   bindGroupChips();
 }
