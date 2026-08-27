@@ -7302,8 +7302,9 @@ async function renderNotes() {
     const noteLocHtml = noteLoc
       ? '<div style="font-size:10px;color:var(--green);margin-top:2px">\uD83D\uDCCD ' + esc((noteLoc.address || (noteLoc.lat?.toFixed(4) + ', ' + noteLoc.lng?.toFixed(4))).slice(0, 40)) + '</div>'
       : '';
-    return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary)"' : '') + '>'
+    return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative"' : ' style="position:relative"') + '>'
       + batchHtml
+      + '<button class="note-float-btn" data-float="' + n.id + '" title="Buka mengambang — nyambung autosave" style="position:absolute;top:6px;right:6px;padding:3px 6px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--primary);cursor:pointer;z-index:2">⧉</button>'
       + '<div class="note-card-main">'
       + titleHtml
       + '<div class="note-body-txt">' + previewHtml + '</div>'
@@ -7325,6 +7326,33 @@ async function renderNotes() {
     // v3.11.16: note-act buttons sudah dihapus — klik note-card langsung buka editor.
     // Aksi Hapus/Arsip/Pin ada di footer editor. Aksi massal pakai toggle batch.
     openNoteEditor(c.dataset.nid);
+  }));
+  // v3.21.15: Tombol ⧉ Mengambang — buka floating nyambung autosave vault
+  list.querySelectorAll('[data-float]').forEach(btn => btn.addEventListener('click', async (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const nid = btn.dataset.float;
+    const note = currentNotes.find(n=>n.id===nid);
+    if (!note) return;
+    try {
+      const tabs = await browser.tabs.query({active:true, currentWindow:true});
+      const tab = tabs && tabs[0];
+      if (tab && tab.id && /^https?:/i.test(tab.url||'')) {
+        try {
+          await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
+          toast('📝 Mengambang nyambung vault');
+          if(!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},300);
+          return;
+        } catch(err){
+          try{
+            await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/notes-cs.js']});
+            await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
+            toast('📝 Mengambang nyambung');
+            return;
+          }catch(e2){ console.warn('float inject failed',e2.message); }
+        }
+      }
+      toast('Buka halaman web dulu untuk mengambang', false);
+    } catch(e){ console.warn('float failed',e); }
   }));
   bindNotesToolbar();
   bindGroupChips();
@@ -10862,16 +10890,32 @@ async function init() {
 // ========== Pomodoro sticky (v3.21.14) — safe isolated ==========
 let pomodoroState = null;
 let pomodoroInterval = null;
-function playBell() {
+async function playBell() {
+  const file = pomodoroState?.soundFile || 'bell-soft.mp3';
+  try {
+    const url = browser.runtime.getURL('assets/sounds/' + file);
+    const audio = new Audio(url); audio.volume = 0.7;
+    await audio.play();
+    return;
+  } catch(e){}
+  // fallback beep
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const o = ctx.createOscillator(); const g = ctx.createGain();
     o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
     g.gain.setValueAtTime(0.3, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
     o.start(); o.stop(ctx.currentTime + 0.5);
-  } catch (e) {}
+  } catch(e){}
 }
-function playAdzanTest() {
+async function playAdzanTest() {
+  try {
+    const vault = await getVault();
+    const file = vault.settings?.prayerSoundFile || 'adzan-mekkah-30s.mp3';
+    const url = browser.runtime.getURL('assets/sounds/' + file);
+    const audio = new Audio(url); audio.volume = 0.8;
+    await audio.play();
+    return;
+  } catch(e){}
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     [523,659,784].forEach((freq,i)=>{
@@ -10885,16 +10929,20 @@ function playAdzanTest() {
 async function initPomodoro() {
   try {
     const s = await Pomodoro.loadState();
-    if (s) pomodoroState = s;
-    else pomodoroState = Pomodoro.createInitialState('25/5');
+    if (s) {
+      pomodoroState = s;
+      if (!pomodoroState.soundFile) pomodoroState.soundFile = 'bell-soft.mp3';
+    } else pomodoroState = Pomodoro.createInitialState('25/5');
     renderPomodoro();
     if (pomodoroState.running) startPomodoroTick();
-    // adzan toggle init
+    // adzan toggle + select init
     try {
       const vault = await getVault();
       const soundOn = vault.settings?.prayerSoundOn !== false;
       const btn = document.getElementById('adzanSoundToggle');
       if (btn) btn.textContent = soundOn ? 'On' : 'Off';
+      const sel = document.getElementById('adzanSoundSelect');
+      if (sel && vault.settings?.prayerSoundFile) sel.value = vault.settings.prayerSoundFile;
     } catch(e){}
   } catch(e){ console.warn('initPomodoro failed',e); }
 }
@@ -10922,6 +10970,8 @@ function renderPomodoro() {
     // custom inputs
     const customBox = document.getElementById('pomodoroCustom');
     if (customBox) customBox.style.display = pomodoroState.preset==='custom'?'flex':'none';
+    const soundSel = document.getElementById('pomodoroSoundSelect');
+    if (soundSel && pomodoroState.soundFile) soundSel.value = pomodoroState.soundFile;
   } catch(e){}
 }
 function startPomodoroTick() {
@@ -11316,6 +11366,15 @@ function bindEvents() {
       pomodoroState = Pomodoro.createInitialState('custom', w, br);
       await Pomodoro.saveState(pomodoroState); renderPomodoro(); if(pomodoroInterval) clearInterval(pomodoroInterval);
     });
+    const pSoundSel=document.getElementById('pomodoroSoundSelect');
+    if(pSoundSel){
+      pSoundSel.addEventListener('change', async()=>{
+        if(!pomodoroState) return;
+        pomodoroState.soundFile = pSoundSel.value;
+        await Pomodoro.saveState(pomodoroState);
+        try{ const url=browser.runtime.getURL('assets/sounds/'+pomodoroState.soundFile); const a=new Audio(url); a.volume=0.7; await a.play(); }catch(e){}
+      });
+    }
   } catch(e){ console.warn('pomodoro bind failed',e); }
   // Adzan sound toggle — pisah dari pomodoro
   try {
@@ -11331,6 +11390,15 @@ function bindEvents() {
     }
     const adzanTest=document.getElementById('adzanTestBtn');
     if(adzanTest) adzanTest.addEventListener('click', ()=>{ playAdzanTest(); toast('🔊 Test adzan'); });
+    const adzanSel=document.getElementById('adzanSoundSelect');
+    if(adzanSel){
+      (async()=>{ try{ const v=await getVault(); if(v.settings?.prayerSoundFile) adzanSel.value=v.settings.prayerSoundFile; }catch(e){} })();
+      adzanSel.addEventListener('change', async()=>{
+        const file=adzanSel.value;
+        try{ const v=await getVault(); if(!v.settings) v.settings={}; v.settings.prayerSoundFile=file; await saveVault(v); currentVault=v; }catch(e){}
+        try{ const url=browser.runtime.getURL('assets/sounds/'+file); const a=new Audio(url); a.volume=0.8; await a.play(); }catch(e){}
+      });
+    }
   } catch(e){}
 }
 

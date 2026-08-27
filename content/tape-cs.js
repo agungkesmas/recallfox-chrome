@@ -49,7 +49,7 @@
 
   let host = null, shadow = null, popover = null, textarea = null;
   let statusAutosave = null;
-  let pinBtn = null, isVisible = false, pinned = false;
+  let pinBtn = null, isVisible = false, pinned = true;
   let saveTimer = null, idleTimer = null;
 
   // ===== Theme =====
@@ -79,25 +79,27 @@
     wireEvents();
   }
 
-  // ===== Idle helpers (safe, isolated — tidak ganggu notes) =====
-  function setActive(){ try{ if(popover) popover.classList.remove('rft-idle'); }catch(e){} scheduleIdle(); }
-  function setIdle(){ try{ if(pinned||!isVisible) return; if(popover) popover.classList.add('rft-idle'); }catch(e){} }
-  function scheduleIdle(){ try{ if(idleTimer) clearTimeout(idleTimer); if(pinned||!isVisible) return; idleTimer=setTimeout(()=>{ if(!pinned&&isVisible) setIdle(); },2500); }catch(e){} }
+  // ===== Idle hover-only (default nempel, pin tetap) =====
+  function setActive(){ try{ if(popover) popover.classList.remove('rft-idle'); }catch(e){} }
+  function setIdle(){ try{ if(!isVisible) return; if(popover) popover.classList.add('rft-idle'); }catch(e){} }
+  function scheduleIdle(){ try{ if(!isVisible) return; setIdle(); }catch(e){} }
   // ===== Show / Hide =====
   async function show() {
     mount();
     const theme = await loadTheme();
     shadow.host.setAttribute('data-theme', theme);
     popover.classList.add('rft-show');
-    popover.classList.remove('rft-idle');
     isVisible = true;
+    // default nempel: pinned true
+    pinned = true; if(pinBtn) pinBtn.classList.add('rft-active'); try{ await savePinState(true); }catch(e){}
     const s = await loadSession();
     if (s.text) textarea.value = s.text;
-    if (s.pinned) { pinned = true; pinBtn.classList.add('rft-active'); }
-    setTimeout(() => { textarea.focus(); setActive(); }, 50);
-    scheduleIdle();
+    if (s.pinned===false){ pinned=false; if(pinBtn) pinBtn.classList.remove('rft-active'); }
+    // awal transparan (hover-only)
+    try{ popover.classList.add('rft-idle'); }catch(e){}
+    setTimeout(() => { textarea.focus(); }, 50);
   }
-  function hide() { if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } isVisible=false; if(idleTimer) clearTimeout(idleTimer); }
+  function hide() { if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } isVisible=false; }
   async function toggle() { if (isVisible) hide(); else await show(); }
 
   // ============================================================================
@@ -701,13 +703,12 @@
       handleResultLineDoubleClick();
     });
 
-    // Buttons — safe, isolated, idle aware
+    // Buttons — pin tetap, hover transparan tetap jalan di dua state
     pinBtn.addEventListener('click', async () => {
       try{
         pinned = !pinned;
         pinBtn.classList.toggle('rft-active', pinned);
         await savePinState(pinned);
-        if(pinned){ try{ if(popover) popover.classList.remove('rft-idle'); if(idleTimer) clearTimeout(idleTimer); }catch(e){} } else { scheduleIdle(); }
       }catch(e){ console.error('[RecallFox/Tape] pin failed:', e); }
     });
     shadow.querySelector('.rft-print').addEventListener('click', doPrint);

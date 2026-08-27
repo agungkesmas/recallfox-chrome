@@ -63,11 +63,16 @@
     <div class="strip-detail">
       <div class="strip-detail-in">
         <div style="font-size:10.5px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.05em" id="stripLoc">Waktu Shalat</div>
-        <div style="display:flex;align-items:center;gap:8px;margin:6px 0">
+        <div style="display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap">
           <span style="font-size:11px;color:var(--text)">🔊 Adzan</span>
           <button class="btn btn-g" id="adzanSoundToggle" style="padding:4px 10px;font-size:11px">On</button>
+          <select id="adzanSoundSelect" style="padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px">
+            <option value="adzan-mekkah-30s.mp3">Mekkah</option>
+            <option value="adzan-madinah-30s.mp3">Madinah</option>
+            <option value="adzan-istanbul-30s.mp3">Istanbul</option>
+          </select>
           <button class="btn btn-g" id="adzanTestBtn" style="padding:4px 10px;font-size:11px">▶ Test</button>
-          <span style="font-size:10px;color:var(--muted)">Suara adzan saat waktu tiba (bell pomodoro terpisah)</span>
+          <span style="font-size:10px;color:var(--muted)">Pilih varian</span>
         </div>
         <div class="pray-grid" id="prayGrid"></div>
         <div class="habit-row">
@@ -108,12 +113,16 @@
           <input id="pomodoroCustomBreak" type="number" min="1" max="30" value="5" style="width:60px;padding:4px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text)"> menit
           <button class="btn btn-p" id="pomodoroCustomApply" style="padding:4px 8px;font-size:11px">Terapkan</button>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-2)">
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-2);flex-wrap:wrap">
           <span>Siklus: <b id="pomodoroCycles">0/4</b></span>
           <span class="pomodoro-sep"></span>
-          <span>Suara bell: <button class="btn btn-g" id="pomodoroSoundToggle" style="padding:3px 8px;font-size:11px">On</button></span>
-          <button class="btn btn-g" id="pomodoroTestBell" style="padding:3px 8px;font-size:11px">▶ Test Bell</button>
-          <span style="font-size:10px;color:var(--muted)">(beda dari adzan)</span>
+          <span>Bell: <button class="btn btn-g" id="pomodoroSoundToggle" style="padding:3px 8px;font-size:11px">On</button></span>
+          <select id="pomodoroSoundSelect" style="padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:11px">
+            <option value="bell-soft.mp3">Soft</option>
+            <option value="bell-classic.mp3">Classic</option>
+            <option value="bell-digital.mp3">Digital</option>
+          </select>
+          <button class="btn btn-g" id="pomodoroTestBell" style="padding:3px 8px;font-size:11px">▶ Test</button>
         </div>
       </div>
     </div>
