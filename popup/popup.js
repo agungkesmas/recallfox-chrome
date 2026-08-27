@@ -113,6 +113,10 @@ let notesSortMode = 'recent';        // 'recent' | 'title' | 'created'
 let notesViewMode = 'list';          // 'list' | 'grid'
 let notesSearchQuery = '';           // string, case-insensitive
 let notesFilterDone = 'all';         // all | active | done — v3.21.18 todo ala Todoist
+// P0 — filter Todoist ala mockup: Hari ini / Terlambat / P1-P4 / #tag
+let notesFilterDue = 'all';        // all | today | overdue
+let notesFilterPriority = 'all';   // all | 1 | 2 | 3 | 4
+let notesFilterLabel = '';         // '' = semua, atau nama label spesifik (lowercase)
 
 // ============ Helpers ============
 const $ = (s) => document.querySelector(s);
@@ -7197,12 +7201,35 @@ function notesSorted() {
     arr = arr.filter(n => {
       const title = (n.title || '').toLowerCase();
       const body = stripHtmlForPreview(n.body || '').toLowerCase();
-      return title.includes(q) || body.includes(q);
+      const labelsTxt = (n.labels || []).join(' ').toLowerCase();
+      const groupTxt = (n.group || '').toLowerCase();
+      return title.includes(q) || body.includes(q) || labelsTxt.includes(q) || groupTxt.includes(q);
     });
   }
   // v3.21.18: Filter done/aktif/selesai ala Todoist
   if (notesFilterDone === 'active') arr = arr.filter(n => !n.done);
   else if (notesFilterDone === 'done') arr = arr.filter(n => n.done);
+  // P0: Filter Hari ini / Terlambat
+  if (notesFilterDue === 'today') {
+    arr = arr.filter(n => {
+      if (!n.dueAt) return false;
+      const d = new Date(n.dueAt);
+      const now = new Date();
+      return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+    });
+  } else if (notesFilterDue === 'overdue') {
+    arr = arr.filter(n => n.dueAt && new Date(n.dueAt) < new Date() && !n.done);
+  }
+  // P0: Filter P1-P4
+  if (notesFilterPriority !== 'all') {
+    const p = parseInt(notesFilterPriority);
+    arr = arr.filter(n => (n.priority||4) === p);
+  }
+  // P0: Filter #tag
+  if (notesFilterLabel) {
+    const lab = notesFilterLabel.toLowerCase();
+    arr = arr.filter(n => (n.labels||[]).map(x=>String(x).toLowerCase()).includes(lab));
+  }
   // v3.21.19: done=false di atas, done=true di bawah, lalu priority P1->P4, lalu pinned, lalu dueAt terdekat
   const doneFirst = (a,b) => (a.done?1:0) - (b.done?1:0);
   const prioFirst = (a,b) => ((a.priority||4) - (b.priority||4));
@@ -7278,12 +7305,32 @@ async function renderNotes() {
       + '</div>';
   }
   const doneFilterHtml = '<div style="display:flex;gap:6px;margin-bottom:8px"><button class="addbtn' + (notesFilterDone==='all'?' on':'') + '" data-done-filter="all" style="padding:4px 8px;font-size:11px">Semua</button><button class="addbtn' + (notesFilterDone==='active'?' on':'') + '" data-done-filter="active" style="padding:4px 8px;font-size:11px">Aktif</button><button class="addbtn' + (notesFilterDone==='done'?' on':'') + '" data-done-filter="done" style="padding:4px 8px;font-size:11px">Selesai</button></div>';
+  // P0: Todoist chip row — Hari ini / Terlambat / P1-P4 / #tag (counts from mockup)
+  const baseForChips = currentNotes.filter(n=>!n.archived);
+  const isToday = (d)=>{ const n=new Date(); return d.getFullYear()===n.getFullYear() && d.getMonth()===n.getMonth() && d.getDate()===n.getDate(); };
+  const todayCount = baseForChips.filter(n=> n.dueAt && isToday(new Date(n.dueAt))).length;
+  const overdueCount = baseForChips.filter(n=> n.dueAt && new Date(n.dueAt) < new Date() && !n.done).length;
+  const prioCounts = [1,2,3,4].map(p=> baseForChips.filter(n=> (n.priority||4)===p).length);
+  const labelCounts = {};
+  baseForChips.forEach(n=> (n.labels||[]).forEach(l=>{ const k=String(l).toLowerCase(); labelCounts[k]=(labelCounts[k]||0)+1; }));
+  const topLabels = Object.entries(labelCounts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  let todoChipsHtml = '';
+  if (baseForChips.length) {
+    todoChipsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+      + (todayCount? '<button class="addbtn'+(notesFilterDue==='today'?' on':'')+'" data-due-filter="today" style="padding:4px 8px;font-size:11px;'+(notesFilterDue==='today'?'':'')+'">Hari ini '+todayCount+'</button>' : '')
+      + (overdueCount? '<button class="addbtn'+(notesFilterDue==='overdue'?' on':'')+'" data-due-filter="overdue" style="padding:4px 8px;font-size:11px;background:'+(notesFilterDue==='overdue'?'#F87171;color:#fff;border-color:#F87171':'')+'">Terlambat '+overdueCount+'</button>' : '')
+      + prioCounts.map((c,pIdx)=>{ if(!c) return ''; const p=pIdx+1; const col={1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[p]; const on=notesFilterPriority===String(p); return '<button class="addbtn'+(on?' on':'')+'" data-prio-filter="'+p+'" style="padding:4px 8px;font-size:11px;border-left:3px solid '+col+';'+(on?'background:'+col+';color:#fff':'' )+'">P'+p+' '+c+'</button>'; }).join('')
+      + topLabels.map(([lab,cnt])=>{ const on=notesFilterLabel===lab; return '<button class="addbtn'+(on?' on':'')+'" data-label-filter="'+esc(lab)+'" style="padding:4px 8px;font-size:11px;'+(on?'background:var(--primary);color:#fff':'' )+'">#'+esc(lab)+' '+cnt+'</button>'; }).join('')
+      + ((notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel) ? '<button class="addbtn" data-clear-todo-filter style="padding:4px 8px;font-size:11px">✕ Clear</button>' : '')
+      + '</div>';
+  }
   if (!currentNotes.length) {
-    list.innerHTML = toolbarHtml + doneFilterHtml + groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
+    list.innerHTML = toolbarHtml + doneFilterHtml + todoChipsHtml + groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
     bindNotesToolbar();
     bindGroupChips();
     // bind done filter
     list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
+    bindTodoChips();
     return;
   }
   const sorted = notesSorted();
@@ -7292,20 +7339,21 @@ async function renderNotes() {
     let emptyMsg;
     if (notesSearchQuery) {
       emptyMsg = '<div class="notes-empty"><div class="big">🔍</div>Tidak ada catatan cocok dengan "<b>' + esc(notesSearchQuery) + '</b>".<br><span style="font-size:11px">Coba kata kunci lain atau hapus filter pencarian.</span></div>';
-    } else if (notesFilterDone!=='all') {
-      emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan ' + (notesFilterDone==='done'?'selesai':'aktif') + '.<br><span style="font-size:11px">Ganti filter atau buat baru.</span></div>';
+    } else if (notesFilterDone!=='all' || notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel) {
+      emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan cocok filter.<br><span style="font-size:11px">Clear filter atau ganti kriteria.</span></div>';
     } else {
       emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan di grup "' + esc(currentNoteGroup) + '".<br><span style="font-size:11px">Pilih grup lain atau buat catatan baru di grup ini.</span></div>';
     }
-    list.innerHTML = toolbarHtml + doneFilterHtml + groupChipsHtml + emptyMsg;
+    list.innerHTML = toolbarHtml + doneFilterHtml + todoChipsHtml + groupChipsHtml + emptyMsg;
     bindNotesToolbar();
     bindGroupChips();
     list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
+    bindTodoChips();
     return;
   }
   // v3.13.0: Tambah class 'notes-grid-mode' ke list kalau viewMode = 'grid'
   list.className = 'notes-list' + (notesViewMode === 'grid' ? ' notes-grid-mode' : '');
-  list.innerHTML = toolbarHtml + doneFilterHtml + groupChipsHtml + sorted.map(n => {
+  list.innerHTML = toolbarHtml + doneFilterHtml + todoChipsHtml + groupChipsHtml + sorted.map(n => {
     const titleHtml = n.title ? '<div class="note-title">' + esc(n.title) + '</div>' : '';
     // v3.13.0 (Issue #4): Strip HTML untuk preview — catatan body sekarang bisa berisi HTML
     // (paste tabel, bold, list, dll). Preview di list harus plain text.
@@ -7313,6 +7361,18 @@ async function renderNotes() {
     const plainBody = stripHtmlForPreview(n.body || '').slice(0, 400).replace(/\s+/g, ' ').trim();
     const previewHtml = plainBody ? esc(plainBody) : '<em style="color:var(--muted)">(kosong)</em>';
     const groupTag = n.group ? '<span class="ngroup-tag">📁 ' + esc(n.group) + '</span>' : '';
+    // P1: subtasks preview (mockup 97-102) — max 3 baris + progress 2/5
+    const subtasksArr = Array.isArray(n.subtasks) ? n.subtasks : [];
+    const doneSub = subtasksArr.filter(s=>s.done).length;
+    const totalSub = subtasksArr.length;
+    let subtasksHtml = '';
+    if (totalSub) {
+      const shown = subtasksArr.slice(0,3);
+      subtasksHtml = '<div class="subtasks" style="margin-top:6px;font-size:11px;line-height:1.7">'
+        + shown.map(s=> '<div class="'+(s.done?'done':'todo')+'" data-subtoggle="'+n.id+':'+s.id+'" style="color:'+(s.done?'#6EE7B7':'#A3B0C2')+';cursor:pointer;'+(s.done?'text-decoration:line-through':'')+'">'+(s.done?'☑ ':'☐ ')+esc(s.text)+'</div>').join('')
+        + (totalSub>3 ? '<div style="opacity:0.7">+'+(totalSub-3)+' lagi</div>' : '')
+        + '<div style="font-size:10px;color:#6EE7B7;margin-top:2px">'+doneSub+'/'+totalSub+' selesai</div></div>';
+    }
     let batchHtml = '';
     if (notesBatchMode) {
       const checked = notesBatchSelected.has(n.id) ? ' checked' : '';
@@ -7328,14 +7388,15 @@ async function renderNotes() {
     const prio = [1,2,3,4].includes(n.priority)?n.priority:4;
     const prioColor = {1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[prio];
     const prioLabel = {1:'P1',2:'P2',3:'P3',4:'P4'}[prio];
-    const prioPill = prio!==4 ? '<span style="background:'+prioColor+';color:#fff;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700">'+prioLabel+'</span>' : '';
+    const prioPill = prio!==4 ? '<button data-prio-click="'+prio+'" title="Filter P'+prio+'" style="background:'+prioColor+';color:#fff;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;border:none;cursor:pointer">'+prioLabel+'</button>' : '';
     let dueHtml = '';
     if (n.dueAt) {
       const isOverdue = new Date(n.dueAt) < new Date() && !n.done;
       const dueStr = (()=>{ try{ const d=new Date(n.dueAt); return d.toLocaleDateString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return n.dueAt; } })();
-      dueHtml = '<span style="color:'+(isOverdue?'#F87171':'#FBBF24')+';font-weight:600">📅 '+esc(dueStr)+(isOverdue?' • Terlambat':'')+'</span>';
+      const dueFilterVal = isOverdue ? 'overdue' : 'today';
+      dueHtml = '<button data-due-click="'+dueFilterVal+'" title="Filter '+dueFilterVal+'" style="background:transparent;border:none;color:'+(isOverdue?'#F87171':'#FBBF24')+';font-weight:600;cursor:pointer;padding:0;font-size:11px">📅 '+esc(dueStr)+(isOverdue?' • Terlambat':'')+'</button>';
     }
-    const labelsHtml = (n.labels||[]).length ? '<span style="color:var(--primary)">'+(n.labels||[]).map(l=>'#'+esc(l)).join(' ')+'</span>' : '';
+    const labelsHtml = (n.labels||[]).length ? (n.labels||[]).map(l=>'<button data-label-click="'+esc(l.toLowerCase())+'" title="Filter #'+esc(l)+'" style="background:transparent;border:none;color:var(--primary);cursor:pointer;padding:0;font-size:11px">#'+esc(l)+'</button>').join(' ') : '';
     return '<div class="note-card nc-' + (n.color || 'default') + doneCls + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative;border-left:4px solid '+prioColor+'"' : ' style="position:relative;border-left:4px solid '+prioColor+';' + (n.done?' opacity:0.55;background:var(--surface-2)':'') + '"') + '>'
       + '<div style="display:flex;align-items:flex-start;gap:6px">'
       + '<input type="checkbox" class="note-done-check" data-done="' + n.id + '" ' + (n.done?'checked':'') + ' title="' + (n.done?'Tandai belum selesai':'Tandai selesai') + '" style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);margin-top:2px;flex:none">'
@@ -7346,14 +7407,15 @@ async function renderNotes() {
       + '<div class="note-title" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + (n.title?esc(n.title):'') + '</div>'
       + '<div class="note-body-txt" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + previewHtml + '</div>'
       + noteLocHtml
+      + subtasksHtml
       + (dueHtml || labelsHtml ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;font-size:11px">'+ dueHtml + (dueHtml&&labelsHtml?' <span style="color:var(--muted)">•</span> ':'') + labelsHtml +'</div>' : '')
       + '<div class="note-meta">' + prioPill + (prioPill?' <span class="cdot"></span>':'') + (n.pinned ? '<span class="pin">📌</span>' : '') + (n.done ? '<span style="color:var(--green);font-weight:600">✓ Selesai</span><span class="cdot"></span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
       + '</div>'
       + '</div>';
   }).join('');
   list.querySelectorAll('.note-card').forEach(c => c.addEventListener('click', (e) => {
-    // Jika klik tombol mengambang atau checkbox done, jangan buka editor
-    if (e.target.closest('[data-float]') || e.target.closest('[data-done]')) return;
+    // Jika klik tombol mengambang, checkbox done, pill P1/#tag/📅, atau subtask toggle, jangan buka editor
+    if (e.target.closest('[data-float]') || e.target.closest('[data-done]') || e.target.closest('[data-prio-click]') || e.target.closest('[data-due-click]') || e.target.closest('[data-label-click]') || e.target.closest('[data-subtoggle]')) return;
     // v3.9.0 (Issue 7): In batch mode, toggle selection instead of opening editor
     if (notesBatchMode) {
       const nid = c.dataset.nid;
@@ -7421,8 +7483,24 @@ async function renderNotes() {
     cb.addEventListener('click', handler);
     cb.addEventListener('change', handler);
   });
+  // P1: subtasks toggle langsung dari card
+  list.querySelectorAll('[data-subtoggle]').forEach(el=>{
+    el.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const [nid,sid]=el.dataset.subtoggle.split(':');
+      const n=currentNotes.find(x=>x.id===nid);
+      if(!n || !Array.isArray(n.subtasks)) return;
+      const idx=n.subtasks.findIndex(s=>s.id===sid);
+      if(idx<0) return;
+      const ns=[...n.subtasks];
+      ns[idx]={...ns[idx], done:!ns[idx].done, doneAt: !ns[idx].done?new Date().toISOString():null};
+      await updateNote(nid, {subtasks: ns});
+      renderNotes();
+    });
+  });
   bindNotesToolbar();
   bindGroupChips();
+  bindTodoChips();
 }
 
 // v3.13.0 (Issue #3): Bind search/sort/view toolbar events.
@@ -7509,6 +7587,30 @@ function bindGroupChips() {
     renderNotes();
   }));
 }
+// P0: Bind Todoist chip row (Hari ini/Terlambat/P1-P4/#tag)
+function bindTodoChips() {
+  $$('[data-due-filter]').forEach(b=> b.addEventListener('click', ()=>{
+    const v=b.dataset.dueFilter;
+    notesFilterDue = (notesFilterDue===v ? 'all' : v);
+    renderNotes();
+  }));
+  $$('[data-prio-filter]').forEach(b=> b.addEventListener('click', ()=>{
+    const v=b.dataset.prioFilter;
+    notesFilterPriority = (notesFilterPriority===v ? 'all' : v);
+    renderNotes();
+  }));
+  $$('[data-label-filter]').forEach(b=> b.addEventListener('click', ()=>{
+    const v=b.dataset.labelFilter;
+    notesFilterLabel = (notesFilterLabel===v ? '' : v);
+    renderNotes();
+  }));
+  const clr = $('[data-clear-todo-filter]');
+  if (clr) clr.addEventListener('click', ()=>{ notesFilterDue='all'; notesFilterPriority='all'; notesFilterLabel=''; renderNotes(); });
+  // Card pills clickable → set filter (delegated after render)
+  $$('[data-prio-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.prioClick; notesFilterPriority=(notesFilterPriority===v?'all':v); renderNotes(); }));
+  $$('[data-due-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.dueClick; notesFilterDue=(notesFilterDue===v?'all':v); renderNotes(); }));
+  $$('[data-label-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.labelClick; notesFilterLabel=(notesFilterLabel===v?'':v); renderNotes(); }));
+}
 async function newNote() {
   // v3.7.2 (Issue 5): Catatan baru otomatis masuk grup yang sedang difilter.
   const n = await addNote('', { color: 'yellow', pinned: false, group: currentNoteGroup || '' });
@@ -7554,8 +7656,84 @@ function openNoteEditor(noteId) {
     + '</div>'
     + '<div class="hintbox" style="font-size:11px;margin-top:6px">Ketik <code>besok jam 7 !1 #tag</code> di judul/isi → otomatis jadi tanggal & prioritas (Todoist)</div>'
     + '</div>'
+    + '<div class="card"><h3>Subtasks <span id="subProgress" style="font-size:11px;color:var(--muted)">'+(Array.isArray(n.subtasks)?n.subtasks.filter(s=>s.done).length:0)+'/'+(Array.isArray(n.subtasks)?n.subtasks.length:0)+' selesai</span></h3>'
+    + '<div id="subtasksList" style="display:flex;flex-direction:column;gap:6px"></div>'
+    + '<div style="display:flex;gap:6px;margin-top:8px"><input class="f" id="newSubInput" placeholder="Tambah subtask + Enter (max 20)" style="flex:1"><button class="btn btn-g" id="addSubBtn" style="padding:4px 10px">+</button></div>'
+    + '<div class="hintbox" style="font-size:10px;margin-top:6px">☑/☐ di card bisa dicentang langsung tanpa buka editor.</div>'
+    + '</div>'
     + '<div class="card"><h3>Warna</h3><div class="ndots">' + NCOLORS.map(c => '<button class="d-' + c + (n.color === c ? ' on' : '') + '" data-c="' + c + '" title="' + c + '"></button>').join('') + '</div></div>'
     + '<div class="hintbox">🕑 Terakhir disimpan: <b id="nMeta">' + timeAgo(n.updatedAt || n.createdAt) + '</b> · Catatan tersimpan lokal & ikut backup otomatis.</div>';
+  // P1: init subtasks editor (Todoist checklist)
+  let editorSubtasks = Array.isArray(n.subtasks) ? n.subtasks.map(s=> ({...s})) : [];
+  function renderEditorSubtasks(){
+    const list = document.getElementById('subtasksList');
+    const prog = document.getElementById('subProgress');
+    if(!list) return;
+    if(prog) prog.textContent = editorSubtasks.filter(s=>s.done).length + '/' + editorSubtasks.length + ' selesai';
+    if(!editorSubtasks.length){
+      list.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 0">Belum ada subtasks. Tambah di bawah.</div>';
+      return;
+    }
+    list.innerHTML = editorSubtasks.map(s=> '<div style="display:flex;gap:6px;align-items:center">'
+      + '<input type="checkbox" data-subid="'+s.id+'" '+(s.done?'checked':'')+' style="width:16px;height:16px;accent-color:var(--primary)">'
+      + '<input class="f" data-subinput="'+s.id+'" value="'+esc(s.text)+'" style="flex:1;padding:4px 6px;font-size:12px;'+(s.done?'text-decoration:line-through;opacity:0.6':'')+'">'
+      + '<button class="btn btn-d" data-subdel="'+s.id+'" style="padding:4px 6px;font-size:11px">✕</button>'
+      + '</div>').join('');
+    list.querySelectorAll('[data-subid]').forEach(cb=>{
+      cb.addEventListener('change', async ()=>{
+        const sid=cb.dataset.subid;
+        const idx=editorSubtasks.findIndex(x=>x.id===sid);
+        if(idx<0) return;
+        editorSubtasks[idx].done=cb.checked;
+        editorSubtasks[idx].doneAt=cb.checked?new Date().toISOString():null;
+        await updateNote(n.id, {subtasks: editorSubtasks});
+        renderEditorSubtasks();
+        markSaved();
+      });
+    });
+    list.querySelectorAll('[data-subinput]').forEach(inp=>{
+      inp.addEventListener('change', async ()=>{
+        const sid=inp.dataset.subinput;
+        const idx=editorSubtasks.findIndex(x=>x.id===sid);
+        if(idx<0) return;
+        const v=inp.value.trim().slice(0,200);
+        if(!v){ editorSubtasks.splice(idx,1); }
+        else editorSubtasks[idx].text=v;
+        await updateNote(n.id, {subtasks: editorSubtasks});
+        renderEditorSubtasks();
+        markSaved();
+      });
+      inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); inp.blur(); } });
+    });
+    list.querySelectorAll('[data-subdel]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const sid=btn.dataset.subdel;
+        editorSubtasks = editorSubtasks.filter(x=>x.id!==sid);
+        await updateNote(n.id, {subtasks: editorSubtasks});
+        renderEditorSubtasks();
+        markSaved();
+      });
+    });
+  }
+  // render initial
+  setTimeout(renderEditorSubtasks, 0);
+  // add handlers
+  setTimeout(()=>{
+    const addBtn=document.getElementById('addSubBtn');
+    const newInp=document.getElementById('newSubInput');
+    async function doAddSub(){
+      const v=(newInp.value||'').trim().slice(0,200);
+      if(!v) return;
+      if(editorSubtasks.length>=20){ toast('Maks 20 subtasks', false); return; }
+      editorSubtasks.push({id:'s_'+Math.random().toString(36).slice(2,8), text:v, done:false, doneAt:null});
+      newInp.value='';
+      await updateNote(n.id, {subtasks: editorSubtasks});
+      renderEditorSubtasks();
+      markSaved();
+    }
+    if(addBtn) addBtn.addEventListener('click', doAddSub);
+    if(newInp) newInp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); doAddSub(); } });
+  }, 0);
   // v3.11.7-fix (Issue #2 gap): Note editor footer konsisten dengan editor lain.
   // Sebelumnya: 5 tombol flex:none + spacer span flex:1 → di sidebar sempit, tombol
   // "Selesai" terdorong ke kanan ekstrim / wrap ke baris baru tidak rapi.
@@ -7611,6 +7789,7 @@ function openNoteEditor(noteId) {
         // Jika body asli mengandung syntax, update body/title yang sudah dibersihkan
         // Untuk simpel, kita biarkan body tetap, tapi priority/labels sudah diambil
       }
+      // P1: keep subtasks from editor to avoid overwriting checklist
       await updateNote(n.id, {
         title: titleVal,
         body: bodyHtml,
@@ -7618,6 +7797,7 @@ function openNoteEditor(noteId) {
         priority,
         dueAt,
         labels,
+        subtasks: editorSubtasks,
         updatedAt: new Date().toISOString()
       });
       markSaved();

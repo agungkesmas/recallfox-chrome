@@ -2,21 +2,21 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.21.19",
+  "version": "3.21.20",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
-  "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
+  "homepage_url": "https://github.com/agungkesmas/recallfox",
   "default_locale": "id",
   "icons": {
-    "16": "icons/icon-16.png",
-    "32": "icons/icon-32.png",
-    "48": "icons/icon-48.png",
-    "96": "icons/icon-96.png",
-    "128": "icons/icon-128.png"
+    "16": "icons/icon-16.svg",
+    "32": "icons/icon-32.svg",
+    "48": "icons/icon-48.svg",
+    "96": "icons/icon-96.svg",
+    "128": "icons/icon-128.svg"
   },
   "permissions": [
     "storage",
-    "contextMenus",
+    "menus",
     "activeTab",
     "scripting",
     "tabs",
@@ -27,7 +27,7 @@
     "notifications",
     "geolocation",
     "alarms",
-    "sidePanel"
+    "identity"
   ],
   "options_ui": {
     "page": "settings/settings.html",
@@ -61,34 +61,35 @@
   ],
   "action": {
     "default_icon": {
-      "16": "icons/icon-16.png",
-      "32": "icons/icon-32.png",
-      "48": "icons/icon-48.png"
+      "16": "icons/icon-16.svg",
+      "32": "icons/icon-32.svg",
+      "48": "icons/icon-48.svg"
     },
-    "default_title": "RecallFox"
+    "default_title": "RecallFox",
+    "default_popup": "popup/popup.html"
   },
-  "side_panel": {
-    "default_path": "sidebar/sidebar.html"
+  "sidebar_action": {
+    "default_icon": {
+      "16": "icons/icon-16.svg",
+      "32": "icons/icon-32.svg",
+      "48": "icons/icon-48.svg"
+    },
+    "default_title": "RecallFox Vault",
+    "default_panel": "sidebar/sidebar.html"
   },
   "background": {
-    "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ],
     "type": "module"
   },
   "content_scripts": [
     {
       "matches": [
-        "https://chat.z.ai/*",
-        "https://chatgpt.com/*",
-        "https://claude.ai/*",
-        "https://gemini.google.com/*",
-        "https://chat.deepseek.com/*",
-        "https://tongyi.aliyun.com/*",
-        "https://chat.qwen.ai/*",
-        "https://kimi.moonshot.cn/*",
-        "https://kimi.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/ai-resolvers.js",
         "content/content.js"
       ],
@@ -103,7 +104,6 @@
         "https://*/*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/overlay.js",
         "content/selection-ai.js"
       ],
@@ -134,7 +134,6 @@
         "file:///*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/volume-shared.js",
         "content/volume-cs.js"
       ],
@@ -151,7 +150,6 @@
         "https://*.twitter.com/*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/contentguard-cs.js"
       ],
       "run_at": "document_idle",
@@ -163,7 +161,6 @@
         "https://*/*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/elementblocker-cs.js"
       ],
       "run_at": "document_start",
@@ -176,7 +173,6 @@
         "file:///*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/tape-cs.js"
       ],
       "run_at": "document_idle",
@@ -189,7 +185,6 @@
         "file:///*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/notes-cs.js"
       ],
       "run_at": "document_idle",
@@ -202,7 +197,6 @@
         "file:///*"
       ],
       "js": [
-        "lib/browser-polyfill.min.js",
         "content/sidebar-cs.js"
       ],
       "run_at": "document_idle",
@@ -220,6 +214,9 @@
         "contentguard/blocked.html",
         "contentguard/blocked.css",
         "contentguard/blocked.js",
+        "contentguard/searchlock.html",
+        "contentguard/searchlock.css",
+        "contentguard/searchlock.js",
         "popup/viewer.html",
         "popup/viewer.js",
         "popup/viewer.css",
@@ -236,18 +233,16 @@
         "assets/sounds/bell-digital.mp3",
         "lib/ai-detect.js",
         "lib/vault-tree.js",
-        "lib/browser-polyfill.min.js",
         "sidebar/sidebar.html",
         "sidebar/sidebar.css",
         "sidebar/sidebar.js",
         "popup/popup.css",
         "popup/popup.js",
         "popup/popup.html",
-        "popup/upload-window.html",
-        "popup/upload-window.js",
         "settings/settings.html",
         "settings/settings.css",
         "settings/settings.js",
+        "lib/browser-polyfill.min.js",
         "icons/icon-16.png",
         "icons/icon-32.png",
         "icons/icon-48.png",
@@ -260,8 +255,11 @@
     }
   ],
   "commands": {
-    "_execute_action": {
-      "description": "Buka popup RecallFox (klik toolbar icon atau set shortcut manual di chrome://extensions/shortcuts)"
+    "_execute_sidebar_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+4",
+        "mac": "Alt+Shift+4"
+      }
     },
     "capture-page": {
       "suggested_key": {
@@ -270,38 +268,25 @@
       },
       "description": "__MSG_cmdCapturePage__"
     },
-    "clear-cache": {
-      "suggested_key": {
-        "default": "Alt+Shift+C",
-        "mac": "Alt+Shift+C"
-      },
-      "description": "__MSG_cmdClearCache__"
-    },
-    "volume-up": {
-      "suggested_key": {
-        "default": "Alt+Shift+Up",
-        "mac": "Alt+Shift+Up"
-      },
-      "description": "__MSG_cmdVolumeUp__"
-    },
-    "volume-down": {
-      "suggested_key": {
-        "default": "Alt+Shift+Down",
-        "mac": "Alt+Shift+Down"
-      },
-      "description": "__MSG_cmdVolumeDown__"
-    },
     "capture-area": {
-      "description": "Tangkap area terpilih (seret kotak) — set shortcut manual di chrome://extensions/shortcuts"
+      "suggested_key": {
+        "default": "Alt+Shift+6",
+        "mac": "Alt+Shift+6"
+      },
+      "description": "Tangkap area terpilih (seret kotak)"
     },
     "capture-visible": {
-      "description": "Tangkap bagian terlihat (viewport saja) — set shortcut manual di chrome://extensions/shortcuts"
-    },
-    "volume-reset": {
-      "description": "__MSG_cmdVolumeReset__ — set shortcut manual di chrome://extensions/shortcuts"
-    },
-    "ask-ai": {
-      "description": "Tanya Si Pandai AI tentang teks terseleksi — set shortcut manual di chrome://extensions/shortcuts"
+      "suggested_key": {
+        "default": "Alt+Shift+7",
+        "mac": "Alt+Shift+7"
+      },
+      "description": "Tangkap bagian terlihat (viewport saja)"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "recallfox@example.com",
+      "strict_min_version": "115.0"
     }
   }
 }
