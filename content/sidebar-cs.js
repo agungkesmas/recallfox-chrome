@@ -69,6 +69,17 @@
   }
   // Activity di parent page
   ACTIVITY_EVENTS.forEach(ev => document.addEventListener(ev, onActivity, { passive: true, capture: true }));
+  // Klik sembarang di luar sidebar/floater langsung hide kalau unpin (jangan tunggu 15s)
+  document.addEventListener('mousedown', (e) => {
+    try {
+      if (!isVisible || isPinned) return;
+      const path = e.composedPath ? e.composedPath() : [e.target];
+      if (host && path.includes(host)) return;
+      if (floaterPair && path.includes(floaterPair)) return;
+      // Juga cek iframe host via composedPath, kalau klik di page content (bukan di host) → hide
+      hide();
+    } catch(err){}
+  }, true);
 
   // ===== Floater position =====
   function loadFloaterPos() {
@@ -527,7 +538,10 @@
 
   // ===== Init =====
   (async function init() {
-    if (!/^https?:/i.test(location.protocol) && !/^file:/i.test(location.protocol)) return;
+    // Allow http/https/file + PDF viewer (resource:// with .pdf in URL) — jangan return untuk PDF
+    const isPdf = /\.pdf(\?|#|$)/i.test(location.href);
+    if (!/^(https?|file|resource|chrome-extension):/i.test(location.protocol) && !isPdf) return;
+    if (/^(about|moz-extension):/i.test(location.protocol) && !isPdf) return;
     if (document.readyState === 'loading') {
       await new Promise(r => document.addEventListener('DOMContentLoaded', r, { once: true }));
     }
