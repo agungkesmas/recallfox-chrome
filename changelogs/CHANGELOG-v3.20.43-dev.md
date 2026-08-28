@@ -1,9 +1,9 @@
-# RecallFox Chrome v3.20.43-dev — Batch Mass Actions + Magic Command Multi-Step + Standarisasi Folder
+# RecallFox v3.20.43-dev — Batch Mass Actions + Magic Command Multi-Step + Standarisasi Folder
 
 > **DEV RELEASE** — untuk testing. Bukan stable.
 >
 > **Tanggal:** 2026-08-06
-> **Base:** v3.20.42-dev-chrome (Chrome) / v3.20.42-dev (Firefox)
+> **Base:** v3.20.42-dev (Firefox) / v3.20.42-dev-chrome (Chrome)
 > **Scope:** Batch mode + Magic Command + UI standarisasi. Tidak ada schema change.
 
 ## TL;DR
@@ -182,8 +182,8 @@ CHANGELOG-v3.20.43-dev.md   | new (this file)
 
 ## Compatibility
 
+- **Firefox**: tag `v3.20.43-dev` (DEV — belum stable)
 - **Chrome**: tag `v3.20.43-dev-chrome` (DEV — belum stable)
-- **Firefox equivalent**: tag `v3.20.43-dev` di https://github.com/agungkesmas/recallfox
 - Code 100% identical antara Firefox dan Chrome (4 file copied verbatim).
 - Promote ke stable setelah user test semua 7 skenario di atas.
 

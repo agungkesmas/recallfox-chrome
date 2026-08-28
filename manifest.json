@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.21.11",
+  "version": "3.21.23",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
@@ -27,6 +27,7 @@
     "notifications",
     "geolocation",
     "alarms",
+    "identity",
     "sidePanel"
   ],
   "options_ui": {
@@ -65,10 +66,8 @@
       "32": "icons/icon-32.png",
       "48": "icons/icon-48.png"
     },
-    "default_title": "RecallFox"
-  },
-  "side_panel": {
-    "default_path": "sidebar/sidebar.html"
+    "default_title": "RecallFox",
+    "default_popup": "popup/popup.html"
   },
   "background": {
     "service_worker": "background.js",
@@ -77,15 +76,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://chat.z.ai/*",
-        "https://chatgpt.com/*",
-        "https://claude.ai/*",
-        "https://gemini.google.com/*",
-        "https://chat.deepseek.com/*",
-        "https://tongyi.aliyun.com/*",
-        "https://chat.qwen.ai/*",
-        "https://kimi.moonshot.cn/*",
-        "https://kimi.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": [
         "lib/browser-polyfill.min.js",
@@ -120,6 +112,7 @@
         "file:///*"
       ],
       "js": [
+        "lib/browser-polyfill.min.js",
         "content/volume-hook.js"
       ],
       "run_at": "document_start",
@@ -190,6 +183,19 @@
       ],
       "js": [
         "lib/browser-polyfill.min.js",
+        "content/notes-cs.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*",
+        "file:///*"
+      ],
+      "js": [
+        "lib/browser-polyfill.min.js",
         "content/sidebar-cs.js"
       ],
       "run_at": "document_idle",
@@ -207,78 +213,50 @@
         "contentguard/blocked.html",
         "contentguard/blocked.css",
         "contentguard/blocked.js",
+        "contentguard/searchlock.html",
+        "contentguard/searchlock.css",
+        "contentguard/searchlock.js",
         "popup/viewer.html",
         "popup/viewer.js",
         "popup/viewer.css",
         "lib/tape.js",
+        "lib/notes.js",
+        "lib/pomodoro.js",
+        "lib/float-sync.js",
+        "lib/todoist-parse.js",
+        "assets/sounds/adzan-mekkah-30s.mp3",
+        "assets/sounds/adzan-madinah-30s.mp3",
+        "assets/sounds/adzan-istanbul-30s.mp3",
+        "assets/sounds/bell-soft.mp3",
+        "assets/sounds/bell-classic.mp3",
+        "assets/sounds/bell-digital.mp3",
         "lib/ai-detect.js",
         "lib/vault-tree.js",
-        "lib/browser-polyfill.min.js",
         "sidebar/sidebar.html",
         "sidebar/sidebar.css",
         "sidebar/sidebar.js",
         "popup/popup.css",
         "popup/popup.js",
         "popup/popup.html",
-        "popup/upload-window.html",
-        "popup/upload-window.js",
         "settings/settings.html",
         "settings/settings.css",
         "settings/settings.js",
+        "lib/browser-polyfill.min.js",
         "icons/icon-16.png",
         "icons/icon-32.png",
         "icons/icon-48.png",
         "icons/icon-96.png",
-        "icons/icon-128.png"
+        "icons/icon-128.png",
+        "lib/sidebar-compat.js",
+        "popup/upload-window.html",
+        "popup/upload-window.js"
       ],
       "matches": [
         "<all_urls>"
       ]
     }
   ],
-  "commands": {
-    "_execute_action": {
-      "description": "Buka popup RecallFox (klik toolbar icon atau set shortcut manual di chrome://extensions/shortcuts)"
-    },
-    "capture-page": {
-      "suggested_key": {
-        "default": "Alt+Shift+5",
-        "mac": "Alt+Shift+5"
-      },
-      "description": "__MSG_cmdCapturePage__"
-    },
-    "clear-cache": {
-      "suggested_key": {
-        "default": "Alt+Shift+C",
-        "mac": "Alt+Shift+C"
-      },
-      "description": "__MSG_cmdClearCache__"
-    },
-    "volume-up": {
-      "suggested_key": {
-        "default": "Alt+Shift+Up",
-        "mac": "Alt+Shift+Up"
-      },
-      "description": "__MSG_cmdVolumeUp__"
-    },
-    "volume-down": {
-      "suggested_key": {
-        "default": "Alt+Shift+Down",
-        "mac": "Alt+Shift+Down"
-      },
-      "description": "__MSG_cmdVolumeDown__"
-    },
-    "capture-area": {
-      "description": "Tangkap area terpilih (seret kotak) — set shortcut manual di chrome://extensions/shortcuts"
-    },
-    "capture-visible": {
-      "description": "Tangkap bagian terlihat (viewport saja) — set shortcut manual di chrome://extensions/shortcuts"
-    },
-    "volume-reset": {
-      "description": "__MSG_cmdVolumeReset__ — set shortcut manual di chrome://extensions/shortcuts"
-    },
-    "ask-ai": {
-      "description": "Tanya Si Pandai AI tentang teks terseleksi — set shortcut manual di chrome://extensions/shortcuts"
-    }
+  "side_panel": {
+    "default_path": "sidebar/sidebar.html"
   }
 }

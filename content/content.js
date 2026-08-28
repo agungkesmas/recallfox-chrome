@@ -52,9 +52,37 @@
     return null;
   }
 
+  // v3.20.46: Universal editor selectors — fallback kalau domain config tidak ada
+  // atau selector outdated. Cover ProseMirror/TipTap, contenteditable, textarea.
+  const UNIVERSAL_EDITOR_SELECTORS = [
+    '.ProseMirror[contenteditable="true"]',
+    'div[contenteditable="true"][role="textbox"]',
+    'div[contenteditable="true"][data-testid*="input"]',
+    'div[contenteditable="true"]#chat-input',
+    'div[contenteditable="true"]',
+    'textarea:not([readonly]):not([disabled])',
+    'input[type="text"]:not([readonly]):not([disabled])'
+  ];
+
   function getEditor() {
-    if (!window.__RecallFoxDomainConfig__) return null;
-    return resolveFirst(window.__RecallFoxDomainConfig__.selectors.textarea);
+    // Strategy 1: domain config selector
+    if (window.__RecallFoxDomainConfig__) {
+      const editor = resolveFirst(window.__RecallFoxDomainConfig__.selectors.textarea);
+      if (editor) return editor;
+    }
+    // Strategy 2: universal fallback selectors
+    console.log('[RecallFox] getEditor: domain config tidak match, coba universal selectors');
+    for (const sel of UNIVERSAL_EDITOR_SELECTORS) {
+      try {
+        const el = document.querySelector(sel);
+        if (el) {
+          console.log('[RecallFox] getEditor: found via universal:', sel);
+          return el;
+        }
+      } catch (_) {}
+    }
+    console.warn('[RecallFox] getEditor: no editor found');
+    return null;
   }
 
   function getSendButton() {
@@ -68,8 +96,20 @@
   //   2. contenteditable: execCommand('insertText') via InputEvent
   //   3. fallback: clipboard
   async function injectText(text, mode = 'append') {
-    const editor = getEditor();
+    let editor = getEditor();
+
+    // v3.20.46: Retry 3x dengan jeda 300ms kalau editor belum ketemu (lazy-load)
     if (!editor) {
+      console.log('[RecallFox] injectText: editor belum ada, retry 3x...');
+      for (let i = 0; i < 3; i++) {
+        await new Promise(r => setTimeout(r, 300));
+        editor = getEditor();
+        if (editor) break;
+      }
+    }
+
+    if (!editor) {
+      console.warn('[RecallFox] injectText: no editor, fallback to clipboard');
       await copyToClipboard(text);
       showToast('toastInjectFailed');
       return { ok: false, fallback: 'clipboard' };
@@ -97,8 +137,10 @@
         editor.dispatchEvent(new Event('input', { bubbles: true }));
         editor.dispatchEvent(new Event('change', { bubbles: true }));
       } else {
-        // contenteditable
+        // contenteditable (ProseMirror/TipTap/React)
+        // v3.20.46: Focus DULU + small delay supaya ProseMirror siap
         editor.focus();
+        await new Promise(r => setTimeout(r, 50));
         if (mode === 'replace') {
           // select all then replace
           const sel = window.getSelection();
@@ -480,6 +522,34 @@
   }
 
 
+  // v3.20.21: Helper to copy text to clipboard in content script context.
+  // Port dari Chrome v3.21.6 (commit 7b8eef1) supaya parity antara Firefox & Chrome.
+  // Uses a hidden textarea + execCommand('copy') as fallback to navigator.clipboard.
+  // Penting untuk popout sidebar (iframe ke sidebar.html) — navigator.clipboard
+  // bisa gagal di iframe yang tidak focused atau cross-origin.
+  async function copyTextToClipboard(text) {
+    if (!text) return;
+    try {
+      // Try modern clipboard API first
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // Fallback: textarea + execCommand('copy')
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';  // Avoid scrolling to bottom
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } catch (e2) {
+        throw new Error('Gagal salin: ' + e2.message);
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+  }
+
   // ===== Message handlers =====
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'SHOW_TOAST') {
@@ -487,108 +557,6 @@
       sendResponse({ ok: true });
     } else if (msg.type === 'INJECT_TEXT') {
       injectText(msg.text, msg.mode).then(res => sendResponse(res));
-      return true; // async
-    } else if (msg.type === 'COPY_TEXT') {
-      // v3.20.21 FIX: Handler untuk copy teks via content script.
-      // Dipakai sebagai fallback ketika navigator.clipboard gagal di:
-      //   - popup extension yang tidak focused
-      //   - iframe sidebar cross-origin
-      //   - background Service Worker Chrome MV3 (tidak bisa akses clipboard)
-      // Content script jalan di context halaman web (focused document) → clipboard works.
-      copyToClipboard(msg.text || '').then(ok => {
-        sendResponse({ ok });
-      }).catch(e => {
-        console.warn('[RecallFox/content] COPY_TEXT error:', e);
-        sendResponse({ ok: false, error: e.message });
-      });
-      return true; // async
-    } else if (msg.type === 'COPY_IMAGE') {
-      // v3.20.22: Handler untuk copy image via content script.
-      // Dipanggil dari background COPY_IMAGE handler (strategi D relay) ketika
-      // navigator.clipboard.write gagal di popup/iframe sidebar Chrome.
-      // Content script jalan di halaman AI (focused) → clipboard.write works.
-      (async () => {
-        try {
-          const { dataUrl, textPlain, textHtml } = msg;
-          if (!dataUrl) { sendResponse({ ok: false, error: 'no_data_url' }); return; }
-
-          // Convert dataUrl → PNG blob
-          const resp = await fetch(dataUrl);
-          const blob = await resp.blob();
-          let pngBlob;
-          if (blob.type === 'image/png') {
-            pngBlob = blob;
-          } else {
-            const img = await createImageBitmap(blob);
-            const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            canvas.getContext('2d').drawImage(img, 0, 0);
-            pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-          }
-          if (!pngBlob) { sendResponse({ ok: false, error: 'blob_conversion_failed' }); return; }
-
-          // Strategi 1: ClipboardItem multi-mime
-          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-            try {
-              const clipboardData = { 'image/png': pngBlob };
-              if (textHtml) clipboardData['text/html'] = new Blob([textHtml], { type: 'text/html' });
-              if (textPlain) clipboardData['text/plain'] = new Blob([textPlain], { type: 'text/plain' });
-              const item = new ClipboardItem(clipboardData);
-              await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, via: 'clipboard_item' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/content] COPY_IMAGE strategi 1 failed:', e.message);
-            }
-          }
-
-          // Strategi 2: image/png only
-          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-            try {
-              const item = new ClipboardItem({ 'image/png': pngBlob });
-              await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, via: 'image_only' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/content] COPY_IMAGE strategi 2 failed:', e.message);
-            }
-          }
-
-          // Strategi 3: text/html embedded
-          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-            try {
-              const html = '<img src="' + dataUrl + '" alt="gambar RecallFox" />';
-              const plain = textPlain || '[Gambar RecallFox]';
-              const item = new ClipboardItem({
-                'text/html': new Blob([html], { type: 'text/html' }),
-                'text/plain': new Blob([plain], { type: 'text/plain' })
-              });
-              await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, via: 'html_embedded' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/content] COPY_IMAGE strategi 3 failed:', e.message);
-            }
-          }
-
-          // Strategi 4: text-only fallback
-          if (navigator.clipboard?.writeText && textPlain) {
-            try {
-              await navigator.clipboard.writeText(textPlain);
-              sendResponse({ ok: true, via: 'text_only' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/content] COPY_IMAGE strategi 4 failed:', e.message);
-            }
-          }
-
-          sendResponse({ ok: false, error: 'all_strategies_failed' });
-        } catch (e) {
-          console.error('[RecallFox/content] COPY_IMAGE exception:', e);
-          sendResponse({ ok: false, error: e.message });
-        }
-      })();
       return true; // async
     } else if (msg.type === 'OPEN_SNAPSHOT_MODAL') {
       openSnapshotModal();
@@ -627,6 +595,21 @@
         isAIDomain: window.__RecallFoxIsAIDomain__,
         domainId: window.__RecallFoxDomainConfig__?.id
       });
+    } else if (msg.type === 'COPY_TEXT') {
+      // v3.20.21: Fallback copy to clipboard via content script (document has focus)
+      // Port dari Chrome v3.21.6. Used when popup/sidebar (iframe) clipboard APIs fail.
+      // Root cause: navigator.clipboard.writeText di iframe popout sidebar bisa gagal
+      // karena iframe tidak focused atau Permissions Policy clipboard-write disallow.
+      // Content script di top-level page selalu punya focus → lebih reliable.
+      (async () => {
+        try {
+          await copyTextToClipboard(msg.text || '');
+          sendResponse({ ok: true });
+        } catch (e) {
+          sendResponse({ ok: false, error: e.message });
+        }
+      })();
+      return true;  // async
     } else if (msg.type === 'GET_PAGE_CONTEXT') {
       // v3.8.1 (Issue #4): Handler untuk "Ambil dari halaman aktif" di popup Konteks.
       // v3.16.0 K3: Ekstraksi halaman BERSIH — buang nav/aside/footer/script/style/
@@ -709,168 +692,8 @@
     }
   });
 
-  // ===== Content-script keyboard shortcuts (NO native commands API, NO Cmd) =====
-  // Pattern: 2 modifiers from {Control, Option/Alt, Shift} + number 1/2/3
-  // Works on Mac (Firefox) and Windows/Linux.
-  // NO Cmd/metaKey — only Control, Option, Shift.
-
-  function showBigFlash(message, color) {
-    let flash = document.getElementById('recallfox-flash');
-    if (!flash) {
-      flash = document.createElement('div');
-      flash.style.cssText = `
-        position: fixed; top: 50%; left: 50%;
-        transform: translate(-50%, -50%) scale(0.9);
-        background: ${color || '#1a1a1a'};
-        color: #fff; padding: 20px 32px;
-        border-radius: 14px; font-size: 18px; font-weight: 700;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        box-shadow: 0 12px 40px rgba(0,0,0,0.4);
-        z-index: 2147483647; pointer-events: none;
-        opacity: 0; transition: opacity 200ms ease, transform 200ms ease;
-        text-align: center; max-width: 360px; white-space: pre-line;
-      `;
-      flash.id = 'recallfox-flash';
-      document.body.appendChild(flash);
-    }
-    flash.textContent = message;
-    flash.style.background = color || '#1a1a1a';
-    requestAnimationFrame(() => {
-      flash.style.opacity = '1';
-      flash.style.transform = 'translate(-50%, -50%) scale(1)';
-    });
-    clearTimeout(flash._hideTimer);
-    flash._hideTimer = setTimeout(() => {
-      flash.style.opacity = '0';
-      flash.style.transform = 'translate(-50%, -50%) scale(0.9)';
-    }, 1500);
-  }
-
-  function triggerSidebar() {
-    showBigFlash('🦊 Sidebar toggle...', '#4f46e5');
-    // Try to toggle sidebar directly from content script context
-    // (preserves user gesture from keydown event)
-    // Firefox doesn't allow sidebarAction from runtime.sendMessage context,
-    // but content script keydown handler counts as user input handler.
-    try {
-      if (browser.sidebarAction && browser.sidebarAction.toggle) {
-        // Firefox 124+: toggle() method
-        browser.sidebarAction.toggle();
-        showBigFlash('🦊 Sidebar ditoggle', '#4f46e5');
-        console.log('[RecallFox] Sidebar toggled via sidebarAction.toggle()');
-        return;
-      }
-    } catch (e) {
-      console.log('[RecallFox] sidebarAction.toggle() failed:', e.message);
-    }
-    
-    // Fallback: try open/close via background message
-    // (may fail with "only called from user input handler")
-    browser.runtime.sendMessage({ type: 'OPEN_SIDEBAR' }).then((res) => {
-      console.log('[RecallFox] Sidebar response:', res);
-      if (res && res.ok) {
-        showBigFlash(res.action === 'closed' ? '🦊 Sidebar ditutup' : '🦊 Sidebar dibuka', '#4f46e5');
-      } else {
-        const err = (res && res.error) || 'unknown error';
-        console.error('[RecallFox] Sidebar error:', err);
-        // v3.20.5: Browser-aware fallback message.
-        // Firefox: klik tombol 🦊 di toolbar untuk toggle sidebar.
-        // Chrome: sidePanel.open() butuh user gesture — klik tombol side panel
-        //         di toolbar (Chrome 116+) atau klik kanan icon → "Open side panel".
-        const isChrome = typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL('').startsWith('chrome-extension://');
-        const msg = isChrome
-          ? '⚠️ Buka side panel RecallFox: klik tombol side panel di toolbar Chrome, atau klik kanan icon 🦊 → "Open side panel"'
-          : '⚠️ Tekan tombol RecallFox (🦊) di toolbar Firefox untuk buka sidebar';
-        showBigFlash(msg, '#dc2626');
-      }
-    }).catch((e) => {
-      console.error('[RecallFox] Sidebar message failed:', e);
-      const isChrome = typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL('').startsWith('chrome-extension://');
-      const msg = isChrome
-        ? '⚠️ Buka side panel RecallFox: klik tombol side panel di toolbar Chrome, atau klik kanan icon 🦊 → "Open side panel"'
-        : '⚠️ Tekan tombol RecallFox (🦊) di toolbar Firefox untuk buka sidebar';
-      showBigFlash(msg, '#dc2626');
-    });
-  }
-
-  function triggerSaveSelection() {
-    const text = window.getSelection().toString().trim();
-    if (text) {
-      showBigFlash('💾 Menyimpan teks...', '#059669');
-      browser.runtime.sendMessage({
-        type: 'SAVE_SELECTION_FROM_CS',
-        text: text,
-        url: location.href,
-        title: document.title
-      }).then(() => {
-        setTimeout(() => showBigFlash('✓ Tersimpan ke vault', '#059669'), 200);
-      }).catch(() => {
-        showBigFlash('⚠️ Gagal simpan', '#dc2626');
-      });
-    } else {
-      showBigFlash('⚠️ Tidak ada teks terseleksi', '#dc2626');
-    }
-  }
-
-  function triggerSnapshot() {
-    showBigFlash('📸 Membuka snapshot...', '#7c3aed');
-    openSnapshotModal();
-  }
-
-  function handleRecallFoxShortcut(e) {
-    // Only use Control, Option/Alt, Shift — NO Cmd/metaKey
-    const ctrlKey = e.ctrlKey;
-    const optKey = e.altKey;   // Option on Mac = Alt
-    const shiftKey = e.shiftKey;
-
-    const activeMods = (ctrlKey ? 1 : 0) + (optKey ? 1 : 0) + (shiftKey ? 1 : 0);
-
-    // DEBUG log — shows what Firefox actually sees
-    if (activeMods >= 1) {
-      const modNames = [];
-      if (ctrlKey) modNames.push('Ctrl');
-      if (optKey) modNames.push('Option');
-      if (shiftKey) modNames.push('Shift');
-      console.log('[RecallFox] key:', e.key, '| code:', e.code, '| mods:', modNames.join('+'), '| count:', activeMods);
-    }
-
-    // Must be EXACTLY 2 modifiers
-    if (activeMods !== 2) return;
-
-    // CRITICAL FIX: On Mac, Option key changes the character produced.
-    // So we use e.code (physical key) instead of e.key (character produced)
-    const code = e.code;
-    let action = null;
-    // NOTE: Digit1 (sidebar) is handled by native Firefox _execute_sidebar_action command.
-    // Content script only handles 2 (save) and 3 (snapshot).
-    if (code === 'Digit2' || code === 'Numpad2') action = 'save';
-    else if (code === 'Digit3' || code === 'Numpad3') action = 'snapshot';
-    
-    if (!action) return;
-
-    e.preventDefault();
-    e.stopPropagation();
-    console.log('[RecallFox] → Action:', action);
-
-    if (action === 'sidebar') {
-      triggerSidebar();
-    } else if (action === 'save') {
-      triggerSaveSelection();
-    } else if (action === 'snapshot') {
-      triggerSnapshot();
-    }
-  }
-
-  window.addEventListener('keydown', handleRecallFoxShortcut, true);
-  document.addEventListener('keydown', handleRecallFoxShortcut, true);
-  if (document.documentElement) {
-    document.documentElement.addEventListener('keydown', handleRecallFoxShortcut, true);
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      document.documentElement.addEventListener('keydown', handleRecallFoxShortcut, true);
-    });
-  }
+  // Keyboard shortcuts removed — 0 shortcut, all via click (FAB/pill/popup)
+  // Previous Digit2/3 handlers deleted for click-only UX.
 
   // v3.4: Welcome flash dihapus — pintasan keyboard sudah ada di menu
   // "Alat → Pintasan Keyboard" yang bisa dibuka kapan saja. Toast welcome

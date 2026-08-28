@@ -21,26 +21,6 @@
   // Don't run on about: / moz-extension: pages
   if (!/^https?:/.test(location.protocol)) return;
 
-  // ===== Chrome MV3: Fallback keyboard shortcuts for commands without suggested_key =====
-  // Chrome MV3 hanya allow 4 suggested_key di manifest. Commands lainnya (capture-area,
-  // capture-visible, volume-reset, ask-ai) tidak punya shortcut default. User bisa set
-  // manual di chrome://extensions/shortcuts, ATAU pakai keydown listener ini sebagai fallback.
-  //
-  // Shortcut fallback (Alt+Shift+6/7/0) — same as Firefox addon defaults.
-  // Kirim message ke background → background handle via existing onCommand handler.
-  document.addEventListener('keydown', (e) => {
-    if (!e.altKey || !e.shiftKey) return;
-    let cmd = null;
-    if (e.key === '6') cmd = 'capture-area';
-    else if (e.key === '7') cmd = 'capture-visible';
-    else if (e.key === '0') cmd = 'volume-reset';
-    else return;
-    e.preventDefault();
-    e.stopPropagation();
-    console.log('[RecallFox] Fallback shortcut triggered:', cmd);
-    browser.runtime.sendMessage({ type: 'RF_COMMAND_FALLBACK', command: cmd }).catch(() => {});
-  }, true);
-
   // ===== Stylesheet =====
   function ensureStyles() {
     if (document.getElementById('recallfox-overlay-style')) return;
@@ -144,19 +124,14 @@
     hint.className = 'recallfox-dock-hint';
     hint.innerHTML = 'Screenshot <b>·</b> seret untuk pindah';
 
-    // FAB button (purple gradient, rounded square)
+    // FAB button — v3.20.5: text "sc" (bukan SVG camera icon)
     fabBtn = document.createElement('button');
     fabBtn.id = 'recallfox-fab';
     fabBtn.className = 'recallfox-fab';
     fabBtn.type = 'button';
     fabBtn.title = 'Ambil screenshot (Alt+Shift+5)';
     fabBtn.setAttribute('aria-label', 'Ambil screenshot');
-    fabBtn.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/>
-        <circle cx="12" cy="13" r="3.2"/>
-      </svg>
-    `;
+    fabBtn.textContent = 'sc';
 
     dockEl.appendChild(hint);
     dockEl.appendChild(fabBtn);
@@ -327,32 +302,13 @@
   }
 
   // ===== Capture flow =====
-  // v3.20.12: Guard against duplicate triggerCapture calls.
-  // Jika modal sedang terbuka (mode picker atau preview) dan triggerCapture
-  // dipanggil lagi (e.g. dari double message send), abaikan — jangan buka modal kedua.
-  // Sebelumnya: showModePicker() hapus modal existing lalu buat baru → user lihat
-  // modal muncul lagi setelah cancel ("modal kyk dobel listener").
-  let captureInProgress = false;
-
   async function triggerCapture(forceMode) {
-    // v3.20.12: Dedup guard — kalau capture lagi jalan, skip.
-    if (captureInProgress) {
-      console.log('[RecallFox] triggerCapture dipanggil lagi tapi capture sedang berjalan — skip (dedup)');
-      return;
+    // If no mode forced, show the mode-picker dialog first
+    let mode = forceMode;
+    if (!mode || typeof mode !== 'string') {
+      mode = await showModePicker();
+      if (!mode) return; // User cancelled the picker
     }
-    // v3.20.12: Kalau modal masih terbuka (mode picker atau preview), skip juga.
-    if (modalEl) {
-      console.log('[RecallFox] triggerCapture dipanggil lagi tapi modal masih terbuka — skip (dedup)');
-      return;
-    }
-    captureInProgress = true;
-    try {
-      // If no mode forced, show the mode-picker dialog first
-      let mode = forceMode;
-      if (!mode || typeof mode !== 'string') {
-        mode = await showModePicker();
-        if (!mode) return; // User cancelled the picker
-      }
 
     // Visual feedback on the FAB
     if (fabBtn) {
@@ -407,23 +363,12 @@
     };
     restoreButton();
     showModal();
-    } finally {
-      // v3.20.12: Reset dedup guard — capture selesai (sukses atau cancel).
-      // setTimeout beri jeda 300ms supaya message retry yang masih in-flight
-      // juga ke-dedup (race condition antara resolve promise + message delivery).
-      setTimeout(() => { captureInProgress = false; }, 300);
-    }
   }
 
   function restoreButton() {
     if (!fabBtn) return;
     fabBtn.classList.remove('recallfox-fab-busy');
-    fabBtn.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 7h3l1.5-2h7L17 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/>
-        <circle cx="12" cy="13" r="3.2"/>
-      </svg>
-    `;
+    fabBtn.textContent = 'sc';  // v3.20.5: restore text (bukan SVG)
   }
 
   function showError(msg) {
@@ -1127,136 +1072,6 @@
     if (msg.type === 'TRIGGER_CAPTURE_FROM_POPUP') {
       // msg.mode can be 'entire' | 'visible' | 'selection' | undefined (show picker)
       triggerCapture(msg.mode);
-    }
-    // v3.20.21 FIX: COPY_TEXT fallback — overlay.js ada di SEMUA halaman http(s),
-    // jadi ini fallback paling reliable untuk copy via content script.
-    // Dipanggil dari background COPY_TO_CLIPBOARD handler ketika navigator.clipboard
-    // di popup/iframe sidebar gagal.
-    if (msg.type === 'COPY_TEXT') {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = msg.text || '';
-        ta.style.position = 'fixed';
-        ta.style.top = '-9999px';
-        ta.style.left = '-9999px';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        ta.setSelectionRange(0, ta.value.length);
-        let ok = false;
-        try {
-          // Prefer modern API kalau halaman focused & punya permission
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(msg.text || '').then(() => {
-              ta.remove();
-              sendResponse({ ok: true });
-            }).catch(() => {
-              const r = document.execCommand('copy');
-              ta.remove();
-              sendResponse({ ok: r });
-            });
-            return true; // async
-          }
-        } catch (e) {}
-        // Fallback: execCommand
-        ok = document.execCommand('copy');
-        ta.remove();
-        sendResponse({ ok });
-      } catch (e) {
-        console.warn('[RecallFox/overlay] COPY_TEXT error:', e.message);
-        sendResponse({ ok: false, error: e.message });
-      }
-      return true;
-    }
-    // v3.20.22: COPY_IMAGE — image clipboard via content script (tab aktif).
-    // Dipanggil dari background COPY_IMAGE handler (strategi D relay) ketika
-    // navigator.clipboard.write gagal di popup/iframe sidebar Chrome.
-    // Content script jalan di halaman web context (focused) → clipboard.write works.
-    if (msg.type === 'COPY_IMAGE') {
-      (async () => {
-        try {
-          const { dataUrl, textPlain, textHtml, mode } = msg;
-          if (!dataUrl) { sendResponse({ ok: false, error: 'no_data_url' }); return; }
-
-          // Convert dataUrl → PNG blob
-          const resp = await fetch(dataUrl);
-          const blob = await resp.blob();
-          let pngBlob;
-          if (blob.type === 'image/png') {
-            pngBlob = blob;
-          } else {
-            const img = await createImageBitmap(blob);
-            const canvas = document.createElement('canvas');
-            canvas.width = img.width;
-            canvas.height = img.height;
-            canvas.getContext('2d').drawImage(img, 0, 0);
-            pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-          }
-          if (!pngBlob) { sendResponse({ ok: false, error: 'blob_conversion_failed' }); return; }
-
-          // Strategi 1: ClipboardItem image/png (+ text/html + text/plain kalau ada)
-          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-            try {
-              const clipboardData = { 'image/png': pngBlob };
-              if (textHtml) clipboardData['text/html'] = new Blob([textHtml], { type: 'text/html' });
-              if (textPlain) clipboardData['text/plain'] = new Blob([textPlain], { type: 'text/plain' });
-              const item = new ClipboardItem(clipboardData);
-              await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, via: 'clipboard_item' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 1 failed:', e.message);
-            }
-          }
-
-          // Strategi 2: image/png only (tanpa text)
-          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-            try {
-              const item = new ClipboardItem({ 'image/png': pngBlob });
-              await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, via: 'image_only' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 2 failed:', e.message);
-            }
-          }
-
-          // Strategi 3: text/html dengan <img src="dataUrl"> embedded
-          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-            try {
-              const html = '<img src="' + dataUrl + '" alt="gambar RecallFox" />';
-              const plain = textPlain || '[Gambar RecallFox]';
-              const item = new ClipboardItem({
-                'text/html': new Blob([html], { type: 'text/html' }),
-                'text/plain': new Blob([plain], { type: 'text/plain' })
-              });
-              await navigator.clipboard.write([item]);
-              sendResponse({ ok: true, via: 'html_embedded' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 3 failed:', e.message);
-            }
-          }
-
-          // Strategi 4: text-only fallback
-          if (navigator.clipboard?.writeText && textPlain) {
-            try {
-              await navigator.clipboard.writeText(textPlain);
-              sendResponse({ ok: true, via: 'text_only' });
-              return;
-            } catch (e) {
-              console.warn('[RecallFox/overlay] COPY_IMAGE strategi 4 failed:', e.message);
-            }
-          }
-
-          sendResponse({ ok: false, error: 'all_strategies_failed' });
-        } catch (e) {
-          console.error('[RecallFox/overlay] COPY_IMAGE exception:', e);
-          sendResponse({ ok: false, error: e.message });
-        }
-      })();
-      return true; // async
     }
     // v3.11.7-fix2 (Sesi 7, Issue #5): Adzan playback dari content script.
     // Audio tidak bisa di-play dari background service worker (MV3 restriction).

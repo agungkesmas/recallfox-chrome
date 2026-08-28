@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>RecallTape v3.14.9 — Test Harness</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0E182A; color: #E8EEF7; padding: 20px; margin: 0; min-height: 100vh; }
+  h1 { font-size: 18px; margin-bottom: 10px; color: #60A5FA; }
+  h2 { font-size: 14px; margin: 18px 0 8px; color: #A3B0C2; text-transform: uppercase; letter-spacing: .05em; }
+  .info { background: #1A293D; border-left: 4px solid #60A5FA; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; line-height: 1.55; border-radius: 4px; }
+  .info code { background: #0E182A; padding: 1px 6px; border-radius: 3px; font-size: 12px; color: #42C6A0; }
+  .controls { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  button { background: #60A5FA; color: #0E182A; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  button:hover { background: #3B82F6; color: white; }
+  button:active { transform: scale(.96); }
+  .log { background: #0E182A; color: #A3B0C2; padding: 10px; border-radius: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.5; max-height: 280px; overflow-y: auto; margin-top: 10px; border: 1px solid #1A293D; }
+  .log div { padding: 1px 0; }
+  .log .ok { color: #42C6A0; }
+  .log .err { color: #FB7185; }
+  .log .info { color: #60A5FA; background: transparent; border: none; padding: 1px 0; margin: 0; }
+  .log .warn { color: #F0B64A; }
+  .scenarios { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; margin-top: 10px; }
+  .scenario { background: #1A293D; padding: 10px; border-radius: 6px; font-size: 12px; }
+  .scenario b { color: #60A5FA; display: block; margin-bottom: 4px; }
+  .scenario code { display: block; padding: 6px; background: #0E182A; border-radius: 3px; margin: 4px 0; color: #42C6A0; font-family: monospace; font-size: 11px; white-space: pre; }
+</style>
+</head>
+<body>
+<h1>RecallTape v3.14.9 — Test Harness</h1>
+<div class="info">
+  Halaman ini verifikasi behavior baru RecallTape tanpa perlu install addon.
+  Parser dari <code>lib/tape.js</code> di-inline, UI simulasi pakai textarea + button.
+  <br><br>
+  <b>Behavior yang dites:</b>
+  <ul style="margin:6px 0 0 20px">
+    <li>Ketik angka <code>1300</code> lalu tekan <code>-</code> → otomatis newline ke <code>- </code></li>
+    <li>Ketik <code>500</code> lalu tekan <code>=</code> → otomatis tampilkan subtotal baris</li>
+    <li>Tekan <code>+</code> di baris kosong → lanjut hitung</li>
+    <li>Printer: hidden iframe + 80mm receipt (test dialog print)</li>
+    <li>Save: kirim <code>SAVE_TAPE_TO_VAULT</code> message ke background</li>
+  </ul>
+</div>
+
+<div class="controls">
+  <button onclick="openTape()">Buka RecallTape UI</button>
+  <button onclick="closeTape()">Tutup</button>
+  <button onclick="testParser()">Run Parser Tests</button>
+  <button onclick="clearLog()">Clear Log</button>
+</div>
+
+<h2>Test Scenarios</h2>
+<div class="scenarios">
+  <div class="scenario">
+    <b>Scenario 1: Basic</b>
+    Ketik: 1300 → - → 500 → = → + → 200 → =
+    <code>Expected:
+1300
+- 500
+=
++ 200
+=
+Grand: 1.000</code>
+  </div>
+  <div class="scenario">
+    <b>Scenario 2: Dengan catatan</b>
+    Ketik: 1300 Gaji → - → 500 Makan → = → + → 200 Bonus → =
+    <code>Expected:
+1300 Gaji
+- 500 Makan
+=
++ 200 Bonus
+=
+Grand: 1.000</code>
+  </div>
+  <div class="scenario">
+    <b>Scenario 3: Percent</b>
+    Ketik: 1000 → + → 19% PPN → =
+    <code>Expected:
+1000
++ 19% PPN
+=
+Grand: 1.190</code>
+  </div>
+</div>
+
+<h2>Log</h2>
+<div class="log" id="log"></div>
+
+<!-- Container untuk popover test -->
+<div id="tapeContainer"></div>
+
+<script type="module">
+// ====================================================================
+// INLINE PARSER dari lib/tape.js (tanpa export, pakai window.tape)
+// ====================================================================
+window.tape = (function() {
+  function parseAmount(token) {
+    if (token == null) return null;
+    let s = String(token).trim().toLowerCase();
+    if (!s) return null;
+    s = s.replace(/^(rp|idr|usd|\$|eur|€|£)\s*/i, '');
+    s = s.replace(/\s+/g, '');
+    if (!s) return null;
+    const suffixMap = [
+      { re: /^([\d.,]+)juta$/i, mult: 1_000_000 },
+      { re: /^([\d.,]+)jt$/i, mult: 1_000_000 },
+      { re: /^([\d.,]+)ribu$/i, mult: 1_000 },
+      { re: /^([\d.,]+)rb$/i, mult: 1_000 },
+      { re: /^([\d.,]+)k$/i, mult: 1_000 },
+      { re: /^([\d.,]+)m$/i, mult: 1_000_000 },
+      { re: /^([\d.,]+)b$/i, mult: 1_000_000_000 },
+      { re: /^([\d.,]+)bn$/i, mult: 1_000_000_000 }
+    ];
+    let mult = 1, digits = s;
+    for (const sf of suffixMap) {
+      const m = s.match(sf.re);
+      if (m) { digits = m[1]; mult = sf.mult; break; }
+    }
+    if (!/^[\d.,]+$/.test(digits)) return null;
+    if (digits === '.' || digits === ',') return null;
+    const dots = (digits.match(/\./g) || []).length;
+    const commas = (digits.match(/,/g) || []).length;
+    let normalized;
+    if (dots === 0 && commas === 0) {
+      normalized = digits;
+    } else if (dots > 0 && commas === 0) {
+      const groups = digits.split('.');
+      if (groups.length === 1) normalized = groups[0];
+      else {
+        const middleOk = groups.slice(1, -1).every(g => g.length === 3);
+        const lastLen = groups[groups.length - 1].length;
+        if (middleOk && lastLen === 3) normalized = groups.join('');
+        else if (middleOk && (lastLen === 1 || lastLen === 2)) {
+          normalized = groups.slice(0, -1).join('') + '.' + groups[groups.length - 1];
+        } else {
+          normalized = groups.slice(0, -1).join('') + '.' + groups[groups.length - 1];
+        }
+      }
+    } else if (dots === 0 && commas > 0) {
+      const groups = digits.split(',');
+      if (groups.length === 1) normalized = groups[0];
+      else {
+        const middleOk = groups.slice(1, -1).every(g => g.length === 3);
+        const lastLen = groups[groups.length - 1].length;
+        if (middleOk && lastLen === 3) normalized = groups.join('');
+        else if (middleOk && (lastLen === 1 || lastLen === 2)) {
+          normalized = groups.slice(0, -1).join('') + '.' + groups[groups.length - 1];
+        } else {
+          normalized = groups.slice(0, -1).join('') + '.' + groups[groups.length - 1];
+        }
+      }
+    } else {
+      const lastDot = digits.lastIndexOf('.');
+      const lastComma = digits.lastIndexOf(',');
+      if (lastDot > lastComma) {
+        normalized = digits.slice(0, lastDot).replace(/,/g, '') + '.' + digits.slice(lastDot + 1);
+      } else {
+        normalized = digits.slice(0, lastComma).replace(/\./g, '') + '.' + digits.slice(lastComma + 1);
+      }
+    }
+    if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
+    const value = parseFloat(normalized);
+    if (!isFinite(value)) return null;
+    return value * mult;
+  }
+  const OPS = new Set(['+', '-', '*', '/', '=', '×', '÷']);
+  function parseLine(rawLine) {
+    const raw = rawLine;
+    const line = rawLine.replace(/\r/, '').trim();
+    if (!line) return null;
+    if (/^(#|\/\/)/.test(line)) return { op: 'comment', amount: null, isPercent: false, note: line, raw };
+    let op = '+', rest = line;
+    const firstChar = line[0];
+    if (OPS.has(firstChar)) {
+      if (firstChar === '×') op = '*';
+      else if (firstChar === '÷') op = '/';
+      else op = firstChar;
+      rest = line.slice(1).trim();
+    }
+    if (op === '=') {
+      const m = rest.match(/^([\d.,]+(?:\s*(?:juta|jt|ribu|rb|bn|k|m|b)\b)?)(\s*%)?\b(?:\s+|$)(.*)$/i);
+      if (m) {
+        const amt = parseAmount(m[1].trim());
+        if (amt != null) return { op, amount: amt, isPercent: !!m[2], note: (m[3] || '').trim(), raw };
+      }
+      return { op: '=', amount: null, isPercent: false, note: rest, raw };
+    }
+    const m = rest.match(/^([\d.,]+(?:\s*(?:juta|jt|ribu|rb|bn|k|m|b)\b)?)(\s*%)?(?:\s+|$)(.*)$/i);
+    if (!m) return { op: 'note', amount: null, isPercent: false, note: rest, raw };
+    const amtStr = m[1].trim();
+    const isPercent = !!m[2];
+    const note = (m[3] || '').trim();
+    const amt = parseAmount(amtStr);
+    if (amt == null) return { op: 'note', amount: null, isPercent: false, note: rest, raw };
+    return { op, amount: amt, isPercent, note, raw };
+  }
+  function evaluate(input) {
+    const lines = Array.isArray(input) ? input : String(input).split('\n');
+    let running = 0, error = null;
+    const entries = [];
+    for (let i = 0; i < lines.length; i++) {
+      const parsed = parseLine(lines[i]);
+      if (!parsed) continue;
+      if (parsed.op === 'comment' || parsed.op === 'note') {
+        entries.push({ op: parsed.op, amount: null, isPercent: false, percentValue: null, note: parsed.note, raw: parsed.raw, running, display: null, kind: parsed.op });
+        continue;
+      }
+      if (parsed.op === '=') {
+        entries.push({ op: '=', amount: parsed.amount, isPercent: !!parsed.isPercent, percentValue: null, note: parsed.note, raw: parsed.raw, running, display: running, kind: 'subtotal' });
+        continue;
+      }
+      const amt = parsed.amount || 0;
+      let next, percentValue = null;
+      if (parsed.isPercent && (parsed.op === '+' || parsed.op === '-')) {
+        percentValue = running * (amt / 100);
+        next = parsed.op === '+' ? running + percentValue : running - percentValue;
+      } else {
+        switch (parsed.op) {
+          case '+': next = running + amt; break;
+          case '-': next = running - amt; break;
+          case '*': next = running * amt; break;
+          case '/':
+            if (amt === 0) { error = `Baris ${i + 1}: pembagian nol`; next = running; }
+            else next = running / amt;
+            break;
+          default: next = running + amt;
+        }
+      }
+      running = next;
+      entries.push({ op: parsed.op, amount: amt, isPercent: !!parsed.isPercent, percentValue, note: parsed.note, raw: parsed.raw, running, display: running, kind: 'op' });
+    }
+    return { entries, grandTotal: running, error };
+  }
+  const OP_SYMBOL = { '+': '+', '-': '−', '*': '×', '/': '÷', '=': '=' };
+  function formatNumber(n) {
+    if (n == null || !isFinite(n)) return '0';
+    const neg = n < 0;
+    const abs = Math.abs(n);
+    const rounded = Math.round(abs * 100) / 100;
+    const [intPart, decPart] = String(rounded).split('.');
+    const intWithSep = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    const out = decPart ? `${intWithSep},${decPart}` : intWithSep;
+    return neg ? `-${out}` : out;
+  }
+  function toPlainText(tape) {
+    const { entries, grandTotal } = tape;
+    const lines = [];
+    for (const e of entries) {
+      if (e.kind === 'comment') { lines.push(`# ${e.note}`); continue; }
+      if (e.kind === 'note') { lines.push(`  ${e.note}`); continue; }
+      if (e.kind === 'subtotal') {
+        lines.push('  ' + '─'.repeat(18));
+        lines.push(`  ${(e.note || 'Subtotal').slice(0, 20).padEnd(20)} ${formatNumber(e.display).padStart(14)}`);
+        continue;
+      }
+      const sym = OP_SYMBOL[e.op] || '+';
+      const amtStr = e.isPercent ? `${formatNumber(e.amount)}%` : formatNumber(e.amount);
+      const hint = e.isPercent && e.percentValue != null ? ` | ${formatNumber(e.percentValue)}` : '';
+      lines.push(`${sym} ${amtStr.padStart(14)}${hint}  ${e.note || ''}`.trimEnd());
+    }
+    lines.push('  ' + '═'.repeat(18));
+    lines.push(`  ${'GRAND TOTAL'.padEnd(20)} ${formatNumber(grandTotal).padStart(14)}`);
+    return lines.join('\n');
+  }
+  function toMarkdown(tape, opts = {}) {
+    const { entries, grandTotal } = tape;
+    const lines = [];
+    if (opts.title) lines.push(`# ${opts.title}`, '');
+    lines.push('| Operator | Amount | Note | Running |');
+    lines.push('| --- | ---: | --- | ---: |');
+    for (const e of entries) {
+      if (e.kind === 'comment') { lines.push(`_# ${e.note}_`); continue; }
+      if (e.kind === 'note') { lines.push(`&nbsp; |  | ${e.note} |  |`); continue; }
+      if (e.kind === 'subtotal') {
+        lines.push(`**=** | **${formatNumber(e.display)}** | **${e.note || 'Subtotal'}** | **${formatNumber(e.running)}** |`);
+        continue;
+      }
+      const amtStr = e.isPercent ? `${formatNumber(e.amount)}%` : formatNumber(e.amount);
+      const hint = e.isPercent && e.percentValue != null ? ` (=${formatNumber(e.percentValue)})` : '';
+      lines.push(`\`${OP_SYMBOL[e.op] || '+'}\` | ${amtStr}${hint} | ${e.note || ''} | ${formatNumber(e.running)} |`);
+    }
+    lines.push('');
+    lines.push(`> **Grand Total:** \`Rp ${formatNumber(grandTotal)}\``);
+    return lines.join('\n');
+  }
+  return { parseAmount, parseLine, evaluate, formatNumber, toPlainText, toMarkdown };
+})();
+
+// ====================================================================
+// MOCK BROWSER API
+// ====================================================================
+window.browser = {
+  runtime: {
+    getURL: (path) => path,
+    sendMessage: async (msg) => {
+      log('sendMessage: ' + msg.type, 'info');
+      if (msg.type === 'SAVE_TAPE_TO_VAULT') {
+        log('✓ SAVE_TAPE_TO_VAULT — save ke catatan (note)', 'ok');
+        log('  title: 🧮 RecallTape — Total: ' + (msg.grandTotal || 0).toLocaleString('id-ID'), 'info');
+        log('  markdown length: ' + (msg.markdown?.length || 0) + ' chars', 'info');
+        log('  text length: ' + (msg.text?.length || 0) + ' chars', 'info');
+        return { ok: true, noteId: 'note_test_' + Date.now() };
+      }
+      return { ok: true };
+    },
+    onMessage: {
+      _listeners: [],
+      addListener: (fn) => { window.browser.runtime.onMessage._listeners.push(fn); }
+    }
+  },
+  storage: {
+    local: {
+      _data: {},
+      async get(keys) {
+        const out = {};
+        if (Array.isArray(keys)) {
+          for (const k of keys) out[k] = this._data[k];
+        }
+        return out;
+      },
+      async set(obj) {
+        for (const k of Object.keys(obj)) this._data[k] = obj[k];
+      }
+    }
+  }
+};
+
+// ====================================================================
+// LOG HELPERS
+// ====================================================================
+function log(msg, type = '') {
+  const el = document.getElementById('log');
+  const div = document.createElement('div');
+  if (type) div.className = type;
+  div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+
+// ====================================================================
+// PARSER TESTS
+// ====================================================================
+function testParser() {
+  log('Running parser tests...', 'info');
+  const { parseAmount, parseLine, evaluate, formatNumber } = window.tape;
+  let pass = 0, fail = 0;
+  const results = [];
+  function assert(name, actual, expected) {
+    const ok = JSON.stringify(actual) === JSON.stringify(expected);
+    if (ok) { pass++; results.push('✓ ' + name); }
+    else { fail++; results.push('✗ ' + name + ' — got: ' + JSON.stringify(actual) + ', expected: ' + JSON.stringify(expected)); }
+  }
+
+  // Skenario user utama
+  const t = evaluate('1300\n- 500\n= \n+ 200\n= \n'.split('\n'));
+  assert('Scenario user grandTotal', t.grandTotal, 1000);
+  assert('Scenario user entries count', t.entries.length, 5);
+  assert('Scenario user entry[2] subtotal running', t.entries[2].running, 800);
+  assert('Scenario user entry[4] subtotal running', t.entries[4].running, 1000);
+
+  // Percent
+  const t2 = evaluate('1000\n+ 19% PPN\n= '.split('\n'));
+  assert('Percent grandTotal', t2.grandTotal, 1190);
+  assert('Percent percentValue', t2.entries[1].percentValue, 190);
+
+  // Suffix
+  assert('50k → 50000', parseAmount('50k'), 50000);
+  assert('100rb → 100000', parseAmount('100rb'), 100000);
+  assert('2,5jt → 2500000', parseAmount('2,5jt'), 2500000);
+  assert('1.250.000 → 1250000', parseAmount('1.250.000'), 1250000);
+
+  // Edge case
+  const r = parseLine('4 Bagi 4 orang');
+  assert('Edge: 4 Bagi 4 orang amount=4', r.amount, 4);
+  assert('Edge: 4 Bagi 4 orang note', r.note, 'Bagi 4 orang');
+
+  log('Parser tests: ' + pass + ' pass, ' + fail + ' fail', fail === 0 ? 'ok' : 'err');
+  results.slice(0, 10).forEach(r => log('  ' + r, r.startsWith('✓') ? 'ok' : 'err'));
+}
+
+// ====================================================================
+// UI — buka popover test
+// ====================================================================
+let popoverEl = null;
+
+function openTape() {
+  if (popoverEl) {
+    closeTape();
+    return;
+  }
+  popoverEl = document.createElement('div');
+  popoverEl.style.cssText = 'position:fixed;top:60px;right:14px;width:340px;max-height:560px;background:#0E182A;color:#E8EEF7;border:1px solid #1A293D;border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.55);display:flex;flex-direction:column;overflow:hidden;font-family:Menlo,Consolas,monospace;font-size:13px;z-index:99999;resize:both;min-width:280px;min-height:340px';
+
+  popoverEl.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px;padding:7px 10px;background:#1A293D;border-bottom:1px solid #0F1E33;cursor:move">
+      <div style="font-size:11px;font-weight:700;flex:1;display:flex;align-items:center;gap:5px;font-family:-apple-system,system-ui,sans-serif">🧾 RecallTape</div>
+      <button class="rft-pin" title="Pin" style="width:24px;height:24px;border-radius:5px;border:none;background:none;color:#A3B0C2;cursor:pointer">📌</button>
+      <button class="rft-print" title="Print" style="width:24px;height:24px;border-radius:5px;border:none;background:none;color:#A3B0C2;cursor:pointer">🖨️</button>
+      <button class="rft-copy" title="Copy" style="width:24px;height:24px;border-radius:5px;border:none;background:none;color:#A3B0C2;cursor:pointer">📋</button>
+      <button class="rft-save" title="Save ke Catatan" style="width:24px;height:24px;border-radius:5px;border:none;background:none;color:#A3B0C2;cursor:pointer">💾</button>
+      <button class="rft-clear" title="Clear" style="width:24px;height:24px;border-radius:5px;border:none;background:none;color:#A3B0C2;cursor:pointer">🗑️</button>
+    </div>
+    <textarea class="rft-editor" spellcheck="false" placeholder="Ketik angka, lalu tekan + - * / atau =&#10;Contoh:&#10;1300&#10;- 500&#10;= Subtotal&#10;+ 200&#10;= Total" style="flex:1;min-height:180px;max-height:400px;background:#273953;color:#E8EEF7;font-family:Menlo,Consolas,monospace;font-size:13px;line-height:24px;padding:8px 14px;border:none;outline:none;resize:none;width:100%;white-space:pre"></textarea>
+    <div style="padding:4px 10px;background:#1A293D;border-top:1px solid #0F1E33;font-family:-apple-system,sans-serif;font-size:10px;color:#A3B0C2;display:flex;gap:8px">
+      <span class="rft-autosave" style="margin-left:auto">✓ Tersimpan otomatis</span>
+    </div>
+    <div style="padding:8px 14px;background:#1A293D;border-top:1px solid #0F1E33;display:flex;gap:14px;align-items:flex-end">
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span style="font-family:sans-serif;font-size:9px;font-weight:700;color:#60A5FA;text-transform:uppercase">Block</span>
+        <span class="rft-block-val" style="font-family:monospace;font-size:14px;font-weight:600;color:#E8EEF7">0</span>
+      </div>
+      <div style="margin-left:auto;text-align:right;display:flex;flex-direction:column;gap:2px;align-items:flex-end">
+        <span style="font-family:sans-serif;font-size:9px;font-weight:700;color:#60A5FA;text-transform:uppercase">Grand Total</span>
+        <span class="rft-grand-val" style="font-family:monospace;font-size:20px;font-weight:700;color:#42C6A0;line-height:1">0</span>
+      </div>
+    </div>
+    <div class="rft-toast" style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%) translateY(8px);background:#E8EEF7;color:#0E182A;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;opacity:0;transition:.2s;pointer-events:none;font-family:sans-serif;white-space:nowrap"></div>
+  `;
+  document.body.appendChild(popoverEl);
+
+  const textarea = popoverEl.querySelector('.rft-editor');
+  const blockVal = popoverEl.querySelector('.rft-block-val');
+  const grandVal = popoverEl.querySelector('.rft-grand-val');
+  const autosave = popoverEl.querySelector('.rft-autosave');
+  const toast = popoverEl.querySelector('.rft-toast');
+
+  function doEval() {
+    const text = textarea.value;
+    const result = window.tape.evaluate(text.split('\n'));
+    const lastEntry = result.entries[result.entries.length - 1];
+    blockVal.textContent = window.tape.formatNumber(lastEntry ? lastEntry.running : 0);
+    grandVal.textContent = window.tape.formatNumber(result.grandTotal);
+    if (result.error) {
+      autosave.textContent = '⚠ ' + result.error;
+      autosave.style.color = '#FB7185';
+    } else {
+      autosave.textContent = '✓ Tersimpan otomatis';
+      autosave.style.color = '';
+    }
+  }
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateX(-50%) translateY(8px)';
+    }, 2000);
+  }
+
+  // v3.14.9: KEYDOWN handler — auto-newline saat tekan operator
+  function handleOperatorKey(op) {
+    const pos = textarea.selectionStart;
+    const endPos = textarea.selectionEnd;
+    const val = textarea.value;
+    const before = val.slice(0, pos);
+    const after = val.slice(endPos);
+    let insert, newCursorPos;
+    if (op === '=') {
+      insert = '\n= \n';
+      newCursorPos = pos + insert.length;
+    } else {
+      insert = '\n' + op + ' ';
+      newCursorPos = pos + insert.length;
+    }
+    textarea.value = before + insert + after;
+    textarea.setSelectionRange(newCursorPos, newCursorPos);
+    textarea.scrollTop = textarea.scrollHeight;
+    doEval();
+    log('Operator "' + op + '" pressed → auto-newline. Cursor at ' + newCursorPos, 'info');
+  }
+
+  textarea.addEventListener('input', () => {
+    log('input event — value: "' + textarea.value.replace(/\n/g, '\\n') + '"', 'info');
+    doEval();
+  });
+
+  textarea.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      log('Ctrl+Enter → save to vault', 'info');
+      saveToVault();
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeTape();
+      return;
+    }
+    const key = e.key;
+    if (key === '+' || key === '-' || key === '*' || key === '/' || key === '=') {
+      if (textarea.selectionStart !== textarea.selectionEnd) return;
+      const pos = textarea.selectionStart;
+      const val = textarea.value;
+      const atEndOfLine = (pos === val.length) || (val[pos] === '\n');
+      if (atEndOfLine) {
+        const lineStart = val.lastIndexOf('\n', pos - 1) + 1;
+        const currentLine = val.slice(lineStart, pos);
+        const trimmedCurrent = currentLine.trim();
+        if (trimmedCurrent === '' && key !== '=') {
+          return; // baris kosong, biarkan default
+        }
+        e.preventDefault();
+        handleOperatorKey(key);
+      }
+    }
+  });
+
+  function saveToVault() {
+    const text = textarea.value;
+    const result = window.tape.evaluate(text.split('\n'));
+    if (result.entries.length === 0) { showToast('Tape kosong'); return; }
+    const md = window.tape.toMarkdown(result);
+    window.browser.runtime.sendMessage({
+      type: 'SAVE_TAPE_TO_VAULT',
+      markdown: md,
+      text: text,
+      grandTotal: result.grandTotal
+    });
+    showToast('✓ Tersimpan ke Catatan');
+  }
+
+  function doPrint() {
+    const text = textarea.value;
+    const result = window.tape.evaluate(text.split('\n'));
+    if (result.entries.length === 0) { showToast('Tape kosong'); return; }
+
+    const lines = [];
+    lines.push('<div style="text-align:center;padding-bottom:3mm;border-bottom:1px dashed #000;margin-bottom:3mm"><h1 style="font-size:13px;font-weight:700">🧾 RecallTape</h1><div style="font-size:9px;color:#666;margin-top:1px">' + new Date().toLocaleString('id-ID') + '</div></div>');
+    for (const e of result.entries) {
+      if (e.kind === 'comment' || e.kind === 'note') {
+        lines.push('<div style="color:#666;font-family:Arial,sans-serif;font-style:italic;padding-left:14px">' + esc(e.note) + '</div>');
+        continue;
+      }
+      if (e.kind === 'subtotal') {
+        lines.push('<div style="border-top:1px dashed #999;margin:3px 0"></div>');
+        lines.push('<div style="font-weight:700;padding-top:2px;display:flex;align-items:baseline"><span style="width:10px;flex:none">=</span><span style="flex:1;padding-left:4px;font-family:Arial,sans-serif">' + esc(e.note || 'Subtotal') + '</span><span style="font-variant-numeric:tabular-nums">' + window.tape.formatNumber(e.running) + '</span></div>');
+        continue;
+      }
+      const sym = e.op || '+';
+      const amtStr = e.isPercent ? window.tape.formatNumber(e.amount) + '%' : window.tape.formatNumber(e.amount);
+      const hint = e.isPercent && e.percentValue != null ? ' | ' + window.tape.formatNumber(e.percentValue) : '';
+      const note = e.note ? '<span style="flex:none;max-width:50%;margin-left:6px;color:#555;font-family:Arial,sans-serif;font-size:9px">' + esc(e.note) + '</span>' : '';
+      lines.push('<div style="padding:1px 0;display:flex;align-items:baseline"><span style="width:10px;flex:none;font-weight:700">' + sym + '</span><span style="flex:1;padding-left:4px;font-variant-numeric:tabular-nums">' + amtStr + hint + '</span>' + note + '</div>');
+    }
+    lines.push('<div style="border-top:2px solid #000;margin-top:4px"></div>');
+    lines.push('<div style="padding-top:4px;margin-top:2px;font-weight:700;font-size:12px;display:flex;align-items:baseline"><span style="width:10px;flex:none">=</span><span style="flex:1;padding-left:4px;font-family:Arial,sans-serif">GRAND TOTAL</span><span style="font-variant-numeric:tabular-nums">' + window.tape.formatNumber(result.grandTotal) + '</span></div>');
+
+    const html = '<!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><title>RecallTape Resi</title><style>@page{size:80mm auto;margin:2mm}*{box-sizing:border-box;margin:0;padding:0}html,body{background:#fff;color:#000;font-family:"Courier New",Menlo,Consolas,monospace;font-size:10px;line-height:1.55}body{padding:4mm;max-width:72mm;margin:0 auto}</style></head><body>' + lines.join('\n') + '<div style="margin-top:4mm;padding-top:2mm;border-top:1px dashed #000;text-align:center;font-size:9px;color:#666;font-family:Arial,sans-serif">RecallFox · dicetak ' + new Date().toISOString().slice(0,10) + '</div></body></html>';
+
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0;pointer-events:none;z-index:-1';
+    document.body.appendChild(iframe);
+    try {
+      const doc = iframe.contentWindow.document;
+      doc.open(); doc.write(html); doc.close();
+      log('✓ Print iframe created, ' + result.entries.length + ' entries, HTML ' + html.length + ' chars', 'ok');
+    } catch (e) {
+      log('✗ Print iframe failed: ' + e.message, 'err');
+      iframe.remove();
+      return;
+    }
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+        log('✓ Print dialog triggered', 'ok');
+      } catch (e) {
+        log('✗ Print failed: ' + e.message, 'err');
+      }
+      setTimeout(() => { try { iframe.remove(); } catch (e) {} }, 2000);
+    }, 300);
+    showToast('🖨️ Mencetak...');
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Wire buttons
+  popoverEl.querySelector('.rft-pin').addEventListener('click', (e) => {
+    e.target.style.background = e.target.style.background ? '' : '#1E3A8A';
+    e.target.style.color = e.target.style.color === 'rgb(96, 165, 250)' ? '#A3B0C2' : '#60A5FA';
+    log('Pin toggled', 'info');
+  });
+  popoverEl.querySelector('.rft-print').addEventListener('click', doPrint);
+  popoverEl.querySelector('.rft-copy').addEventListener('click', () => {
+    const text = textarea.value;
+    const result = window.tape.evaluate(text.split('\n'));
+    const plain = window.tape.toPlainText(result);
+    navigator.clipboard.writeText(plain).then(() => {
+      log('✓ Copy: ' + plain.length + ' chars', 'ok');
+      showToast('✓ Disalin');
+    }).catch(e => log('✗ Copy failed: ' + e.message, 'err'));
+  });
+  popoverEl.querySelector('.rft-save').addEventListener('click', saveToVault);
+  popoverEl.querySelector('.rft-clear').addEventListener('click', () => {
+    if (!textarea.value.trim()) return;
+    if (!confirm('Kosongkan tape?')) return;
+    textarea.value = '';
+    doEval();
+    log('Tape cleared', 'info');
+  });
+
+  // Draggable header
+  const hd = popoverEl.firstElementChild;
+  let dragging = false, dx = 0, dy = 0;
+  hd.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    dragging = true;
+    const rect = popoverEl.getBoundingClientRect();
+    dx = e.clientX - rect.left;
+    dy = e.clientY - rect.top;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    popoverEl.style.left = (e.clientX - dx) + 'px';
+    popoverEl.style.top = (e.clientY - dy) + 'px';
+    popoverEl.style.right = 'auto';
+  });
+  document.addEventListener('mouseup', () => { dragging = false; });
+
+  // Initial sample
+  textarea.value = '1300\n- 500\n= \n+ 200\n= \n';
+  doEval();
+  log('✓ Popover UI opened with sample data', 'ok');
+  log('Try typing: angka → operator → angka → =', 'info');
+  textarea.focus();
+}
+
+function closeTape() {
+  if (popoverEl) {
+    document.body.removeChild(popoverEl);
+    popoverEl = null;
+    log('Popover closed', 'info');
+  }
+}
+
+log('Harness ready. Click "Buka RecallTape UI" untuk mulai test.', 'info');
+log('Parser v3.14.9 — auto-newline saat ketik + - * / =', 'info');
+</script>
+</body>
+</html>

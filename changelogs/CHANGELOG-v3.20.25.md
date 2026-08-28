@@ -1,7 +1,7 @@
 # CHANGELOG v3.20.25 — Import Paket Link
 
 **Tanggal:** 2026-08-04
-**Baseline:** v3.20.24-chrome-stable
+**Baseline:** v3.20.24
 **Tipe:** Feature addition (non-breaking)
 
 ---

@@ -1,4 +1,4 @@
-# RecallFox Chrome v3.20.20 — HANDOVER REPORT format + Adaptive skip empty sections
+# RecallFox v3.20.20 — HANDOVER REPORT format + Adaptive skip empty sections
 
 **Release date:** 2026-08-02
 **Base:** v3.20.19 (Anchor AI Answer)
@@ -195,8 +195,8 @@ CHANGELOG-v3.20.20.md      | new (this file)
 
 ## Compatibility
 
+- **Firefox**: tag `v3.20.20` + `v3.20.20-stable`
 - **Chrome**: tag `v3.20.20-chrome` + `v3.20.20-chrome-stable`
-- **Firefox equivalent**: tag `v3.20.20` + `v3.20.20-stable` di https://github.com/agungkesmas/recallfox
 - Code 100% identical antara Firefox dan Chrome untuk fitur Relay Point (prompt + handlers + UI).
 - Tidak ada perubahan schema database. Resume context tetap disimpan di `vault_items.resumeContext` (lokal saja, tidak sync cloud).
 

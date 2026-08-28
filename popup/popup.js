@@ -28,6 +28,8 @@ import { buildTree, createGroup, isGroupItem, getParentId, setParentId, aiAutoGr
 // v3.20.32: Magic Command — natural language move items to folder + folder archive
 import { parseMagicCommand, parseMultiStepCommand, applyMagicCommand, applyMultiStepMagicCommand, archiveFolderRecursive, unarchiveFolderRecursive } from '../lib/magic-command.js';
 import { dbToPercent, percentToDb, formatPercent, MIN_DB, MAX_DB } from '../lib/volume.js';
+import * as Pomodoro from '../lib/pomodoro.js';
+import { parseTodoInput, formatRecurring } from '../lib/todoist-parse.js';
 import { getUpcomingFasts, formatHijriDate, parseHijriString, HIJRI_MONTHS, getSunnahFast } from '../lib/islamicCalendar.js';
 import { getQuranStatus, getExerciseStatus, logQuranPages, logExerciseDone, snoozeExercise, getHabits } from '../lib/habits.js';
 import { getUserBlocklist, addUserBlocklistEntry, removeUserBlocklistEntry } from '../lib/storage.js';
@@ -63,16 +65,13 @@ async function removeElementBlockerSelector(domain, selector) {
     return { ok: false, error: e.message };
   }
 }
-// v3.4: Toggle floating Guardian panel
-async function setGuardianFloatingEnabled(enabled) {
-  await saveSettings({ contentGuardShowFloating: !!enabled });
-  // Broadcast ke semua tab supaya panel langsung update
-  try {
-    const tabs = await browser.tabs.query({});
-    for (const t of tabs) {
-      browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
-    }
-  } catch (e) {}
+// v3.21.0: setGuardianFloatingEnabled dihapus — panel mengambang Pelindung Konten
+// sudah dibongkar (lihat instruksi §4.7). Fungsi ini tetap dipertahankan sebagai
+// no-op wrapper supaya kode lama yang memanggilnya tidak crash.
+async function setGuardianFloatingEnabled(_enabled) {
+  // No-op: setting contentGuardShowFloating tetap ditulis (untuk migrasi) tapi
+  // content script tidak lagi menampilkan panel mengambang.
+  return { ok: true };
 }
 
 // ============ State ============
@@ -113,6 +112,13 @@ let currentNoteGroup = '';
 let notesSortMode = 'recent';        // 'recent' | 'title' | 'created'
 let notesViewMode = 'list';          // 'list' | 'grid'
 let notesSearchQuery = '';           // string, case-insensitive
+let notesFilterDone = 'all';         // all | active | done — v3.21.18 todo ala Todoist
+// P0 — filter Todoist ala mockup: Hari ini / Terlambat / P1-P4 / #tag
+let notesFilterDue = 'all';        // all | today | overdue
+let notesFilterPriority = 'all';   // all | 1 | 2 | 3 | 4
+let notesFilterLabel = '';         // '' = semua, atau nama label spesifik (lowercase)
+// P2 — filter recurring
+let notesFilterRecurring = 'all';  // all | recurring
 
 // ============ Helpers ============
 const $ = (s) => document.querySelector(s);
@@ -5353,6 +5359,7 @@ function itemSheet(id) {
           return '<button class="act" data-a="toggle-active">' + ICONS.zap + '<div>' + (isActive ? '🔴 Nonaktifkan Konteks' : '🟢 Aktifkan Konteks') + '<div class="ad">' + (isActive ? 'Tidak auto-prepend saat inject prompt' : 'Auto-prepend saat inject prompt (maks 3)') + '</div></div></button>';
         })() : '')
       + '<button class="act" data-a="edit">' + ICONS.edit + '<div>Edit judul, isi, tag…</div></button>'
+      // v3.16.5: Ringkas snapshot dengan AI — hemat token saat inject ke AI chat
       // v3.21.10: Snapshot menu — 2 tombol baru (On-Demand OmniRouter + Raw Copy)
       // Hapus 4 tombol lama: summarize, continue-ai, copy-resume, gen-resume
       + (it.type === 'snapshot' ? '<button class="act" data-a="copy-adhd">' + ICONS.copy + '<div>📋 Salin Handover Brief (AI)<div class="ad">Olah via OmniRouter on-demand → Handover Brief ke clipboard</div></div></button>' : '')
@@ -7196,30 +7203,71 @@ function notesSorted() {
     arr = arr.filter(n => {
       const title = (n.title || '').toLowerCase();
       const body = stripHtmlForPreview(n.body || '').toLowerCase();
-      return title.includes(q) || body.includes(q);
+      const labelsTxt = (n.labels || []).join(' ').toLowerCase();
+      const groupTxt = (n.group || '').toLowerCase();
+      return title.includes(q) || body.includes(q) || labelsTxt.includes(q) || groupTxt.includes(q);
     });
   }
-  // v3.13.0 (Issue #3): Apply sort mode (pinned selalu di atas kecuali sort by title).
+  // v3.21.18: Filter done/aktif/selesai ala Todoist
+  if (notesFilterDone === 'active') arr = arr.filter(n => !n.done);
+  else if (notesFilterDone === 'done') arr = arr.filter(n => n.done);
+  // P0: Filter Hari ini / Terlambat
+  if (notesFilterDue === 'today') {
+    arr = arr.filter(n => {
+      if (!n.dueAt) return false;
+      const d = new Date(n.dueAt);
+      const now = new Date();
+      return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+    });
+  } else if (notesFilterDue === 'overdue') {
+    arr = arr.filter(n => n.dueAt && new Date(n.dueAt) < new Date() && !n.done);
+  }
+  // P0: Filter P1-P4
+  if (notesFilterPriority !== 'all') {
+    const p = parseInt(notesFilterPriority);
+    arr = arr.filter(n => (n.priority||4) === p);
+  }
+  // P0: Filter #tag
+  if (notesFilterLabel) {
+    const lab = notesFilterLabel.toLowerCase();
+    arr = arr.filter(n => (n.labels||[]).map(x=>String(x).toLowerCase()).includes(lab));
+  }
+  // P2: Filter recurring (🔁)
+  if (notesFilterRecurring==='recurring') {
+    arr = arr.filter(n => !!n.recurring);
+  }
+  // v3.21.19: done=false di atas, done=true di bawah, lalu priority P1->P4, lalu pinned, lalu dueAt terdekat
+  const doneFirst = (a,b) => (a.done?1:0) - (b.done?1:0);
+  const prioFirst = (a,b) => ((a.priority||4) - (b.priority||4));
+  const dueFirst = (a,b) => {
+    if (!a.dueAt && !b.dueAt) return 0;
+    if (!a.dueAt) return 1;
+    if (!b.dueAt) return -1;
+    return new Date(a.dueAt) - new Date(b.dueAt);
+  };
   const pinnedFirst = (a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
   if (notesSortMode === 'title') {
-    // Sort by title A-Z (pinned tetap di atas)
     return arr.slice().sort((a, b) => {
-      const p = pinnedFirst(a, b);
-      if (p !== 0) return p;
+      const d = doneFirst(a,b); if(d!==0) return d;
+      const pr = prioFirst(a,b); if(pr!==0) return pr;
+      const p = pinnedFirst(a, b); if(p!==0) return p;
       return (a.title || '').localeCompare(b.title || '', 'id', { sensitivity: 'base' });
     });
   } else if (notesSortMode === 'created') {
-    // Sort by createdAt desc (newest first), pinned di atas
     return arr.slice().sort((a, b) => {
-      const p = pinnedFirst(a, b);
-      if (p !== 0) return p;
+      const d = doneFirst(a,b); if(d!==0) return d;
+      const pr = prioFirst(a,b); if(pr!==0) return pr;
+      const p = pinnedFirst(a, b); if(p!==0) return p;
+      const du = dueFirst(a,b); if(du!==0) return du;
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
   }
-  // Default: 'recent' — by updatedAt desc (pinned di atas)
+  // Default: 'recent' — done, prio, pinned, dueAt, updatedAt
   return arr.slice().sort((a, b) => {
-    const p = pinnedFirst(a, b);
-    if (p !== 0) return p;
+    const d = doneFirst(a,b); if(d!==0) return d;
+    const pr = prioFirst(a,b); if(pr!==0) return pr;
+    const p = pinnedFirst(a, b); if(p!==0) return p;
+    const du = dueFirst(a,b); if(du!==0) return du;
     return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
   });
 }
@@ -7262,29 +7310,58 @@ async function renderNotes() {
         }).join('')
       + '</div>';
   }
+  const doneFilterHtml = '<div style="display:flex;gap:6px;margin-bottom:8px"><button class="addbtn' + (notesFilterDone==='all'?' on':'') + '" data-done-filter="all" style="padding:4px 8px;font-size:11px">Semua</button><button class="addbtn' + (notesFilterDone==='active'?' on':'') + '" data-done-filter="active" style="padding:4px 8px;font-size:11px">Aktif</button><button class="addbtn' + (notesFilterDone==='done'?' on':'') + '" data-done-filter="done" style="padding:4px 8px;font-size:11px">Selesai</button></div>';
+  // P0: Todoist chip row — Hari ini / Terlambat / P1-P4 / #tag (counts from mockup)
+  const baseForChips = currentNotes.filter(n=>!n.archived);
+  const isToday = (d)=>{ const n=new Date(); return d.getFullYear()===n.getFullYear() && d.getMonth()===n.getMonth() && d.getDate()===n.getDate(); };
+  const todayCount = baseForChips.filter(n=> n.dueAt && isToday(new Date(n.dueAt))).length;
+  const overdueCount = baseForChips.filter(n=> n.dueAt && new Date(n.dueAt) < new Date() && !n.done).length;
+  const recurringCount = baseForChips.filter(n=> !!n.recurring).length;
+  const prioCounts = [1,2,3,4].map(p=> baseForChips.filter(n=> (n.priority||4)===p).length);
+  const labelCounts = {};
+  baseForChips.forEach(n=> (n.labels||[]).forEach(l=>{ const k=String(l).toLowerCase(); labelCounts[k]=(labelCounts[k]||0)+1; }));
+  const topLabels = Object.entries(labelCounts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  let todoChipsHtml = '';
+  if (baseForChips.length) {
+    todoChipsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+      + (todayCount? '<button class="addbtn'+(notesFilterDue==='today'?' on':'')+'" data-due-filter="today" style="padding:4px 8px;font-size:11px;'+(notesFilterDue==='today'?'':'')+'">Hari ini '+todayCount+'</button>' : '')
+      + (overdueCount? '<button class="addbtn'+(notesFilterDue==='overdue'?' on':'')+'" data-due-filter="overdue" style="padding:4px 8px;font-size:11px;background:'+(notesFilterDue==='overdue'?'#F87171;color:#fff;border-color:#F87171':'')+'">Terlambat '+overdueCount+'</button>' : '')
+      + (recurringCount? '<button class="addbtn'+(notesFilterRecurring==='recurring'?' on':'')+'" data-recurring-filter="recurring" style="padding:4px 8px;font-size:11px;'+(notesFilterRecurring==='recurring'?'background:#10B981;color:#fff;border-color:#10B981':'')+'">🔁 '+recurringCount+'</button>' : '')
+      + prioCounts.map((c,pIdx)=>{ if(!c) return ''; const p=pIdx+1; const col={1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[p]; const on=notesFilterPriority===String(p); return '<button class="addbtn'+(on?' on':'')+'" data-prio-filter="'+p+'" style="padding:4px 8px;font-size:11px;border-left:3px solid '+col+';'+(on?'background:'+col+';color:#fff':'' )+'">P'+p+' '+c+'</button>'; }).join('')
+      + topLabels.map(([lab,cnt])=>{ const on=notesFilterLabel===lab; return '<button class="addbtn'+(on?' on':'')+'" data-label-filter="'+esc(lab)+'" style="padding:4px 8px;font-size:11px;'+(on?'background:var(--primary);color:#fff':'' )+'">#'+esc(lab)+' '+cnt+'</button>'; }).join('')
+      + ((notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel || notesFilterRecurring!=='all') ? '<button class="addbtn" data-clear-todo-filter style="padding:4px 8px;font-size:11px">✕ Clear</button>' : '')
+      + '</div>';
+  }
   if (!currentNotes.length) {
-    list.innerHTML = toolbarHtml + groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
+    list.innerHTML = toolbarHtml + doneFilterHtml + todoChipsHtml + groupChipsHtml + '<div class="notes-empty"><div class="big">📝</div>Belum ada catatan.<br><span style="font-size:11px">Klik <b>Catatan Baru</b> — tersimpan otomatis.</span></div>';
     bindNotesToolbar();
     bindGroupChips();
+    // bind done filter
+    list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
+    bindTodoChips();
     return;
   }
   const sorted = notesSorted();
   if (!sorted.length) {
-    // v3.13.0: Empty state bisa karena grup kosong ATAU search tidak ketemu
+    // v3.13.0: Empty state bisa karena grup kosong ATAU search tidak ketemu ATAU filter done
     let emptyMsg;
     if (notesSearchQuery) {
       emptyMsg = '<div class="notes-empty"><div class="big">🔍</div>Tidak ada catatan cocok dengan "<b>' + esc(notesSearchQuery) + '</b>".<br><span style="font-size:11px">Coba kata kunci lain atau hapus filter pencarian.</span></div>';
+    } else if (notesFilterDone!=='all' || notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel || notesFilterRecurring!=='all') {
+      emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan cocok filter.<br><span style="font-size:11px">Clear filter atau ganti kriteria.</span></div>';
     } else {
       emptyMsg = '<div class="notes-empty"><div class="big">📭</div>Tidak ada catatan di grup "' + esc(currentNoteGroup) + '".<br><span style="font-size:11px">Pilih grup lain atau buat catatan baru di grup ini.</span></div>';
     }
-    list.innerHTML = toolbarHtml + groupChipsHtml + emptyMsg;
+    list.innerHTML = toolbarHtml + doneFilterHtml + todoChipsHtml + groupChipsHtml + emptyMsg;
     bindNotesToolbar();
     bindGroupChips();
+    list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
+    bindTodoChips();
     return;
   }
   // v3.13.0: Tambah class 'notes-grid-mode' ke list kalau viewMode = 'grid'
   list.className = 'notes-list' + (notesViewMode === 'grid' ? ' notes-grid-mode' : '');
-  list.innerHTML = toolbarHtml + groupChipsHtml + sorted.map(n => {
+  list.innerHTML = toolbarHtml + doneFilterHtml + todoChipsHtml + groupChipsHtml + sorted.map(n => {
     const titleHtml = n.title ? '<div class="note-title">' + esc(n.title) + '</div>' : '';
     // v3.13.0 (Issue #4): Strip HTML untuk preview — catatan body sekarang bisa berisi HTML
     // (paste tabel, bold, list, dll). Preview di list harus plain text.
@@ -7292,6 +7369,18 @@ async function renderNotes() {
     const plainBody = stripHtmlForPreview(n.body || '').slice(0, 400).replace(/\s+/g, ' ').trim();
     const previewHtml = plainBody ? esc(plainBody) : '<em style="color:var(--muted)">(kosong)</em>';
     const groupTag = n.group ? '<span class="ngroup-tag">📁 ' + esc(n.group) + '</span>' : '';
+    // P1: subtasks preview (mockup 97-102) — max 3 baris + progress 2/5
+    const subtasksArr = Array.isArray(n.subtasks) ? n.subtasks : [];
+    const doneSub = subtasksArr.filter(s=>s.done).length;
+    const totalSub = subtasksArr.length;
+    let subtasksHtml = '';
+    if (totalSub) {
+      const shown = subtasksArr.slice(0,3);
+      subtasksHtml = '<div class="subtasks" style="margin-top:6px;font-size:11px;line-height:1.7">'
+        + shown.map(s=> '<div class="'+(s.done?'done':'todo')+'" data-subtoggle="'+n.id+':'+s.id+'" style="color:'+(s.done?'#6EE7B7':'#A3B0C2')+';cursor:pointer;'+(s.done?'text-decoration:line-through':'')+'">'+(s.done?'☑ ':'☐ ')+esc(s.text)+'</div>').join('')
+        + (totalSub>3 ? '<div style="opacity:0.7">+'+(totalSub-3)+' lagi</div>' : '')
+        + '<div style="font-size:10px;color:#6EE7B7;margin-top:2px">'+doneSub+'/'+totalSub+' selesai</div></div>';
+    }
     let batchHtml = '';
     if (notesBatchMode) {
       const checked = notesBatchSelected.has(n.id) ? ' checked' : '';
@@ -7303,17 +7392,39 @@ async function renderNotes() {
     const noteLocHtml = noteLoc
       ? '<div style="font-size:10px;color:var(--green);margin-top:2px">\uD83D\uDCCD ' + esc((noteLoc.address || (noteLoc.lat?.toFixed(4) + ', ' + noteLoc.lng?.toFixed(4))).slice(0, 40)) + '</div>'
       : '';
-    return '<div class="note-card nc-' + (n.color || 'default') + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary)"' : '') + '>'
+    const doneCls = n.done ? ' done' : '';
+    const prio = [1,2,3,4].includes(n.priority)?n.priority:4;
+    const prioColor = {1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[prio];
+    const prioLabel = {1:'P1',2:'P2',3:'P3',4:'P4'}[prio];
+    const prioPill = prio!==4 ? '<button data-prio-click="'+prio+'" title="Filter P'+prio+'" style="background:'+prioColor+';color:#fff;padding:1px 5px;border-radius:4px;font-size:10px;font-weight:700;border:none;cursor:pointer">'+prioLabel+'</button>' : '';
+    let dueHtml = '';
+    if (n.dueAt) {
+      const isOverdue = new Date(n.dueAt) < new Date() && !n.done;
+      const dueStr = (()=>{ try{ const d=new Date(n.dueAt); return d.toLocaleDateString('id-ID',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch(e){ return n.dueAt; } })();
+      const dueFilterVal = isOverdue ? 'overdue' : 'today';
+      dueHtml = '<button data-due-click="'+dueFilterVal+'" title="Filter '+dueFilterVal+'" style="background:transparent;border:none;color:'+(isOverdue?'#F87171':'#FBBF24')+';font-weight:600;cursor:pointer;padding:0;font-size:11px">📅 '+esc(dueStr)+(isOverdue?' • Terlambat':'')+'</button>';
+    }
+    const labelsHtml = (n.labels||[]).length ? (n.labels||[]).map(l=>'<button data-label-click="'+esc(l.toLowerCase())+'" title="Filter #'+esc(l)+'" style="background:transparent;border:none;color:var(--primary);cursor:pointer;padding:0;font-size:11px">#'+esc(l)+'</button>').join(' ') : '';
+    const recurringHtml = n.recurring ? '<button data-recurring-click="recurring" title="Filter berulang" style="background:transparent;border:none;color:#10B981;cursor:pointer;padding:0;font-size:11px">'+esc(formatRecurring(n.recurring))+'</button>' : '';
+    return '<div class="note-card nc-' + (n.color || 'default') + doneCls + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative;border-left:4px solid '+prioColor+'"' : ' style="position:relative;border-left:4px solid '+prioColor+';' + (n.done?' opacity:0.55;background:var(--surface-2)':'') + '"') + '>'
+      + '<div style="display:flex;align-items:flex-start;gap:6px">'
+      + '<input type="checkbox" class="note-done-check" data-done="' + n.id + '" ' + (n.done?'checked':'') + ' title="' + (n.done?'Tandai belum selesai':'Tandai selesai') + '" style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);margin-top:2px;flex:none">'
       + batchHtml
-      + '<div class="note-card-main">'
-      + titleHtml
-      + '<div class="note-body-txt">' + previewHtml + '</div>'
+      + '</div>'
+      + '<button class="note-float-btn" data-float="' + n.id + '" title="Buka mengambang — nyambung autosave" style="position:absolute;top:6px;right:6px;padding:3px 6px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--primary);cursor:pointer;z-index:2">⧉</button>'
+      + '<div class="note-card-main" style="' + (n.done?'opacity:0.7':'') + '">'
+      + '<div class="note-title" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + (n.title?esc(n.title):'') + '</div>'
+      + '<div class="note-body-txt" style="' + (n.done?'text-decoration:line-through;color:var(--muted)':'') + '">' + previewHtml + '</div>'
       + noteLocHtml
-      + '<div class="note-meta">' + (n.pinned ? '<span class="pin">📌</span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
+      + subtasksHtml
+      + (dueHtml || labelsHtml || recurringHtml ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;font-size:11px">'+ [dueHtml, labelsHtml, recurringHtml].filter(Boolean).join(' <span style="color:var(--muted)">•</span> ') +'</div>' : '')
+      + '<div class="note-meta">' + prioPill + (prioPill?' <span class="cdot"></span>':'') + (n.pinned ? '<span class="pin">📌</span>' : '') + (n.done ? '<span style="color:var(--green);font-weight:600">✓ Selesai</span><span class="cdot"></span>' : '') + groupTag + '<span class="cdot"></span><span>' + timeAgo(n.updatedAt || n.createdAt) + '</span></div>'
       + '</div>'
       + '</div>';
   }).join('');
   list.querySelectorAll('.note-card').forEach(c => c.addEventListener('click', (e) => {
+    // Jika klik tombol mengambang, checkbox done, pill P1/#tag/📅/🔁, atau subtask toggle, jangan buka editor
+    if (e.target.closest('[data-float]') || e.target.closest('[data-done]') || e.target.closest('[data-prio-click]') || e.target.closest('[data-due-click]') || e.target.closest('[data-label-click]') || e.target.closest('[data-recurring-click]') || e.target.closest('[data-subtoggle]')) return;
     // v3.9.0 (Issue 7): In batch mode, toggle selection instead of opening editor
     if (notesBatchMode) {
       const nid = c.dataset.nid;
@@ -7327,8 +7438,78 @@ async function renderNotes() {
     // Aksi Hapus/Arsip/Pin ada di footer editor. Aksi massal pakai toggle batch.
     openNoteEditor(c.dataset.nid);
   }));
+  // v3.21.15: Tombol ⧉ Mengambang — buka floating nyambung autosave vault
+  list.querySelectorAll('[data-float]').forEach(btn => btn.addEventListener('click', async (e) => {
+    e.stopPropagation(); e.preventDefault();
+    const nid = btn.dataset.float;
+    const note = currentNotes.find(n=>n.id===nid);
+    if (!note) return;
+    try {
+      // Cek tab aktif — support http/https/file + PDF viewer
+      let tabs = [];
+      try { tabs = await browser.tabs.query({active:true, currentWindow:true}); } catch(e){
+        // Fallback untuk sidebar iframe di Firefox (browser.tabs undefined)
+        try{ window.parent.postMessage({type:'RF_OPEN_NOTE_VAULT', noteId: nid, text: note.body||''}, '*'); toast('📝 Mengambang nyambung'); return; }catch(ee){}
+      }
+      const tab = tabs && tabs[0];
+      const isWebOrFile = tab && tab.id && (/^(https?|file):/i.test(tab.url||'') || /\.pdf(\?|#|$)/i.test(tab.url||''));
+      if (isWebOrFile) {
+        try {
+          await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
+          toast('📝 Mengambang nyambung vault');
+          if(!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},300);
+          return;
+        } catch(err){
+          try{
+            await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/notes-cs.js']});
+            await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
+            toast('📝 Mengambang nyambung');
+            return;
+          }catch(e2){
+            console.warn('float inject failed',e2.message);
+            // PDF viewer resource:// fallback: buka popup window kecil
+            if (tab.url && /\.pdf/i.test(tab.url)) {
+              try{
+                const url = browser.runtime.getURL('popup/popup.html?floatNote=' + encodeURIComponent(nid));
+                await browser.windows.create({url, type:'popup', width:360, height:560});
+                toast('📝 Dibuka di jendela popup (PDF)');
+                return;
+              }catch(e3){}
+            }
+          }
+        }
+      }
+      // Fallback: coba via parent postMessage (untuk sidebar iframe)
+      try{ window.parent.postMessage({type:'RF_OPEN_NOTE_VAULT', noteId: nid, text: note.body||''}, '*'); toast('📝 Mengambang'); return; }catch(e){}
+      toast('Buka halaman web dulu untuk mengambang', false);
+    } catch(e){ console.warn('float failed',e); }
+  }));
+  // v3.21.18: done filter chips
+  list.querySelectorAll('[data-done-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterDone=b.dataset.doneFilter; renderNotes(); }));
+  // v3.21.18: todo checkbox — coret + pindah bawah
+  list.querySelectorAll('[data-done]').forEach(cb=>{
+    const handler = async (e)=>{ e.stopPropagation(); const nid=cb.dataset.done; const n=currentNotes.find(x=>x.id===nid); if(!n) return; const newDone = cb.checked !== undefined ? cb.checked : !n.done; await updateNote(nid, {done: newDone, doneAt: newDone?new Date().toISOString():null}); renderNotes(); };
+    cb.addEventListener('click', handler);
+    cb.addEventListener('change', handler);
+  });
+  // P1: subtasks toggle langsung dari card
+  list.querySelectorAll('[data-subtoggle]').forEach(el=>{
+    el.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const [nid,sid]=el.dataset.subtoggle.split(':');
+      const n=currentNotes.find(x=>x.id===nid);
+      if(!n || !Array.isArray(n.subtasks)) return;
+      const idx=n.subtasks.findIndex(s=>s.id===sid);
+      if(idx<0) return;
+      const ns=[...n.subtasks];
+      ns[idx]={...ns[idx], done:!ns[idx].done, doneAt: !ns[idx].done?new Date().toISOString():null};
+      await updateNote(nid, {subtasks: ns});
+      renderNotes();
+    });
+  });
   bindNotesToolbar();
   bindGroupChips();
+  bindTodoChips();
 }
 
 // v3.13.0 (Issue #3): Bind search/sort/view toolbar events.
@@ -7415,6 +7596,32 @@ function bindGroupChips() {
     renderNotes();
   }));
 }
+// P0: Bind Todoist chip row (Hari ini/Terlambat/P1-P4/#tag)
+function bindTodoChips() {
+  $$('[data-due-filter]').forEach(b=> b.addEventListener('click', ()=>{
+    const v=b.dataset.dueFilter;
+    notesFilterDue = (notesFilterDue===v ? 'all' : v);
+    renderNotes();
+  }));
+  $$('[data-prio-filter]').forEach(b=> b.addEventListener('click', ()=>{
+    const v=b.dataset.prioFilter;
+    notesFilterPriority = (notesFilterPriority===v ? 'all' : v);
+    renderNotes();
+  }));
+  $$('[data-label-filter]').forEach(b=> b.addEventListener('click', ()=>{
+    const v=b.dataset.labelFilter;
+    notesFilterLabel = (notesFilterLabel===v ? '' : v);
+    renderNotes();
+  }));
+  $$('[data-recurring-filter]').forEach(b=> b.addEventListener('click', ()=>{ notesFilterRecurring = (notesFilterRecurring==='recurring' ? 'all' : 'recurring'); renderNotes(); }));
+  const clr = $('[data-clear-todo-filter]');
+  if (clr) clr.addEventListener('click', ()=>{ notesFilterDue='all'; notesFilterPriority='all'; notesFilterLabel=''; notesFilterRecurring='all'; renderNotes(); });
+  // Card pills clickable → set filter (delegated after render)
+  $$('[data-prio-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.prioClick; notesFilterPriority=(notesFilterPriority===v?'all':v); renderNotes(); }));
+  $$('[data-due-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.dueClick; notesFilterDue=(notesFilterDue===v?'all':v); renderNotes(); }));
+  $$('[data-label-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); const v=b.dataset.labelClick; notesFilterLabel=(notesFilterLabel===v?'':v); renderNotes(); }));
+  $$('[data-recurring-click]').forEach(b=> b.addEventListener('click', (e)=>{ e.stopPropagation(); notesFilterRecurring=(notesFilterRecurring==='recurring'?'all':'recurring'); renderNotes(); }));
+}
 async function newNote() {
   // v3.7.2 (Issue 5): Catatan baru otomatis masuk grup yang sedang difilter.
   const n = await addNote('', { color: 'yellow', pinned: false, group: currentNoteGroup || '' });
@@ -7444,8 +7651,116 @@ function openNoteEditor(noteId) {
     + '<input class="f" id="nGroup" value="' + esc(n.group || '') + '" placeholder="mis. Proyek A, Riset B (opsional)" style="margin-bottom:8px">'
     + '<div class="hintbox" style="font-size:11px">Catatan dengan nama grup yang sama akan terkumpul di filter grup di atas daftar.</div>'
     + '</div>'
+    + '<div class="card"><h3>Prioritas & Tanggal</h3>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button class="btn ' + (n.priority===1?'btn-p':'btn-g') + '" data-prio="1" style="padding:4px 8px;font-size:11px">🔴 P1</button>'
+    + '<button class="btn ' + (n.priority===2?'btn-p':'btn-g') + '" data-prio="2" style="padding:4px 8px;font-size:11px">🟠 P2</button>'
+    + '<button class="btn ' + (n.priority===3?'btn-p':'btn-g') + '" data-prio="3" style="padding:4px 8px;font-size:11px">🔵 P3</button>'
+    + '<button class="btn ' + ((n.priority===4||!n.priority)?'btn-p':'btn-g') + '" data-prio="4" style="padding:4px 8px;font-size:11px">⚪ P4</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
+    + '<input class="f" id="nDueAt" type="datetime-local" value="' + (n.dueAt ? new Date(n.dueAt).toISOString().slice(0,16) : '') + '" style="flex:1;min-width:140px">'
+    + '<button class="btn btn-g" id="nDueClear" style="padding:4px 8px;font-size:11px">Hapus tgl</button>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">'
+    + '<select class="f" id="nRecurring" style="flex:1">'
+    + '<option value="" ' + (!n.recurring?'selected':'') + '>Tidak berulang</option>'
+    + '<option value="daily" ' + (n.recurring&&n.recurring.freq==='daily'?'selected':'') + '>🔁 Tiap hari</option>'
+    + '<option value="weekly" ' + (n.recurring&&n.recurring.freq==='weekly'&&!n.recurring.byDay?'selected':'') + '>🔁 Tiap minggu</option>'
+    + '<option value="weekly:senin" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='senin'?'selected':'') + '>🔁 Tiap Senin</option>'
+    + '<option value="weekly:selasa" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='selasa'?'selected':'') + '>🔁 Tiap Selasa</option>'
+    + '<option value="weekly:rabu" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='rabu'?'selected':'') + '>🔁 Tiap Rabu</option>'
+    + '<option value="weekly:kamis" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='kamis'?'selected':'') + '>🔁 Tiap Kamis</option>'
+    + '<option value="weekly:jumat" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='jumat'?'selected':'') + '>🔁 Tiap Jumat</option>'
+    + '<option value="weekly:sabtu" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='sabtu'?'selected':'') + '>🔁 Tiap Sabtu</option>'
+    + '<option value="weekly:minggu" ' + (n.recurring&&n.recurring.byDay&&n.recurring.byDay[0]==='minggu'?'selected':'') + '>🔁 Tiap Minggu</option>'
+    + '<option value="monthly" ' + (n.recurring&&n.recurring.freq==='monthly'?'selected':'') + '>🔁 Tiap bulan</option>'
+    + '<option value="yearly" ' + (n.recurring&&n.recurring.freq==='yearly'?'selected':'') + '>🔁 Tiap tahun</option>'
+    + '</select>'
+    + '</div>'
+    + '<div style="display:flex;gap:6px;align-items:center">'
+    + '<input class="f" id="nLabels" value="' + esc((n.labels||[]).join(', ')) + '" placeholder="#tag, pisah koma (mis. #rumah, #kerja)" style="flex:1">'
+    + '</div>'
+    + '<div class="hintbox" style="font-size:11px;margin-top:6px">Ketik <code>besok jam 7 !1 #tag</code> di judul/isi → otomatis jadi tanggal & prioritas (Todoist)</div>'
+    + '</div>'
+    + '<div class="card"><h3>Subtasks <span id="subProgress" style="font-size:11px;color:var(--muted)">'+(Array.isArray(n.subtasks)?n.subtasks.filter(s=>s.done).length:0)+'/'+(Array.isArray(n.subtasks)?n.subtasks.length:0)+' selesai</span></h3>'
+    + '<div id="subtasksList" style="display:flex;flex-direction:column;gap:6px"></div>'
+    + '<div style="display:flex;gap:6px;margin-top:8px"><input class="f" id="newSubInput" placeholder="Tambah subtask + Enter (max 20)" style="flex:1"><button class="btn btn-g" id="addSubBtn" style="padding:4px 10px">+</button></div>'
+    + '<div class="hintbox" style="font-size:10px;margin-top:6px">☑/☐ di card bisa dicentang langsung tanpa buka editor.</div>'
+    + '</div>'
     + '<div class="card"><h3>Warna</h3><div class="ndots">' + NCOLORS.map(c => '<button class="d-' + c + (n.color === c ? ' on' : '') + '" data-c="' + c + '" title="' + c + '"></button>').join('') + '</div></div>'
     + '<div class="hintbox">🕑 Terakhir disimpan: <b id="nMeta">' + timeAgo(n.updatedAt || n.createdAt) + '</b> · Catatan tersimpan lokal & ikut backup otomatis.</div>';
+  // P1: init subtasks editor (Todoist checklist)
+  let editorSubtasks = Array.isArray(n.subtasks) ? n.subtasks.map(s=> ({...s})) : [];
+  function renderEditorSubtasks(){
+    const list = document.getElementById('subtasksList');
+    const prog = document.getElementById('subProgress');
+    if(!list) return;
+    if(prog) prog.textContent = editorSubtasks.filter(s=>s.done).length + '/' + editorSubtasks.length + ' selesai';
+    if(!editorSubtasks.length){
+      list.innerHTML = '<div style="font-size:11px;color:var(--muted);padding:4px 0">Belum ada subtasks. Tambah di bawah.</div>';
+      return;
+    }
+    list.innerHTML = editorSubtasks.map(s=> '<div style="display:flex;gap:6px;align-items:center">'
+      + '<input type="checkbox" data-subid="'+s.id+'" '+(s.done?'checked':'')+' style="width:16px;height:16px;accent-color:var(--primary)">'
+      + '<input class="f" data-subinput="'+s.id+'" value="'+esc(s.text)+'" style="flex:1;padding:4px 6px;font-size:12px;'+(s.done?'text-decoration:line-through;opacity:0.6':'')+'">'
+      + '<button class="btn btn-d" data-subdel="'+s.id+'" style="padding:4px 6px;font-size:11px">✕</button>'
+      + '</div>').join('');
+    list.querySelectorAll('[data-subid]').forEach(cb=>{
+      cb.addEventListener('change', async ()=>{
+        const sid=cb.dataset.subid;
+        const idx=editorSubtasks.findIndex(x=>x.id===sid);
+        if(idx<0) return;
+        editorSubtasks[idx].done=cb.checked;
+        editorSubtasks[idx].doneAt=cb.checked?new Date().toISOString():null;
+        await updateNote(n.id, {subtasks: editorSubtasks});
+        renderEditorSubtasks();
+        markSaved();
+      });
+    });
+    list.querySelectorAll('[data-subinput]').forEach(inp=>{
+      inp.addEventListener('change', async ()=>{
+        const sid=inp.dataset.subinput;
+        const idx=editorSubtasks.findIndex(x=>x.id===sid);
+        if(idx<0) return;
+        const v=inp.value.trim().slice(0,200);
+        if(!v){ editorSubtasks.splice(idx,1); }
+        else editorSubtasks[idx].text=v;
+        await updateNote(n.id, {subtasks: editorSubtasks});
+        renderEditorSubtasks();
+        markSaved();
+      });
+      inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); inp.blur(); } });
+    });
+    list.querySelectorAll('[data-subdel]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const sid=btn.dataset.subdel;
+        editorSubtasks = editorSubtasks.filter(x=>x.id!==sid);
+        await updateNote(n.id, {subtasks: editorSubtasks});
+        renderEditorSubtasks();
+        markSaved();
+      });
+    });
+  }
+  // render initial
+  setTimeout(renderEditorSubtasks, 0);
+  // add handlers
+  setTimeout(()=>{
+    const addBtn=document.getElementById('addSubBtn');
+    const newInp=document.getElementById('newSubInput');
+    async function doAddSub(){
+      const v=(newInp.value||'').trim().slice(0,200);
+      if(!v) return;
+      if(editorSubtasks.length>=20){ toast('Maks 20 subtasks', false); return; }
+      editorSubtasks.push({id:'s_'+Math.random().toString(36).slice(2,8), text:v, done:false, doneAt:null});
+      newInp.value='';
+      await updateNote(n.id, {subtasks: editorSubtasks});
+      renderEditorSubtasks();
+      markSaved();
+    }
+    if(addBtn) addBtn.addEventListener('click', doAddSub);
+    if(newInp) newInp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); doAddSub(); } });
+  }, 0);
   // v3.11.7-fix (Issue #2 gap): Note editor footer konsisten dengan editor lain.
   // Sebelumnya: 5 tombol flex:none + spacer span flex:1 → di sidebar sempit, tombol
   // "Selesai" terdorong ke kanan ekstrim / wrap ke baris baru tidak rapi.
@@ -7463,16 +7778,75 @@ function openNoteEditor(noteId) {
     const st = $('#pageSaveState'); st.textContent = 'Tersimpan ✓'; st.classList.add('ok');
     renderNotes();
   }
-  // v3.7.2 (Issue 5): Auto-save title + body + group dengan debounce yang sama.
-  // v3.13.0 (Issue #4): Body sekarang HTML (dari contenteditable), bukan plain text.
+  // v3.21.19: Auto-save dengan parse Todoist natural language + priority/due/labels
   function scheduleSave() {
     const st = $('#pageSaveState'); st.textContent = 'Menyimpan…'; st.classList.remove('ok');
     clearTimeout(noteSaveTimer);
     noteSaveTimer = setTimeout(async () => {
+      let titleVal = titleInput.value.trim();
+      let bodyHtml = ta.innerHTML;
+      let bodyText = stripHtmlForPreview(bodyHtml);
+      // Parse natural language dari title + body preview
+      let parsed = null;
+      try{ parsed = parseTodoInput((titleVal + ' ' + bodyText).slice(0,500)); }catch(e){}
+      // Ambil dari UI kalau ada
+      const dueInput = document.getElementById('nDueAt');
+      const labelsInput = document.getElementById('nLabels');
+      let dueAt = dueInput && dueInput.value ? new Date(dueInput.value).toISOString() : (parsed && parsed.dueAt ? parsed.dueAt : n.dueAt || null);
+      let labels = labelsInput ? labelsInput.value.split(',').map(s=>s.trim().replace(/^#/,'')).filter(Boolean) : (parsed ? parsed.labels : n.labels||[]);
+      // Jika parse menemukan labels/priority, merge
+      let priority = n.priority||4;
+      // Cek tombol priority yang aktif
+      const activePrioBtn = document.querySelector('[data-prio].btn-p');
+      if (activePrioBtn) priority = parseInt(activePrioBtn.dataset.prio)||priority;
+      else if (parsed && parsed.priority) priority = parsed.priority;
+      if (parsed && parsed.labels && parsed.labels.length) {
+        // merge labels dari parse + input
+        const set = new Set([...(labels||[]), ...parsed.labels]);
+        labels = Array.from(set);
+        if (labelsInput) labelsInput.value = labels.join(', ');
+      }
+      // Jika parse menemukan dueAt dan input kosong, isi
+      if (parsed && parsed.dueAt && (!dueInput || !dueInput.value)) {
+        dueAt = parsed.dueAt;
+        if (dueInput) dueInput.value = new Date(dueAt).toISOString().slice(0,16);
+      }
+      // P2: recurring — dari select atau parse
+      const recInput = document.getElementById('nRecurring');
+      let recurring = n.recurring || null;
+      if (recInput) {
+        const v = recInput.value;
+        if (!v) recurring = null;
+        else if (v==='daily') recurring={freq:'daily', interval:1};
+        else if (v==='weekly') recurring={freq:'weekly', interval:1};
+        else if (v.startsWith('weekly:')) recurring={freq:'weekly', byDay:[v.split(':')[1]], interval:1};
+        else if (v==='monthly') recurring={freq:'monthly', interval:1};
+        else if (v==='yearly') recurring={freq:'yearly', interval:1};
+      }
+      if (parsed && parsed.recurring && !recurring) {
+        recurring = parsed.recurring;
+        // sync ke select kalau parse menemukan recurring tapi select masih kosong
+        if (recInput && !recInput.value) {
+          const rv = recurring.byDay ? 'weekly:'+recurring.byDay[0] : recurring.freq;
+          if ([...recInput.options].some(o=>o.value===rv)) recInput.value=rv;
+        }
+      }
+      // Jika parse menemukan recurring dueAt dan input kosong, pakai dueAt dari parse sudah di atas
+      // Bersihkan body/title dari syntax !1 #tag besok kalau sudah diparse
+      if (parsed && parsed.body && parsed.body !== (titleVal + ' ' + bodyText).slice(0,500)) {
+        // Jika body asli mengandung syntax, update body/title yang sudah dibersihkan
+        // Untuk simpel, kita biarkan body tetap, tapi priority/labels sudah diambil
+      }
+      // P1: keep subtasks from editor to avoid overwriting checklist + P2 recurring
       await updateNote(n.id, {
-        title: titleInput.value.trim(),
-        body: ta.innerHTML,
+        title: titleVal,
+        body: bodyHtml,
         group: groupInput.value.trim(),
+        priority,
+        dueAt,
+        labels,
+        recurring,
+        subtasks: editorSubtasks,
         updatedAt: new Date().toISOString()
       });
       markSaved();
@@ -7481,6 +7855,25 @@ function openNoteEditor(noteId) {
   ta.addEventListener('input', scheduleSave);
   titleInput.addEventListener('input', scheduleSave);
   groupInput.addEventListener('input', scheduleSave);
+  const dueInputEl = document.getElementById('nDueAt');
+  if (dueInputEl) dueInputEl.addEventListener('change', scheduleSave);
+  const labelsEl = document.getElementById('nLabels');
+  if (labelsEl) labelsEl.addEventListener('input', scheduleSave);
+  const recEl = document.getElementById('nRecurring');
+  if (recEl) recEl.addEventListener('change', scheduleSave);
+  document.querySelectorAll('[data-prio]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('[data-prio]').forEach(b=>{ b.classList.remove('btn-p'); b.classList.add('btn-g'); });
+      btn.classList.remove('btn-g'); btn.classList.add('btn-p');
+      scheduleSave();
+    });
+  });
+  const dueClear = document.getElementById('nDueClear');
+  if (dueClear) dueClear.addEventListener('click', ()=>{
+    const dueEl = document.getElementById('nDueAt');
+    if (dueEl) dueEl.value = '';
+    scheduleSave();
+  });
   // v3.13.0 (Issue #4): Paste handler — sanitize HTML dari clipboard.
   // Whitelist tag + atribut aman, buang script/style/iframe/on* handler/javascript: URLs.
   // Kalau clipboard hanya punya plain text (mis. dari Notepad), escape + convert newline → <br>.
@@ -7690,8 +8083,8 @@ const TILE_DEFS = [
   { id: 'keys',      label: 'Pintasan', icon: ICONS.kb,       type: 'tool', action: 'toolPage', arg: 'keys' }
 ];
 
-const DEFAULT_ACTIVE_TILES = ['qaPrompt', 'qaKonteks', 'qaLink', 'qaBundle', 'qaSnap', 'qaShot'];
-const MAX_ACTIVE_TILES = 6;
+const DEFAULT_ACTIVE_TILES = ['qaPrompt', 'qaLink'];
+const MAX_ACTIVE_TILES = 2;
 
 /**
  * Get active tile IDs from vault.settings, fallback to default.
@@ -8049,6 +8442,23 @@ async function openTapePopover() {
     console.error('[RecallFox/Tape] openTapePopover failed:', e);
     toast('Gagal membuka RecallTape: ' + e.message, false);
   }
+}
+// RecallNote — floating note trigger (safe, sama pattern openTapePopover)
+async function openNotesPopover() {
+  if (window !== window.top) { window.parent.postMessage({ type: 'RF_OPEN_NOTE' }, '*'); try { toast('📝 Catatan mengambang dibuka'); } catch (e) {} return; }
+  try {
+    const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0]) {
+      const tab = tabs[0];
+      if (/^(https?|file):/i.test(tab.url || '')) {
+        try { await browser.tabs.sendMessage(tab.id, { type: 'OPEN_NOTE' }); toast('📝 Catatan mengambang dibuka'); if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},400); return; }
+        catch (e) { try { await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/notes-cs.js'] }); await browser.tabs.sendMessage(tab.id, { type: 'OPEN_NOTE' }); toast('📝 Catatan mengambang dibuka'); if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},400); return; } catch (e2) { console.warn('[RecallFox/Notes] Fallback inject failed:', e2.message); } }
+      }
+    }
+    try { openPage('📝 Catatan Mengambang'); } catch (e) {}
+    const B2 = document.getElementById('pageBody');
+    if (B2) B2.innerHTML = `<div class="card" style="text-align:center;padding:20px 16px"><div style="font-size:36px;margin-bottom:8px">📝</div><h3 style="font-size:14px;margin-bottom:6px">Catatan Mengambang</h3><p style="font-size:11.5px;color:var(--text-2);line-height:1.6">Buka halaman web (http/https), lalu klik 📝 di header untuk memunculkan catatan mengambang.</p></div>`;
+  } catch (e) { console.error('[RecallFox/Notes] openNotesPopover failed:', e); try { toast('Gagal membuka catatan: '+(e.message||e)); } catch (ee) {} }
 }
 function renderShalatPage(B) {
   const s = currentVault?.settings || {};
@@ -10018,15 +10428,24 @@ async function renderKontrolSitusPage(B) {
     });
   }
   if (s.contentGuardEnabled !== false) {
+    // v3.21.0: Pelindung Konten aktif — tampilkan profil aktif (Mode Fokus).
+    let profileName = '—';
+    try {
+      const tp = s.contentGuardTopicProfiles;
+      if (tp && Array.isArray(tp.profiles) && tp.activeProfileId) {
+        const p = tp.profiles.find(x => x.id === tp.activeProfileId);
+        if (p) profileName = (p.emoji || '👤') + ' ' + (p.name || 'Profil');
+      }
+    } catch (e) {}
     rules.push({
-      type: 'KONTEN', name: 'Content Guard aktif',
-      desc: 'Filter konten negatif di YouTube & X',
+      type: 'KONTEN', name: 'Pelindung Konten aktif',
+      desc: 'Profil: ' + profileName,
       toggleKey: 'contentGuardEnabled',
       toggleOn: s.contentGuardEnabled !== false
     });
   } else {
     rules.push({
-      type: 'KONTEN', name: 'Content Guard (mati)',
+      type: 'KONTEN', name: 'Pelindung Konten (mati)',
       desc: 'Klik toggle untuk aktifkan kembali',
       toggleKey: 'contentGuardEnabled',
       toggleOn: false
@@ -10042,6 +10461,58 @@ async function renderKontrolSitusPage(B) {
   });
 
   let activeTab = 'home';
+  // v3.21.0: Persiapan data Pelindung Konten (untuk kartu W2 di home view + tab Pengaturan W2b).
+  let cgTopicProfiles = s.contentGuardTopicProfiles;
+  if (!cgTopicProfiles || !Array.isArray(cgTopicProfiles.profiles)) {
+    cgTopicProfiles = { profiles: [], activeProfileId: null };
+  }
+  const cgActiveProfileId = cgTopicProfiles.activeProfileId;
+  const cgActiveProfile = cgTopicProfiles.profiles.find(p => p.id === cgActiveProfileId) || null;
+  const cgMasterOn = s.contentGuardEnabled !== false;
+  const cgFocusActive = cgMasterOn && cgActiveProfile
+    && ((cgActiveProfile.topics && cgActiveProfile.topics.length > 0)
+        || (cgActiveProfile.channels && cgActiveProfile.channels.length > 0));
+  const cgActiveName = cgActiveProfile ? ((cgActiveProfile.emoji || '👤') + ' ' + (cgActiveProfile.name || 'Profil')) : '—';
+  const cgActiveTopicsPreview = cgActiveProfile && Array.isArray(cgActiveProfile.topics)
+    ? cgActiveProfile.topics.slice(0, 3).join(', ') + (cgActiveProfile.topics.length > 3 ? ', …' : '')
+    : '';
+
+  function buildPelindungKontenCardHTML() {
+    const cards = cgTopicProfiles.profiles.map(p => {
+      const isActive = p.id === cgActiveProfileId;
+      const emoji = p.emoji || '👤';
+      const name = p.name || 'Profil';
+      const isEmpty = (!p.topics || p.topics.length === 0) && (!p.channels || p.channels.length === 0);
+      const dim = cgMasterOn ? '' : 'opacity:.5;cursor:not-allowed;';
+      const border = isActive ? '#16a34a' : 'rgba(255,255,255,.2)';
+      const bg = isActive ? 'rgba(34,197,94,0.18)' : 'rgba(255,255,255,0.06)';
+      return '<button class="ks-cg-profile-card" data-cg-profile-id="' + esc(p.id) + '" '
+        + 'style="display:flex;flex-direction:column;gap:2px;align-items:flex-start;padding:8px 10px;border-radius:8px;cursor:pointer;min-width:120px;max-width:170px;'
+        + 'background:' + bg + ';border:1px solid ' + border + ';' + dim + '">'
+        +   '<span style="font-size:11px;color:' + (isActive ? '#86efac' : 'rgba(255,255,255,.7)') + ';">' + (isActive ? '●' : '○') + ' ' + esc(emoji) + ' ' + esc(name) + '</span>'
+        +   '<span style="font-size:10px;color:rgba(255,255,255,.6);line-height:1.3;">' + (isEmpty ? '<em>Profil kosong</em>' : esc((p.topics || []).slice(0, 2).join(', '))) + '</span>'
+        + '</button>';
+    }).join('');
+    return '<div class="card" style="background:linear-gradient(135deg,#0f766e,#1e40af);color:#fff;border:none;margin-bottom:12px">'
+      +   '<div style="display:flex;align-items:center;gap:12px">'
+      +     '<div style="font-size:32px">🛡️</div>'
+      +     '<div style="flex:1">'
+      +       '<div style="font-size:14px;font-weight:700">Pelindung Konten</div>'
+      +       '<div style="font-size:11px;opacity:.9;line-height:1.45;margin-top:2px">'
+      +         (cgMasterOn ? ('Aktif — ' + esc(cgActiveName) + (cgActiveTopicsPreview ? ' · topik: ' + esc(cgActiveTopicsPreview) : ''))
+                           : 'Nonaktif — nyalakan master untuk memfilter')
+      +       '</div>'
+      +     '</div>'
+      +     '<button class="ks-toggle' + (cgMasterOn ? ' on' : '') + '" id="ksCgMasterToggle" aria-label="Toggle Pelindung Konten" style="flex:none"><i></i></button>'
+      +   '</div>'
+      +   '<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">' + cards + '</div>'
+      +   '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap;">'
+      +     '<button class="btn" id="ksCgManage" style="background:rgba(255,255,255,.15);color:#fff;border:none;padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;">Kelola topik &amp; channel →</button>'
+      +     '<span style="font-size:10px;opacity:.85;">' + (cgFocusActive ? '🔒 Kunci Pencarian aktif' : '') + '</span>'
+      +   '</div>'
+      + '</div>';
+  }
+
   function render() {
     B.innerHTML =
       // Site bar
@@ -10051,8 +10522,7 @@ async function renderKontrolSitusPage(B) {
       +   '<div class="right"><small>' + (siteActive ? 'Aktif' : 'Nonaktif') + '</small><button class="ks-toggle' + (siteActive ? ' on' : '') + '" id="ksMasterToggle" aria-label="Toggle kontrol"><i></i></button></div>'
       + '</div>'
 
-      // Tabs — v3.4: tambah tab "Diblokir" (daftar selector domain aktif) + "Pengaturan" (floating Guardian toggle)
-      // v3.6: Counter "Diblokir" sekarang juga include filter konten (keyword/channel/account/x_post_url)
+      // Tabs — v3.21.0: tab "Pengaturan" sekarang = "Pengaturan Pelindung Konten" (W2b)
       + '<nav class="ks-tabs">'
       +   '<button class="ks-tab' + (activeTab === 'home' ? ' active' : '') + '" data-tab="home">Ringkasan</button>'
       +   '<button class="ks-tab' + (activeTab === 'blocked' ? ' active' : '') + '" data-tab="blocked">Diblokir (' + allBlockedForCurrent.length + ')</button>'
@@ -10062,18 +10532,8 @@ async function renderKontrolSitusPage(B) {
 
       // Home view
       + '<div class="ks-view' + (activeTab === 'home' ? ' active' : '') + '" id="ksViewHome">'
-      // v3.7.2 (Issue 6): Kartu Mode Anak — 1 klik untuk amankan laptop saat dipinjam anak.
-      // Mengaktifkan: contentGuardYoutubeKidsOnly + contentGuardBlockShorts.
-      +   '<div class="card" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;border:none;margin-bottom:12px">'
-      +     '<div style="display:flex;align-items:center;gap:12px">'
-      +       '<div style="font-size:32px">👶</div>'
-      +       '<div style="flex:1">'
-      +         '<div style="font-size:14px;font-weight:700">Mode Anak</div>'
-      +         '<div style="font-size:11px;opacity:.9;line-height:1.45;margin-top:2px">Arahkan semua YouTube ke YouTube Kids & blokir YouTube Shorts. Aktifkan saat laptop dipinjam anak — 1 klik.</div>'
-      +       '</div>'
-      +       '<button class="ks-toggle' + (s.contentGuardYoutubeKidsOnly === true ? ' on' : '') + '" id="ksKidModeToggle" aria-label="Toggle Mode Anak" style="flex:none"><i></i></button>'
-      +     '</div>'
-      +   '</div>'
+      // v3.21.0: Kartu Pelindung Konten (menggantikan kartu "Mode Anak" ungu lama).
+      + buildPelindungKontenCardHTML()
       +   '<div class="ks-intro">'
       +     '<div><h2>Hapus elemen yang mengganggu</h2><p>Tutup komentar, iklan, rekomendasi, dan elemen UI yang tidak perlu di situs mana pun.</p></div>'
       +     '<button class="ks-primary" id="ksAddRule">+ Aturan baru</button>'
@@ -10156,38 +10616,54 @@ async function renderKontrolSitusPage(B) {
       +   (userBlocklist.length ? '<div class="ks-rule-summary"><div class="ks-rs-head">Filter tersimpan (' + userBlocklist.length + ')</div>' + userBlocklist.slice(0, 20).map(b => '<div class="ks-rule"><span class="ks-tag content">' + esc((b.type || 'keyword').toUpperCase().slice(0, 8)) + '</span><div class="ks-rule-main"><b>' + esc((b.value || b.text || '').slice(0, 60)) + '</b><span>' + esc(b.type || 'keyword') + (b.domain ? ' · ' + b.domain : '') + '</span></div><button class="ks-dots" data-del="' + esc(b.id) + '">✕</button></div>').join('') + '</div>' : '')
       + '</div>'
 
-      // v3.4: Settings view — toggle floating Guardian + info
+      // v3.21.0: Settings view — Pengaturan Pelindung Konten (W2b) — editor profil ringkas.
+      // Menggantikan toggle floating panel / Nuclear mode / Filter feeds / Mode Anak (semua dibongkar).
       + '<div class="ks-view' + (activeTab === 'settings' ? ' active' : '') + '" id="ksViewSettings">'
-      +   '<div class="ks-intro"><div><h2>Pengaturan Guardian</h2><p>Konfigurasi tampilan & perilaku RecallFox Guardian di YouTube & X.</p></div></div>'
+      +   '<div class="ks-intro"><div><h2>Pengaturan Pelindung Konten</h2><p>Kelola profil &amp; topik Mode Fokus. Buka halaman Settings lengkap untuk opsi tambahan (blocklist manual, filter X, mode debug).</p></div></div>'
       +   '<div class="card">'
       +     '<div class="krow" style="padding:10px 0">'
-      +       '<div><b>Panel mengambang Guardian</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tampilkan panel kontrol mengambang di pojok halaman YouTube/X. Anak-anak bisa melihat dan mematikannya — lebih aman dimatikan.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardShowFloating === true ? ' on' : '') + '" id="ksFloatingToggle" aria-label="Toggle floating panel"><i></i></button>'
+      +       '<div><b>Profil</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Pilih profil untuk diedit (profil aktif ditandai).</div></div>'
+      +       '<select id="ksCgProfileSelect" style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;">'
+      +         cgTopicProfiles.profiles.map(p => {
+                const isActive = p.id === cgActiveProfileId;
+                const emoji = p.emoji || '👤';
+                const name = p.name || 'Profil';
+                return '<option value="' + esc(p.id) + '"' + (isActive ? ' selected' : '') + '>' + esc(emoji + ' ' + name + (isActive ? ' (aktif)' : '')) + '</option>';
+              }).join('')
+      +       '</select>'
       +     '</div>'
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>Nuclear mode</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Blokir semua konten yang menyebut politisi/partai/lembaga politik Indonesia.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardNuclearMode !== false ? ' on' : '') + '" id="ksNuclearToggle" aria-label="Toggle nuclear mode"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Nama profil</label>'
+      +       '<input type="text" id="ksCgProfileName" placeholder="mis. Fokus Belajar" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />'
       +     '</div>'
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>Filter feed</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Sembunyikan video/postingan negatif di feed YouTube/X.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardFilterFeeds !== false ? ' on' : '') + '" id="ksFilterFeedsToggle" aria-label="Toggle filter feeds"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Topik (pisah koma — dicocokkan dengan judul &amp; channel)</label>'
+      +       '<input type="text" id="ksCgProfileTopics" placeholder="mis. python, machine learning" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />'
       +     '</div>'
-      // v3.7.2 (Issue 6): Toggle individu — YouTube Shorts Block
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>🚫 Blokir YouTube Shorts</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Sembunyikan semua Short dari feed YouTube & cegah navigasi ke /shorts/. Tidak mengubah jenis konten lain.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardBlockShorts === true ? ' on' : '') + '" id="ksBlockShortsToggle" aria-label="Toggle Block Shorts"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Channel whitelist (pisah koma — opsional)</label>'
+      +       '<input type="text" id="ksCgProfileChannels" placeholder="mis. Nussa Official, FreeCodeCamp" style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />'
       +     '</div>'
-      // v3.7.2 (Issue 6): Toggle individu — Mode Anak (filter, no redirect)
-      // v3.10.0 (Issue 2): Ubah dari redirect youtubekids.com → filter di youtube.com biasa
-      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border)">'
-      +       '<div><b>👶 Mode Anak (Filter Konten)</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Tetap di youtube.com, tapi sembunyikan video non-ramah-anak. Hanya video edukasi/kartun/lagu anak yang tampil. Shorts juga di-hide.</div></div>'
-      +       '<button class="ks-toggle' + (s.contentGuardKidModeFilter === true ? ' on' : '') + '" id="ksKidsOnlyToggle" aria-label="Toggle Mode Anak"><i></i></button>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Halaman watch (video di luar topik):</label>'
+      +       '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="ksCgStrict" value="false" /><span>Peringatan + "Tetap tonton" 30 dtk</span></label>'
+      +       '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;"><input type="radio" name="ksCgStrict" value="true" /><span>Blokir total → beranda</span></label>'
+      +     '</div>'
+      +     '<div class="krow" style="padding:10px 0;border-top:1px solid var(--border);display:block">'
+      +       '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:4px;">Lapisan tambahan:</label>'
+      +       '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><span style="font-size:12px;">🚫 Blokir YouTube Shorts</span><button class="ks-toggle' + (s.contentGuardBlockShorts === true ? ' on' : '') + '" id="ksBlockShortsToggle" aria-label="Toggle Block Shorts"><i></i></button></div>'
+      +     '</div>'
+      +     '<div class="ks-save-row" style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">'
+      +       '<button class="btn btn-p" id="ksCgSave">💾 Simpan</button>'
+      +       '<button class="btn btn-d" id="ksCgDelete">🗑️ Hapus</button>'
+      +       '<button class="btn" id="ksCgActivate">Aktifkan profil ini</button>'
+      +       '<button class="btn" id="ksCgAddNew">+ Tambah profil baru</button>'
       +     '</div>'
       +   '</div>'
-      +   '<p class="hintbox" style="margin:10px 3px">🔒 <b>Mode aman anak:</b> Matikan panel mengambang supaya anak tidak bisa toggle-off Guardian dari halaman. Kontrol tetap bisa diakses lewat popup RecallFox (hanya Anda yang tahu).</p>'
+      +   '<p class="hintbox" style="margin:10px 3px">🔒 <b>Mode aman anak:</b> Profil Anak (strictWatch=true) memblokir total video di luar topik — tanpa tombol lewati. Profil Saya (strictWatch=false) hanya tampilkan peringatan.</p>'
       + '</div>'
 
-      + '<p class="hintbox" style="margin:15px 3px">💡 <b>Kontrol Situs</b> menggabungkan Element Blocker (sembunyikan elemen UI) dan Content Guard (filter konten negatif). Kedua fitur tetap berjalan di background — halaman ini hanya untuk konfigurasi.</p>';
+      + '<p class="hintbox" style="margin:15px 3px">💡 <b>Kontrol Situs</b> menggabungkan Element Blocker (sembunyikan elemen UI) dan Pelindung Konten (Mode Fokus Allowlist). Kedua fitur tetap berjalan di background — halaman ini hanya untuk konfigurasi.</p>';
 
     // Bind tab clicks
     $$('.ks-tab').forEach(t => t.addEventListener('click', () => {
@@ -10208,22 +10684,44 @@ async function renderKontrolSitusPage(B) {
       toast(newOn ? '🛡 Kontrol Situs diaktifkan' : 'Kontrol Situs dimatikan');
     });
 
-    // v3.7.2 (Issue 6): Mode Anak — 1 klik toggle (YouTube Kids + Block Shorts sekaligus)
-    const kidModeBtn = $('#ksKidModeToggle');
-    if (kidModeBtn) kidModeBtn.addEventListener('click', async () => {
-      const newOn = !(s.contentGuardYoutubeKidsOnly === true);
-      // Pastikan contentGuardEnabled tetap on agar redirect jalan
-      await saveSettings({
-        contentGuardEnabled: true,
-        contentGuardYoutubeKidsOnly: newOn,
-        contentGuardBlockShorts: newOn
-      });
+    // v3.21.0: Pelindung Konten — master toggle di kartu (hanya contentGuardEnabled, tidak sentuh EB).
+    const cgMasterBtn = $('#ksCgMasterToggle');
+    if (cgMasterBtn) cgMasterBtn.addEventListener('click', async () => {
+      const newOn = !cgMasterOn;
+      await saveSettings({ contentGuardEnabled: newOn });
       await refreshVault();
       renderKontrolSitusPage(B);
-      toast(newOn ? '👶 Mode Anak AKTIF — YouTube → Kids, Shorts diblokir' : 'Mode Anak dimatikan');
+      toast(newOn ? '🛡 Pelindung Konten diaktifkan' : 'Pelindung Konten dimatikan');
     });
 
-    // v3.7.2 (Issue 6): Toggle individu — Block Shorts saja
+    // v3.21.0: Klik kartu profil di home view = ganti profil aktif (1-klik switch).
+    $$('.ks-cg-profile-card').forEach(card => {
+      card.addEventListener('click', async (e) => {
+        e.preventDefault();
+        if (!cgMasterOn) { toast('Nyalakan master Pelindung Konten dulu'); return; }
+        const pid = card.dataset.cgProfileId;
+        if (!pid) return;
+        try {
+          const res = await browser.runtime.sendMessage({ type: 'CG_SET_ACTIVE_PROFILE', profileId: pid });
+          if (res?.ok) {
+            await refreshVault();
+            renderKontrolSitusPage(B);
+            toast('Profil aktif diganti');
+          } else {
+            toast('Gagal: ' + (res?.error || 'unknown'));
+          }
+        } catch (err) { toast('Error: ' + err.message); }
+      });
+    });
+
+    // v3.21.0: Tombol "Kelola topik & channel →" → pindah ke tab Pengaturan + buka Settings lengkap.
+    const cgManageBtn = $('#ksCgManage');
+    if (cgManageBtn) cgManageBtn.addEventListener('click', () => {
+      activeTab = 'settings';
+      render();
+    });
+
+    // v3.7.2 (Issue 6): Toggle individu — Block Shorts saja (tetap dipertahankan).
     const blockShortsBtn = $('#ksBlockShortsToggle');
     if (blockShortsBtn) blockShortsBtn.addEventListener('click', async () => {
       const newOn = !(s.contentGuardBlockShorts === true);
@@ -10236,16 +10734,119 @@ async function renderKontrolSitusPage(B) {
       toast(newOn ? '🚫 YouTube Shorts diblokir' : 'YouTube Shorts diizinkan');
     });
 
-    // v3.7.2 (Issue 6): Toggle individu — YouTube Kids Only
-    const kidsOnlyBtn = $('#ksKidsOnlyToggle');
-    if (kidsOnlyBtn) kidsOnlyBtn.addEventListener('click', async () => {
-      // v3.10.0 (Issue 2): Mode Anak pakai contentGuardKidModeFilter (no redirect)
-      const newOn = !(s.contentGuardKidModeFilter === true);
-      const r = await browser.runtime.sendMessage({ type: 'TOGGLE_KID_MODE', enabled: newOn });
-      const finalOn = r?.enabled ?? newOn;
-      await refreshVault();
-      renderKontrolSitusPage(B);
-      toast(finalOn ? '👶 Mode Anak AKTIF — feed YouTube hanya konten ramah anak' : 'Mode Anak dimatikan');
+    // v3.21.0: Editor profil ringkas (tab Pengaturan) — dropdown, name, topics, channels, strictWatch.
+    const cgProfileSelect = $('#ksCgProfileSelect');
+    const cgProfileName = $('#ksCgProfileName');
+    const cgProfileTopics = $('#ksCgProfileTopics');
+    const cgProfileChannels = $('#ksCgProfileChannels');
+
+    function loadCgProfileIntoEditor(pid) {
+      const p = cgTopicProfiles.profiles.find(x => x.id === pid) || null;
+      if (!p) return;
+      if (cgProfileName) cgProfileName.value = p.name || '';
+      if (cgProfileTopics) cgProfileTopics.value = (Array.isArray(p.topics) ? p.topics : []).join(', ');
+      if (cgProfileChannels) cgProfileChannels.value = (Array.isArray(p.channels) ? p.channels : []).join(', ');
+      const radios = document.querySelectorAll('input[name="ksCgStrict"]');
+      radios.forEach(r => {
+        r.checked = (r.value === 'true') ? (p.strictWatch === true) : (p.strictWatch !== true);
+      });
+      // Disable delete jika profil aktif atau hanya 1 profil tersisa.
+      const delBtn = $('#ksCgDelete');
+      if (delBtn) {
+        const isActive = p.id === cgActiveProfileId;
+        const onlyOne = cgTopicProfiles.profiles.length <= 1;
+        delBtn.disabled = isActive || onlyOne;
+        delBtn.title = isActive ? 'Profil sedang aktif — pindah ke profil lain dulu'
+                      : onlyOne ? 'Minimal 1 profil harus tersisa' : '';
+      }
+    }
+
+    if (cgProfileSelect) {
+      // Initial: muat profil aktif (atau profil pertama) ke editor.
+      const initialPid = cgActiveProfileId || (cgTopicProfiles.profiles[0] && cgTopicProfiles.profiles[0].id);
+      if (initialPid) {
+        cgProfileSelect.value = initialPid;
+        loadCgProfileIntoEditor(initialPid);
+      }
+      cgProfileSelect.addEventListener('change', () => {
+        loadCgProfileIntoEditor(cgProfileSelect.value);
+      });
+    }
+
+    const cgSaveBtn = $('#ksCgSave');
+    if (cgSaveBtn) cgSaveBtn.addEventListener('click', async () => {
+      const pid = cgProfileSelect ? cgProfileSelect.value : null;
+      if (!pid) { toast('Pilih profil dulu'); return; }
+      const name = (cgProfileName?.value || '').trim();
+      const topics = (cgProfileTopics?.value || '').split(',').map(x => x.trim()).filter(Boolean);
+      const channels = (cgProfileChannels?.value || '').split(',').map(x => x.trim()).filter(Boolean);
+      const strictRadio = document.querySelector('input[name="ksCgStrict"]:checked');
+      const strictWatch = strictRadio ? strictRadio.value === 'true' : false;
+      if (!name) { toast('Nama profil tidak boleh kosong'); return; }
+      try {
+        const res = await browser.runtime.sendMessage({
+          type: 'CG_SAVE_TOPIC_PROFILE',
+          profileId: pid,
+          profile: { name, emoji: (cgTopicProfiles.profiles.find(p => p.id === pid)?.emoji) || '👤', topics, channels, strictWatch }
+        });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Profil disimpan');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+
+    const cgDeleteBtn = $('#ksCgDelete');
+    if (cgDeleteBtn) cgDeleteBtn.addEventListener('click', async () => {
+      const pid = cgProfileSelect ? cgProfileSelect.value : null;
+      if (!pid || cgDeleteBtn.disabled) return;
+      if (!confirm('Hapus profil ini? Topik & channel whitelist akan hilang.')) return;
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_DELETE_TOPIC_PROFILE', profileId: pid });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Profil dihapus');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+
+    const cgActivateBtn = $('#ksCgActivate');
+    if (cgActivateBtn) cgActivateBtn.addEventListener('click', async () => {
+      const pid = cgProfileSelect ? cgProfileSelect.value : null;
+      if (!pid) return;
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_SET_ACTIVE_PROFILE', profileId: pid });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          toast('Profil diaktifkan');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+
+    const cgAddNewBtn = $('#ksCgAddNew');
+    if (cgAddNewBtn) cgAddNewBtn.addEventListener('click', async () => {
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_ADD_TOPIC_PROFILE', profile: { name: 'Profil Baru', emoji: '👤', topics: [], channels: [], strictWatch: false } });
+        if (res?.ok) {
+          await refreshVault();
+          renderKontrolSitusPage(B);
+          // Re-select dropdown ke profil baru
+          const sel = $('#ksCgProfileSelect');
+          if (sel) sel.value = res.newProfileId;
+          toast('Profil baru ditambahkan — isi topik lalu Simpan');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
     });
 
     // Add rule buttons (open same sheet)
@@ -10350,46 +10951,9 @@ async function renderKontrolSitusPage(B) {
       toast('✕ Aturan dihapus');
     }));
 
-    // v3.4: Floating panel toggle
-    const floatingToggle = $('#ksFloatingToggle');
-    if (floatingToggle) floatingToggle.addEventListener('click', async () => {
-      const newOn = s.contentGuardShowFloating !== true;
-      await setGuardianFloatingEnabled(newOn);
-      // Re-read settings
-      const v = await getVault();
-      s.contentGuardShowFloating = v.settings.contentGuardShowFloating;
-      render();
-      toast(newOn ? '🛡 Panel mengambang diaktifkan' : '🔒 Panel mengambang dimatikan (lebih aman untuk anak)');
-    });
-
-    // v3.4: Nuclear mode toggle
-    const nuclearToggle = $('#ksNuclearToggle');
-    if (nuclearToggle) nuclearToggle.addEventListener('click', async () => {
-      const newOn = s.contentGuardNuclearMode === false;
-      await saveSettings({ contentGuardNuclearMode: newOn });
-      s.contentGuardNuclearMode = newOn;
-      // Broadcast
-      try {
-        const tabs = await browser.tabs.query({});
-        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
-      } catch (e) {}
-      render();
-      toast(newOn ? '☢️ Nuclear mode aktif' : 'Nuclear mode dimatikan');
-    });
-
-    // v3.4: Filter feeds toggle
-    const filterFeedsToggle = $('#ksFilterFeedsToggle');
-    if (filterFeedsToggle) filterFeedsToggle.addEventListener('click', async () => {
-      const newOn = s.contentGuardFilterFeeds === false;
-      await saveSettings({ contentGuardFilterFeeds: newOn });
-      s.contentGuardFilterFeeds = newOn;
-      try {
-        const tabs = await browser.tabs.query({});
-        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
-      } catch (e) {}
-      render();
-      toast(newOn ? '🛡 Filter feed aktif' : 'Filter feed dimatikan');
-    });
+    // v3.21.0: Toggle floating panel / Nuclear mode / Filter feeds DIHAPUS — fitur dibongkar,
+    // diganti Mode Fokus Allowlist. Setting contentGuardShowFloating / contentGuardNuclearMode /
+    // contentGuardFilterFeeds tetap disimpan untuk migrasi tapi tidak dipakai kode baru.
 
     // Pick element button (triggers element picker in active tab)
     const pickBtn = $('#ksPickElement');
@@ -10429,19 +10993,21 @@ async function renderKontrolSitusPage(B) {
       }
     });
 
-    // Auto-hide preset button (toggle content guard + element blocker presets)
+    // v3.21.0: "Tutup otomatis" — nyalakan master Pelindung Konten + Element Blocker + lapisan
+    // blacklist channel/akun. TIDAK menyalakan setting CG yang sudah dibongkar (FilterFeeds,
+    // NuclearMode, ScanDescription, BlockSearchQueries). Pesan toast yang akurat (tanpa klaim
+    // preset komentar/iklan/rekomendasi yang tidak benar — tombol ini hanya mengaktifkan toggle).
     const autoBtn = $('#ksAutoHide');
     if (autoBtn) autoBtn.addEventListener('click', async () => {
       await saveSettings({
         elementBlockerEnabled: true,
         contentGuardEnabled: true,
         contentGuardBlockYtChannels: true,
-        contentGuardBlockXAccounts: true,
-        contentGuardFilterFeeds: true
+        contentGuardBlockXAccounts: true
       });
       await refreshVault();
       renderKontrolSitusPage(B);
-      toast('✓ Preset otomatis aktif (komentar, iklan, rekomendasi)');
+      toast('✓ Pelindung Konten + Element Blocker diaktifkan');
     });
 
     // Save filter button
@@ -10662,6 +11228,7 @@ async function init() {
   await renderNotes();
 
   bindEvents();
+  try{ await initPomodoro(); }catch(e){ console.warn('initPomodoro failed',e); }
   renderVault();
   // v3.9.0 (Issue 5): Sidebar auto-close after idle (only in sidebar mode)
   try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
@@ -10685,6 +11252,117 @@ async function init() {
   // v3.11.1: Focus search — di-skip karena search bar sudah dihapus.
   // Quick-actions bar tidak perlu auto-focus (user pilih tombol yang mau).
 }
+
+// ========== Pomodoro sticky (v3.21.14) — safe isolated ==========
+let pomodoroState = null;
+let pomodoroInterval = null;
+async function playBell() {
+  const file = pomodoroState?.soundFile || 'bell-soft.mp3';
+  try {
+    const url = browser.runtime.getURL('assets/sounds/' + file);
+    const audio = new Audio(url); audio.volume = 0.7;
+    await audio.play();
+    return;
+  } catch(e){}
+  // fallback beep
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.3, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+    o.start(); o.stop(ctx.currentTime + 0.5);
+  } catch(e){}
+}
+async function playAdzanTest() {
+  try {
+    const vault = await getVault();
+    const file = vault.settings?.prayerSoundFile || 'adzan-mekkah-30s.mp3';
+    const url = browser.runtime.getURL('assets/sounds/' + file);
+    const audio = new Audio(url); audio.volume = 0.8;
+    await audio.play();
+    return;
+  } catch(e){}
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [523,659,784].forEach((freq,i)=>{
+      const o=ctx.createOscillator(); const g=ctx.createGain();
+      o.type='sine'; o.frequency.value=freq; o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.2, ctx.currentTime+i*0.2); g.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime+i*0.2+0.3);
+      o.start(ctx.currentTime+i*0.2); o.stop(ctx.currentTime+i*0.2+0.3);
+    });
+  } catch(e){}
+}
+async function initPomodoro() {
+  try {
+    const s = await Pomodoro.loadState();
+    if (s) {
+      pomodoroState = s;
+      if (!pomodoroState.soundFile) pomodoroState.soundFile = 'bell-soft.mp3';
+    } else pomodoroState = Pomodoro.createInitialState('25/5');
+    renderPomodoro();
+    if (pomodoroState.running) startPomodoroTick();
+    // adzan toggle + select init
+    try {
+      const vault = await getVault();
+      const soundOn = vault.settings?.prayerSoundOn !== false;
+      const btn = document.getElementById('adzanSoundToggle');
+      if (btn) btn.textContent = soundOn ? 'On' : 'Off';
+      const sel = document.getElementById('adzanSoundSelect');
+      if (sel && vault.settings?.prayerSoundFile) sel.value = vault.settings.prayerSoundFile;
+    } catch(e){}
+  } catch(e){ console.warn('initPomodoro failed',e); }
+}
+function renderPomodoro() {
+  try {
+    if (!pomodoroState) return;
+    const timerEl = document.getElementById('pomodoroTimer');
+    const modeEl = document.getElementById('pomodoroMode');
+    const presetEl = document.getElementById('pomodoroPreset');
+    const cyclesEl = document.getElementById('pomodoroCycles');
+    const startBtn = document.getElementById('pomodoroStart');
+    const pauseBtn = document.getElementById('pomodoroPause');
+    const soundBtn = document.getElementById('pomodoroSound');
+    const soundToggle = document.getElementById('pomodoroSoundToggle');
+    if (timerEl) timerEl.textContent = '🍅 ' + Pomodoro.formatMMSS(pomodoroState.remaining);
+    if (modeEl) modeEl.textContent = pomodoroState.mode==='focus'?'Fokus':pomodoroState.mode==='break'?'Istirahat':'Long Break';
+    if (presetEl) presetEl.textContent = pomodoroState.preset==='custom'?`Custom ${pomodoroState.customWork}/${pomodoroState.customBreak}`:pomodoroState.preset;
+    if (cyclesEl) cyclesEl.textContent = (pomodoroState.cycles%4)+'/4';
+    if (startBtn) startBtn.style.display = pomodoroState.running?'none':'inline-block';
+    if (pauseBtn) pauseBtn.style.display = pomodoroState.running?'inline-block':'none';
+    if (soundBtn) soundBtn.textContent = pomodoroState.soundOn?'🔊':'🔇';
+    if (soundToggle) soundToggle.textContent = pomodoroState.soundOn?'On':'Off';
+    // chips active
+    document.querySelectorAll('#pomodoroChips [data-preset]').forEach(b=>{ b.classList.toggle('on', b.dataset.preset===pomodoroState.preset); });
+    // custom inputs
+    const customBox = document.getElementById('pomodoroCustom');
+    if (customBox) customBox.style.display = pomodoroState.preset==='custom'?'flex':'none';
+    const soundSel = document.getElementById('pomodoroSoundSelect');
+    if (soundSel && pomodoroState.soundFile) soundSel.value = pomodoroState.soundFile;
+  } catch(e){}
+}
+function startPomodoroTick() {
+  if (pomodoroInterval) clearInterval(pomodoroInterval);
+  pomodoroInterval = setInterval(async()=>{
+    if (!pomodoroState || !pomodoroState.running) return;
+    pomodoroState.remaining -= 1;
+    if (pomodoroState.remaining <= 0) {
+      // selesai
+      const wasFocus = pomodoroState.mode==='focus';
+      if (pomodoroState.soundOn) { try{ playBell(); }catch(e){} try{ browser.notifications.create({type:'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: wasFocus?'Selesai Fokus':'Selesai Istirahat', message: wasFocus?'Waktunya istirahat':'Waktunya fokus lagi'});}catch(e){} }
+      else { try{ browser.notifications.create({type:'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: wasFocus?'Selesai Fokus':'Selesai Istirahat', message: wasFocus?'Istirahat':'Fokus'});}catch(e){} }
+      pomodoroState = Pomodoro.nextState(pomodoroState);
+      pomodoroState.running = true; // auto lanjut
+      await Pomodoro.saveState(pomodoroState);
+      renderPomodoro();
+    } else {
+      renderPomodoro();
+      await Pomodoro.saveState(pomodoroState);
+    }
+  }, 1000);
+}
+async function startPomodoro(){ if(!pomodoroState) pomodoroState=Pomodoro.createInitialState('25/5'); pomodoroState.running=true; pomodoroState.updatedAt=Date.now(); await Pomodoro.saveState(pomodoroState); renderPomodoro(); startPomodoroTick(); }
+async function pausePomodoro(){ if(!pomodoroState) return; pomodoroState.running=false; if(pomodoroInterval) clearInterval(pomodoroInterval); await Pomodoro.saveState(pomodoroState); renderPomodoro(); }
+async function resetPomodoro(){ if(!pomodoroState) return; const p=Pomodoro.getPreset(pomodoroState.preset, pomodoroState.customWork, pomodoroState.customBreak); pomodoroState.remaining = (pomodoroState.mode==='focus'?p.work:p.break)*60; if(pomodoroState.mode==='longBreak') pomodoroState.remaining=Pomodoro.LONG_BREAK_MIN*60; pomodoroState.running=false; if(pomodoroInterval) clearInterval(pomodoroInterval); await Pomodoro.saveState(pomodoroState); renderPomodoro(); }
 
 function bindEvents() {
   // v3.20.7: Jika di iframe (popout), kirim activity ke parent untuk reset idle timer
@@ -10750,6 +11428,11 @@ function bindEvents() {
   // v3.14.0: RecallTape — tombol 🧾 di header → toggle popover di tab aktif
   const tapeBtn = $('#tapeBtn');
   if (tapeBtn) tapeBtn.addEventListener('click', openTapePopover);
+  // RecallNote — tombol 📝 di header → floating note ala Tape (safe isolated)
+  try {
+    const noteBtn = document.getElementById('noteBtn');
+    if (noteBtn) noteBtn.addEventListener('click', () => { try { openNotesPopover(); } catch (e) { console.error('[RecallFox/Notes] click failed:', e); } });
+  } catch (e) { console.warn('[RecallFox/Notes] bind failed:', e); }
   $('#scrim').addEventListener('click', closeSheet);
   $('#pageBack').addEventListener('click', closePage);
 
@@ -10911,9 +11594,9 @@ function bindEvents() {
   if (batchCancelBtn) batchCancelBtn.addEventListener('click', exitNotesBatchMode);
 
   // Tab bar
-  $('#tabHome')?.addEventListener('click', () => setView('home'));
-  $('#tabNotes')?.addEventListener('click', () => setView('notes'));
-  $('#tabTools')?.addEventListener('click', () => setView('tools'));
+  $('#tabHome').addEventListener('click', () => setView('home'));
+  $('#tabNotes').addEventListener('click', () => setView('notes'));
+  $('#tabTools').addEventListener('click', () => setView('tools'));
 
   // Search / command bar
   // v3.11.1: Search bar sudah dihapus dari sidebar (ganti quick-actions).
@@ -11012,6 +11695,77 @@ function bindEvents() {
   $('#attachSearch').addEventListener('input', renderAttachList);
   $('#attachIntro').addEventListener('input', renderAttachPreview);
   $('#attachPosition').addEventListener('change', renderAttachPreview);
+
+  // Pomodoro sticky — safe isolated wiring
+  try {
+    const pBar = document.getElementById('pomodoroBar');
+    if (pBar) pBar.addEventListener('click', (e)=>{
+      if (e.target.closest('button')) return;
+      const strip = document.getElementById('pomodoroStrip');
+      if (strip) { strip.classList.toggle('open'); const det=document.getElementById('pomodoroDetail'); if(det) det.style.display = strip.classList.contains('open')?'block':'none'; }
+    });
+    const pStart=document.getElementById('pomodoroStart');
+    if(pStart) pStart.addEventListener('click', (e)=>{ e.stopPropagation(); startPomodoro(); });
+    const pPause=document.getElementById('pomodoroPause');
+    if(pPause) pPause.addEventListener('click', (e)=>{ e.stopPropagation(); pausePomodoro(); });
+    const pReset=document.getElementById('pomodoroReset');
+    if(pReset) pReset.addEventListener('click', (e)=>{ e.stopPropagation(); resetPomodoro(); });
+    const pSound=document.getElementById('pomodoroSound');
+    if(pSound) pSound.addEventListener('click', async(e)=>{ e.stopPropagation(); if(!pomodoroState) return; pomodoroState.soundOn=!pomodoroState.soundOn; await Pomodoro.saveState(pomodoroState); renderPomodoro(); });
+    const pSoundToggle=document.getElementById('pomodoroSoundToggle');
+    if(pSoundToggle) pSoundToggle.addEventListener('click', async()=>{ if(!pomodoroState) return; pomodoroState.soundOn=!pomodoroState.soundOn; await Pomodoro.saveState(pomodoroState); renderPomodoro(); });
+    const pTest=document.getElementById('pomodoroTestBell');
+    if(pTest) pTest.addEventListener('click', ()=>{ playBell(); });
+    document.querySelectorAll('#pomodoroChips [data-preset]').forEach(b=>{
+      b.addEventListener('click', async()=>{
+        const preset=b.dataset.preset;
+        if(preset==='custom'){ const box=document.getElementById('pomodoroCustom'); if(box) box.style.display='flex'; return; }
+        pomodoroState = Pomodoro.createInitialState(preset);
+        pomodoroState.soundOn = (await Pomodoro.loadState())?.soundOn ?? true;
+        await Pomodoro.saveState(pomodoroState); renderPomodoro(); if(pomodoroInterval) clearInterval(pomodoroInterval);
+      });
+    });
+    const pCustomApply=document.getElementById('pomodoroCustomApply');
+    if(pCustomApply) pCustomApply.addEventListener('click', async()=>{
+      const w=document.getElementById('pomodoroCustomWork')?.value||25;
+      const br=document.getElementById('pomodoroCustomBreak')?.value||5;
+      pomodoroState = Pomodoro.createInitialState('custom', w, br);
+      await Pomodoro.saveState(pomodoroState); renderPomodoro(); if(pomodoroInterval) clearInterval(pomodoroInterval);
+    });
+    const pSoundSel=document.getElementById('pomodoroSoundSelect');
+    if(pSoundSel){
+      pSoundSel.addEventListener('change', async()=>{
+        if(!pomodoroState) return;
+        pomodoroState.soundFile = pSoundSel.value;
+        await Pomodoro.saveState(pomodoroState);
+        try{ const url=browser.runtime.getURL('assets/sounds/'+pomodoroState.soundFile); const a=new Audio(url); a.volume=0.7; await a.play(); }catch(e){}
+      });
+    }
+  } catch(e){ console.warn('pomodoro bind failed',e); }
+  // Adzan sound toggle — pisah dari pomodoro
+  try {
+    const adzanToggle=document.getElementById('adzanSoundToggle');
+    if(adzanToggle){
+      const updateAdzanBtn=async()=>{
+        try{ const v=await getVault(); const on=v.settings?.prayerSoundOn!==false; adzanToggle.textContent=on?'On':'Off'; }catch(e){}
+      };
+      updateAdzanBtn();
+      adzanToggle.addEventListener('click', async()=>{
+        try{ const v=await getVault(); if(!v.settings) v.settings={}; v.settings.prayerSoundOn = !(v.settings.prayerSoundOn!==false); await saveVault(v); currentVault=v; adzanToggle.textContent=v.settings.prayerSoundOn?'On':'Off'; toast(v.settings.prayerSoundOn?'🔊 Adzan On':'🔇 Adzan Off'); }catch(e){}
+      });
+    }
+    const adzanTest=document.getElementById('adzanTestBtn');
+    if(adzanTest) adzanTest.addEventListener('click', ()=>{ playAdzanTest(); toast('🔊 Test adzan'); });
+    const adzanSel=document.getElementById('adzanSoundSelect');
+    if(adzanSel){
+      (async()=>{ try{ const v=await getVault(); if(v.settings?.prayerSoundFile) adzanSel.value=v.settings.prayerSoundFile; }catch(e){} })();
+      adzanSel.addEventListener('change', async()=>{
+        const file=adzanSel.value;
+        try{ const v=await getVault(); if(!v.settings) v.settings={}; v.settings.prayerSoundFile=file; await saveVault(v); currentVault=v; }catch(e){}
+        try{ const url=browser.runtime.getURL('assets/sounds/'+file); const a=new Audio(url); a.volume=0.8; await a.play(); }catch(e){}
+      });
+    }
+  } catch(e){}
 }
 
 // Listen for storage changes (sync) — guard for non-extension contexts

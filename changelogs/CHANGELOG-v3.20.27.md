@@ -1,4 +1,4 @@
-# RecallFox Chrome v3.20.27 — Industry-standard session persistence (fix "sehari logout")
+# RecallFox v3.20.27 — Industry-standard session persistence (fix "sehari logout")
 
 **Tanggal:** 2026-08-04
 **Base:** v3.20.26
@@ -175,8 +175,8 @@ CHANGELOG-v3.20.27.md         | new (this file)
 
 ## Compatibility
 
+- **Firefox**: tag `v3.20.27` + `v3.20.27-stable`
 - **Chrome**: tag `v3.20.27-chrome` + `v3.20.27-chrome-stable`
-- **Firefox equivalent**: tag `v3.20.27` + `v3.20.27-stable` di https://github.com/agungkesmas/recallfox
 - **PWA**: version `1.11.9`
 - Code 100% identical antara Firefox dan Chrome untuk fitur ini (supabase-client.js identical, background.js differs only in static vs dynamic import).
 

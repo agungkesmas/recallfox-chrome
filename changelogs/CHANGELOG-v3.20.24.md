@@ -1,4 +1,4 @@
-# RecallFox Chrome v3.20.24 — Fix location badge: lazy reverse geocode untuk item tanpa address
+# RecallFox v3.20.24 — Fix location badge: lazy reverse geocode untuk item tanpa address
 
 **Tanggal:** 2026-08-04
 **Base:** v3.20.23 (Firefox) / v3.20.22-chrome (Chrome)
@@ -125,8 +125,8 @@ CHANGELOG-v3.20.24.md      | new (this file)
 
 ## Compatibility
 
+- **Firefox**: tag `v3.20.24` + `v3.20.24-stable`
 - **Chrome**: tag `v3.20.24-chrome` + `v3.20.24-chrome-stable`
-- **Firefox equivalent**: tag `v3.20.24` + `v3.20.24-stable` di https://github.com/agungkesmas/recallfox
 - Code 100% identical antara Firefox dan Chrome untuk fitur ini (handler + lazy trigger + dedupe Set).
 - Chrome MV3 compliant: `reverseGeocode` di-import statically di top-level background.js (bukan dynamic import yang dilarang di Chrome SW).
 

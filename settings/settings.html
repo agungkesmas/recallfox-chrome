@@ -1347,20 +1347,23 @@
       </div>
     </section>
 
-    <!-- Content Guardian -->
+    <!-- Pelindung Konten (Content Guardian) — v3.21.0 Mode Fokus Allowlist -->
     <section class="rf-section">
-      <h2>🛡️ Filter Konten Positif (Content Guardian)</h2>
+      <h2>🛡️ Pelindung Konten — Mode Fokus</h2>
       <p class="rf-section-desc">
-        Blokir konten berita negatif Indonesia & arahkan paksa ke konten positif
-        dari Tiongkok (kehidupan, teknologi, kereta cepat, mobil listrik, dll.) saat
-        Anda membuka YouTube / X (Twitter).
+        Hanya konten sesuai minat yang tampil di YouTube. Pencarian di luar topik
+        dikunci otomatis. Pilih profil aktif, kelola topik &amp; channel whitelist,
+        dan atur perilaku halaman watch.
       </p>
 
-      <!-- Master switch -->
+      <!-- ① MASTER -->
       <div class="rf-row">
         <div class="rf-row-label">
-          <div class="rf-row-title">Aktifkan Content Guardian</div>
-          <div class="rf-row-desc">Master switch untuk semua fitur filter konten</div>
+          <div class="rf-row-title">Aktifkan Pelindung Konten</div>
+          <div class="rf-row-desc">
+            Master switch untuk semua filter Pelindung Konten. OFF → YouTube normal 100%,
+            pilihan profil tetap tersimpan untuk dinyalakan lagi nanti.
+          </div>
         </div>
         <label class="rf-switch">
           <input type="checkbox" id="rf-set-cg-enabled" />
@@ -1368,209 +1371,162 @@
         </label>
       </div>
 
-      <!-- Block Indonesian news -->
-      <div class="rf-row">
+      <!-- ② PILIH PROFIL AKTIF (radio cards) -->
+      <div class="rf-row rf-row-stacked" style="background:rgba(34,197,94,0.05);border-left:3px solid #16a34a;padding:14px 16px;border-radius:6px;">
         <div class="rf-row-label">
-          <div class="rf-row-title">Blokir situs berita Indonesia</div>
+          <div class="rf-row-title">Profil aktif (klik untuk ganti — radio)</div>
           <div class="rf-row-desc">
-            Saat Anda membuka detik.com, kompas.com, tribunnews.com, dll. —
-            redirect ke halaman alternatif konten positif Tiongkok
+            Hanya satu profil yang bisa ON. Semua OFF → tidak ada filter (YouTube normal,
+            master tetap boleh ON). Profil kosong → semua tampil + Kunci Pencarian nonaktif.
           </div>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-block-idnews" />
-          <span class="rf-slider"></span>
-        </label>
+        <div id="rf-cg-profile-cards" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+          <!-- diisi oleh settings.js -->
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--text-muted);">
+          🔒 Kunci Pencarian: <b id="rf-cg-searchlock-status">—</b> (otomatis, mengikuti profil aktif)
+        </div>
       </div>
 
-      <!-- Force redirect YouTube/X -->
-      <div class="rf-row">
+      <!-- ③ EDIT PROFIL -->
+      <div class="rf-row rf-row-stacked" style="border:1px solid var(--border);padding:14px 16px;border-radius:6px;">
         <div class="rf-row-label">
-          <div class="rf-row-title">Redirect paksa YouTube &amp; X ke konten positif Tiongkok</div>
-          <div class="rf-row-desc">
-            Saat buka home YouTube / X — tampilkan halaman kurasi konten
-            positif Tiongkok sebagai pengganti feed default
+          <div class="rf-row-title">Edit profil: <span id="rf-cg-edit-title">—</span></div>
+          <div class="rf-row-desc">Ubah nama, ikon, topik, channel whitelist, dan perilaku halaman watch.</div>
+        </div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+          <div style="flex:2;min-width:180px;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Nama profil</label>
+            <input type="text" id="rf-cg-edit-name" placeholder="mis. Fokus Belajar"
+              style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />
+          </div>
+          <div style="flex:1;min-width:100px;">
+            <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Ikon (emoji)</label>
+            <input type="text" id="rf-cg-edit-emoji" maxlength="4" placeholder="👤"
+              style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:14px;text-align:center;" />
           </div>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-force-redirect" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
 
-      <!-- Filter feed -->
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Filter feed YouTube &amp; X dari konten negatif</div>
-          <div class="rf-row-desc">
-            Sembunyikan video / tweet yang mengandung kata kunci negatif
-            (korupsi, bencana, skandal, kekerasan, dll.) dari feed yang tampil
+        <!-- Topik -->
+        <div style="margin-top:14px;">
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Topik (kata/frasa yang dicocokkan dengan judul &amp; channel)</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input type="text" id="rf-cg-edit-topic-input" placeholder="mis. python, cerita nabi, lagu anak"
+              style="flex:1;min-width:200px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />
+            <button id="rf-cg-edit-topic-add" class="rf-btn rf-btn-secondary" style="padding:6px 12px;">➕ Tambah</button>
+          </div>
+          <div id="rf-cg-edit-topic-list" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+            <!-- chip topik diisi oleh settings.js -->
           </div>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-filter-feeds" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
 
-      <!-- Block YouTube channels -->
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Blokir channel YouTube berita Indonesia</div>
-          <div class="rf-row-desc">
-            Sembunyikan otomatis video dari METRO TV, Kompas, iNews, tvOne, CNN
-            Indonesia, Tribun, dll. (50+ channel berita Indonesia)
+        <!-- Channel whitelist -->
+        <div style="margin-top:14px;">
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Channel whitelist (opsional — nama channel yang selalu diizinkan)</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input type="text" id="rf-cg-edit-channel-input" placeholder="mis. Nussa Official, FreeCodeCamp"
+              style="flex:1;min-width:200px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:12px;" />
+            <button id="rf-cg-edit-channel-add" class="rf-btn rf-btn-secondary" style="padding:6px 12px;">➕ Tambah</button>
+          </div>
+          <div id="rf-cg-edit-channel-list" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+            <!-- chip channel diisi oleh settings.js -->
           </div>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-block-yt" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
 
-      <!-- Block X accounts -->
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Blokir akun X (Twitter) berita Indonesia</div>
-          <div class="rf-row-desc">
-            Sembunyikan otomatis tweet dari @detikcom, @kompascom, @tribunnews,
-            @MetroTV, @tvOneNews, dll.
+        <!-- strictWatch -->
+        <div style="margin-top:14px;">
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:6px;">Halaman watch (video di luar topik):</label>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="rf-cg-edit-strict" value="false" />
+              <span>Tampilkan peringatan + tombol "Tetap tonton" (30 dtk)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+              <input type="radio" name="rf-cg-edit-strict" value="true" />
+              <span>Blokir total → kembali ke beranda</span>
+            </label>
           </div>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-block-x" />
-          <span class="rf-slider"></span>
-        </label>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;align-items:center;">
+          <button id="rf-cg-edit-save" class="rf-btn rf-btn-primary" style="padding:8px 16px;">💾 Simpan perubahan</button>
+          <button id="rf-cg-edit-delete" class="rf-btn rf-btn-secondary" style="padding:8px 14px;color:#dc2626;border-color:#dc2626;">🗑️ Hapus profil</button>
+          <button id="rf-cg-edit-addnew" class="rf-btn rf-btn-secondary" style="padding:8px 14px;">➕ Tambah profil baru</button>
+          <span id="rf-cg-edit-msg" style="font-size:11px;color:var(--text-muted);margin-left:6px;"></span>
+        </div>
       </div>
 
-      <!-- Strict mode -->
-      <div class="rf-row">
+      <!-- ④ LAPISAN TAMBAHAN -->
+      <div class="rf-row rf-row-stacked" style="background:rgba(245,158,11,0.05);border-left:3px solid #f59e0b;padding:12px 14px;border-radius:6px;">
         <div class="rf-row-label">
-          <div class="rf-row-title">Mode paksa (bypass butuh 2× klik)</div>
-          <div class="rf-row-desc">
-            Tombol "Lewati" pada halaman takeover/blocked harus diklik 2× dalam
-            3 detik untuk konfirmasi — mencegah klik tidak sengaja
+          <div class="rf-row-title">Lapisan tambahan</div>
+          <div class="rf-row-desc">Tetap aktif sebagai pelengkap Mode Fokus.</div>
+        </div>
+        <!-- Blokir Shorts -->
+        <div class="rf-row" style="padding:8px 0;">
+          <div class="rf-row-label">
+            <div class="rf-row-title">🚫 Blokir YouTube Shorts</div>
+            <div class="rf-row-desc">Sembunyikan semua Shorts (feed &amp; navigasi /shorts/).</div>
           </div>
+          <label class="rf-switch">
+            <input type="checkbox" id="rf-set-cg-block-shorts" />
+            <span class="rf-slider"></span>
+          </label>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-strict" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
-
-      <!-- Notif -->
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Notifikasi saat redirect</div>
-          <div class="rf-row-desc">Tampilkan notifikasi browser saat konten diblokir/redirect</div>
-        </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-notify" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
-
-      <!-- Debug mode -->
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">🔍 Mode Debug</div>
-          <div class="rf-row-desc">
-            Aktifkan logging ke console (F12). Setelah aktif, Alt+Klik pada badge merah
-            "X konten negatif disembunyikan" untuk membuka overlay debug yang menampilkan
-            statistik scan &amp; elemen yang di-hidden. Berguna kalau masih ada konten
-            negatif yang tembus.
+        <!-- Block YT channel -->
+        <div class="rf-row" style="padding:8px 0;border-top:1px solid var(--border);">
+          <div class="rf-row-label">
+            <div class="rf-row-title">Blokir channel YouTube berita Indonesia</div>
+            <div class="rf-row-desc">Lapisan blacklist channel (METRO TV, Kompas, iNews, tvOne, dll.).</div>
           </div>
+          <label class="rf-switch">
+            <input type="checkbox" id="rf-set-cg-block-yt" />
+            <span class="rf-slider"></span>
+          </label>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-debug" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
-
-      <!-- Nuclear mode -->
-      <div class="rf-row" style="background:rgba(220,38,38,0.08);border-left:3px solid #dc2626;padding-left:14px;border-radius:6px;">
-        <div class="rf-row-label">
-          <div class="rf-row-title">☢️ Nuclear Mode — Blokir SEMUA Politik Indonesia</div>
-          <div class="rf-row-desc">
-            <strong style="color:#dc2626;">Paling agresif.</strong> Blokir semua video/tweet
-            yang menyebut <em>politisi</em> (Prabowo, Jokowi, Anies, Gibran, Bahlil, dll.),
-            <em>partai</em> (PDIP, Golkar, Gerindra, PKB, dll.), atau
-            <em>lembaga politik</em> (DPR, Polri, Kejaksaan, KPU, dll.). Daftar 330+ keyword
-            + 170+ channel/akun. <strong>Diuji di 240 judul nyata → 100% tertangkap.</strong>
+        <!-- Block X accounts -->
+        <div class="rf-row" style="padding:8px 0;border-top:1px solid var(--border);">
+          <div class="rf-row-label">
+            <div class="rf-row-title">Blokir akun X (Twitter) berita Indonesia</div>
+            <div class="rf-row-desc">Lapisan blacklist akun X (@detikcom, @kompascom, @tribunnews, dll.).</div>
           </div>
+          <label class="rf-switch">
+            <input type="checkbox" id="rf-set-cg-block-x" />
+            <span class="rf-slider"></span>
+          </label>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-nuclear" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
-
-      <!-- v0.8.24 Search Query Blocker -->
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">🔍 Block Pencarian Politik</div>
-          <div class="rf-row-desc">
-            Saat Anda search "jokowi", "korupsi", "febri", "pilpres", "jampidsus", dll.
-            di YouTube/X — otomatis di-redirect ke search "kehidupan di tiongkok vlog".
-            Cegah Anda nge-search politik saat ingin browsing santai.
+        <!-- Notif -->
+        <div class="rf-row" style="padding:8px 0;border-top:1px solid var(--border);">
+          <div class="rf-row-label">
+            <div class="rf-row-title">Notifikasi saat redirect</div>
+            <div class="rf-row-desc">Tampilkan notifikasi browser saat Kunci Pencarian / watch strict redirect.</div>
           </div>
+          <label class="rf-switch">
+            <input type="checkbox" id="rf-set-cg-notify" />
+            <span class="rf-slider"></span>
+          </label>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-block-search" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
-
-      <!-- v0.8.24 Scan Description -->
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">📋 Scan Deskripsi Video</div>
-          <div class="rf-row-desc">
-            Scan juga description/preview text video (bukan hanya judul). Tangkap video
-            yang judulnya aman tapi deskripsinya menyebut politisi/korupsi.
+        <!-- Debug -->
+        <div class="rf-row" style="padding:8px 0;border-top:1px solid var(--border);">
+          <div class="rf-row-label">
+            <div class="rf-row-title">🔍 Mode Debug</div>
+            <div class="rf-row-desc">Aktifkan logging ke console (F12) — lihat elemen yang di-scan &amp; di-hide.</div>
           </div>
+          <label class="rf-switch">
+            <input type="checkbox" id="rf-set-cg-debug" />
+            <span class="rf-slider"></span>
+          </label>
         </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-cg-scan-desc" />
-          <span class="rf-slider"></span>
-        </label>
       </div>
 
-      <!-- Kata kunci negatif (textarea) -->
-      <div class="rf-row rf-row-stacked">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Kata kunci negatif (dipisah koma)</div>
-          <div class="rf-row-desc">
-            Daftar kata yang dianggap negatif. Video/tweet yang judulnya
-            mengandung kata ini akan disembunyikan dari feed.
-          </div>
-        </div>
-        <textarea id="rf-set-cg-keywords" rows="4"
-          style="width:100%;font-family:inherit;font-size:12px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);resize:vertical;"
-          placeholder="gempa, banjir, korupsi, skandal, tewas, ..."></textarea>
-      </div>
-
-      <!-- Domain berita yang diblokir (textarea) -->
-      <div class="rf-row rf-row-stacked">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Domain berita yang diblokir (dipisah baris baru)</div>
-          <div class="rf-row-desc">
-            Satu domain per baris. Subdomain juga akan diblokir otomatis
-            (mis. "detik.com" akan memblokir "news.detik.com" juga).
-          </div>
-        </div>
-        <textarea id="rf-set-cg-domains" rows="6"
-          style="width:100%;font-family:monospace;font-size:11px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);resize:vertical;"
-          placeholder="detik.com&#10;kompas.com&#10;tribunnews.com&#10;..."></textarea>
-      </div>
-
-      <!-- ===== User Blocklist (dynamic) ===== -->
+      <!-- ===== User Blocklist (dynamic) — "Blokir Konten Ini" context menu ===== -->
       <div class="rf-row rf-row-stacked" style="background:rgba(220,38,38,0.05);border-left:3px solid #dc2626;padding:14px 16px;border-radius:6px;margin-top:14px;">
         <div class="rf-row-label">
           <div class="rf-row-title">🚫 Blocklist Saya (Konten yang Saya Blokir)</div>
           <div class="rf-row-desc">
             Daftar konten yang Anda blokir via klik kanan → "🚫 Blokir Konten Ini"
-            di YouTube / X. Konten baru yang cocok akan otomatis disembunyikan.
+            di YouTube / X. Berfungsi sebagai lapisan tambahan di atas Mode Fokus.
             <br /><br />
             <strong>Cara pakai:</strong>
             <ol style="margin:6px 0 0 18px;padding:0;line-height:1.6;">
@@ -1614,43 +1570,14 @@
         </div>
       </div>
 
-      <!-- Tombol aksi -->
-      <div class="rf-row rf-row-stacked">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Aksi cepat</div>
-          <div class="rf-row-desc">Tes halaman takeover / reset ke default / force re-scan / force enable all</div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button id="rf-set-cg-force-enable" class="rf-btn rf-btn-secondary" style="background:#dc2626;color:#fff;border-color:#dc2626;font-weight:700;padding:10px 16px;">🚨 FORCE ENABLE ALL — Nyalakan Semua</button>
-          <button id="rf-set-cg-force-rescan" class="rf-btn rf-btn-secondary" style="background:#dc2626;color:#fff;border-color:#dc2626;">🔄 Force Re-scan Semua Tab</button>
-          <button id="rf-set-cg-test-takeover-yt" class="rf-btn rf-btn-secondary">📺 Tes Takeover YouTube</button>
-          <button id="rf-set-cg-test-takeover-x" class="rf-btn rf-btn-secondary">🐦 Tes Takeover X</button>
-          <button id="rf-set-cg-test-blocked" class="rf-btn rf-btn-secondary">🚫 Tes Halaman Blocked</button>
-          <button id="rf-set-cg-reset" class="rf-btn rf-btn-secondary">↺ Reset ke Default</button>
-        </div>
-      </div>
-
-      <!-- v0.8.26: Status indikator -->
+      <!-- v3.21.0: Status indikator -->
       <div class="rf-row rf-row-stacked" style="background:rgba(34,197,94,0.08);border-left:3px solid #16a34a;padding:10px 14px;border-radius:6px;">
         <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;">
-          <strong style="color:#16a34a;">✓ Auto-save aktif.</strong> Setiap toggle langsung tersimpan
-          saat diubah (tidak perlu tombol save). Toast "✓ Tersimpan" akan muncul di pojok kanan bawah.
+          <strong style="color:#16a34a;">✓ Auto-save aktif.</strong> Toggle langsung tersimpan saat diubah.
+          Ganti profil atau simpan perubahan profil → broadcast ke semua tab YouTube/X untuk re-scan.
           <br />
-          <strong style="color:#16a34a;">v0.8.26:</strong> Setelah ubah toggle, ekstensi otomatis
-          kirim pesan ke SEMUA tab YouTube/X yang terbuka untuk re-scan langsung. Juga ada
-          auto-polling setiap 3 detik sebagai jaring pengaman.
-          <br />
-          <strong style="color:#dc2626;">⚠️ Penting:</strong> Setelah install/update versi baru,
-          <strong>refresh tab YouTube/X</strong> (Ctrl+Shift+R) supaya content script ke-load
-          ulang dengan settings terbaru. Atau klik tombol "🔄 Force Re-scan Semua Tab" di atas.
-        </div>
-      </div>
-
-      <div class="rf-row rf-row-stacked" style="background:rgba(245,158,11,0.06);border-left:3px solid #f59e0b;padding:10px 14px;border-radius:6px;">
-        <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;">
-          <strong>ℹ️ Catatan:</strong> Anda tetap bisa melewati pengalihan (tombol "Lewati" di
-          pojok halaman takeover/blocked). Setelah lewati, halaman tersebut tidak akan
-          di-redirect ulang selama 60 detik. Semua pengaturan disimpan lokal di browser Anda.
+          <strong style="color:#dc2626;">⚠️ Penting:</strong> Setelah update versi, refresh tab YouTube/X
+          (Ctrl+Shift+R) supaya content script ke-load ulang dengan settings terbaru.
         </div>
       </div>
     </section>
@@ -1709,8 +1636,7 @@
   <!-- Toast -->
   <div id="rf-toast" class="rf-toast"></div>
 
-  <!-- Chrome MV3: Load polyfill SEBELUM module scripts supaya browser.* tersedia -->
-<script src="../lib/browser-polyfill.min.js"></script>
+  <script src="../lib/browser-polyfill.min.js"></script>
 <script type="module" src="settings.js"></script>
 </body>
 </html>

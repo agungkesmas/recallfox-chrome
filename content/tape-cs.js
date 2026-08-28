@@ -46,11 +46,11 @@
     return;
   }
   const { evaluate, formatNumber, toPlainText, toMarkdown, loadSession, saveSession, savePinState } = tape;
-
+  let floatSync=null; try{ floatSync = await import(browser.runtime.getURL('lib/float-sync.js')); }catch(e){}
   let host = null, shadow = null, popover = null, textarea = null;
   let statusAutosave = null;
-  let pinBtn = null, isVisible = false, pinned = false;
-  let saveTimer = null;
+  let pinBtn = null, isVisible = false, pinned = true;
+  let saveTimer = null, idleTimer = null;
 
   // ===== Theme =====
   async function loadTheme() {
@@ -79,6 +79,10 @@
     wireEvents();
   }
 
+  // ===== Idle hover-only (default nempel, pin tetap) =====
+  function setActive(){ try{ if(popover) popover.classList.remove('rft-idle'); }catch(e){} }
+  function setIdle(){ try{ if(!isVisible) return; if(popover) popover.classList.add('rft-idle'); }catch(e){} }
+  function scheduleIdle(){ try{ if(!isVisible) return; setIdle(); }catch(e){} }
   // ===== Show / Hide =====
   async function show() {
     mount();
@@ -86,12 +90,18 @@
     shadow.host.setAttribute('data-theme', theme);
     popover.classList.add('rft-show');
     isVisible = true;
+    // default nempel: pinned true
+    pinned = true; if(pinBtn) pinBtn.classList.add('rft-active'); try{ await savePinState(true); }catch(e){}
     const s = await loadSession();
     if (s.text) textarea.value = s.text;
-    if (s.pinned) { pinned = true; pinBtn.classList.add('rft-active'); }
+    if (s.pinned===false){ pinned=false; if(pinBtn) pinBtn.classList.remove('rft-active'); }
+    // awal transparan (hover-only)
+    try{ popover.classList.add('rft-idle'); }catch(e){}
     setTimeout(() => { textarea.focus(); }, 50);
+    try{ if(floatSync) await floatSync.saveFloatState('tape', {isOpen:true, text: textarea.value}); }catch(e){}
   }
-  function hide() { if (popover) { popover.classList.remove('rft-show'); isVisible = false; } }
+  function hide() { if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } isVisible=false;
+    try{ if(floatSync) floatSync.saveFloatState('tape', {isOpen:false}); }catch(e){} }
   async function toggle() { if (isVisible) hide(); else await show(); }
 
   // ============================================================================
@@ -264,11 +274,11 @@
 
   function handleEnterKey(e) {
     // Cek apakah cursor di akhir baris (atau di akhir text)
-    // v3.20.6: const → let (sebelumnya TypeError "Assignment to constant variable"
+    // v3.20.2: const → let (sebelumnya TypeError "Assignment to constant variable"
     //   saat reassign val/pos setelah reformatAllOpLines, menyebabkan Enter handler
     //   abort setelah reformat tapi sebelum sisip separator + baris hasil →
     //   calculator "tidak stabil" + result row tidak pernah muncul).
-    // v3.20.7: Handler sekarang di-wrap try/catch oleh caller (keydown listener)
+    // v3.20.3: Handler sekarang di-wrap try/catch oleh caller (keydown listener)
     //   supaya error tidak crash seluruh tape UX.
     let pos = textarea.selectionStart;
     let val = textarea.value;
@@ -399,6 +409,7 @@
     }
     saveTimer = setTimeout(async () => {
       try { await saveSession(textarea.value); } catch (e) {}
+      try{ if(floatSync && isVisible) await floatSync.saveFloatState('tape', {isOpen:true, text: textarea.value}); }catch(e){}
       updateStatus();
     }, 400);
   }
@@ -648,7 +659,11 @@
   function wireEvents() {
     // Textarea input → live status update + debounced save
     // TIDAK auto-sisipkan baris hasil (hanya Enter yang trigger)
-    textarea.addEventListener('input', () => { updateStatus(); scheduleSave(); });
+    textarea.addEventListener('input', () => { updateStatus(); scheduleSave(); try{ setActive(); }catch(e){} });
+    try{ textarea.addEventListener('focus', ()=>{ try{ setActive(); }catch(e){} }); }catch(e){}
+    // Idle: hover popover → active, leave → schedule idle
+    try{ popover.addEventListener('mouseenter', ()=>{ try{ setActive(); }catch(e){} }); }catch(e){}
+    try{ popover.addEventListener('mouseleave', ()=>{ try{ scheduleIdle(); }catch(e){} }); }catch(e){}
 
     // KEYDOWN — auto-format + Enter = hitung otomatis
     textarea.addEventListener('keydown', (e) => {
@@ -664,7 +679,8 @@
         hide();
         return;
       }
-      // v3.20.7: Wrap handlers in try/catch supaya error tidak crash seluruh keydown
+      try{ setActive(); }catch(e){}
+      // v3.20.3: Wrap handlers in try/catch supaya error tidak crash seluruh keydown
       //   listener (yang bisa menyebabkan tape "tidak stabil" — keystroke skip,
       //   textarea value inconsistent, atau popover stuck). Error di-log ke console
       //   tetapi UX tetap responsif.
@@ -690,11 +706,13 @@
       handleResultLineDoubleClick();
     });
 
-    // Buttons
+    // Buttons — pin tetap, hover transparan tetap jalan di dua state
     pinBtn.addEventListener('click', async () => {
-      pinned = !pinned;
-      pinBtn.classList.toggle('rft-active', pinned);
-      await savePinState(pinned);
+      try{
+        pinned = !pinned;
+        pinBtn.classList.toggle('rft-active', pinned);
+        await savePinState(pinned);
+      }catch(e){ console.error('[RecallFox/Tape] pin failed:', e); }
     });
     shadow.querySelector('.rft-print').addEventListener('click', doPrint);
     shadow.querySelector('.rft-copy').addEventListener('click', doCopy);
@@ -702,7 +720,7 @@
     shadow.querySelector('.rft-clear').addEventListener('click', doClear);
 
     // Click outside → hide (unless pinned)
-    // v3.20.7: Pakai composedPath() untuk check apakah click terjadi di dalam shadow DOM.
+    // v3.20.3: Pakai composedPath() untuk check apakah click terjadi di dalam shadow DOM.
     //   e.target saja tidak reliable di cross-shadow-boundary events (kadang retarget,
     //   kadang tidak, tergantung browser engine). composedPath() berisi full path event
     //   termasuk element di dalam shadow DOM — jadi check `path.includes(host)` lebih akurat.
@@ -722,7 +740,7 @@
   }
 
   // ===== Message listener =====
-  // v3.20.7: OPEN_TAPE sekarang selalu show() (sebelumnya toggle() — bisa menyebabkan
+  // v3.20.3: OPEN_TAPE sekarang selalu show() (sebelumnya toggle() — bisa menyebabkan
   //   tape "hilang" kalau user klik tombol 2x cepat atau message terkirim 2x). Untuk
   //   hide, gunakan HIDE_TAPE atau klik outside / Esc.
   browser.runtime.onMessage.addListener((msg) => {
@@ -735,9 +753,18 @@
     }
     else if (msg.type === 'SHOW_TAPE') show();
     else if (msg.type === 'HIDE_TAPE') hide();
+    else if (msg.type === 'RF_HIDE_FOR_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display='none'; }catch(e){} }
+    else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display=''; }catch(e){} }
   });
 
-  loadSession().then((s) => { pinned = s.pinned; });
+  loadSession().then((s) => { if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
+  try{
+    if(floatSync) floatSync.loadFloatState('tape').then(st=>{
+      if(st && st.isOpen){
+        show().then(()=>{ if(typeof st.text==='string' && st.text) { textarea.value=st.text; updateStatus(); } });
+      }
+    });
+  }catch(e){}
 
   // ===== Template (HTML + CSS inlined in Shadow DOM) =====
   // v3.14.12: HAPUS footer BLOCK + GRAND TOTAL.
@@ -752,7 +779,7 @@
   position:fixed; top:60px; right:14px;
   width:340px; max-height:560px;
   background:#0E182A; color:#E8EEF7;
-  border:1px solid #1A293D; border-radius:12px;
+  border:1px solid rgba(245,158,11,0.25); border-radius:12px;
   box-shadow:0 18px 50px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
   display:flex; flex-direction:column; overflow:hidden;
   font-family:Menlo,Consolas,"Courier New",monospace; font-size:13px;
@@ -761,25 +788,29 @@
   resize:both; min-width:280px; min-height:340px;
 }
 .rft-popover.rft-show{ opacity:1; transform:translateY(0) scale(1); pointer-events:auto }
+.rft-popover.rft-idle{ opacity:0.35; background:rgba(120,53,15,0.55); backdrop-filter:blur(2px); border-color:rgba(251,191,36,0.35); }
+:host([data-theme="light"]) .rft-popover.rft-idle{ background:rgba(254,243,199,0.85); border-color:rgba(245,158,11,0.3); }
 
 :host([data-theme="light"]) .rft-popover{
   background:#F8FAFC; color:#1E293B; border-color:#E2E8F0;
   box-shadow:0 18px 50px rgba(0,0,0,.12), 0 2px 8px rgba(0,0,0,.08);
 }
 
-/* Header — draggable */
+/* Header — draggable — muted amber for Tape */
 .rft-hd{
   display:flex; align-items:center; gap:6px;
   padding:7px 10px; flex:none; cursor:move;
-  background:#1A293D; border-bottom:1px solid #0F1E33;
+  background:#3A1F00; border-bottom:1px solid rgba(245,158,11,0.2);
 }
-:host([data-theme="light"]) .rft-hd{ background:#FFFFFF; border-bottom:1px solid #E2E8F0; }
+:host([data-theme="light"]) .rft-hd{ background:#FFFBEB; border-bottom:1px solid rgba(245,158,11,0.25); }
 
 .rft-title{
   font-size:11px; font-weight:700; letter-spacing:-.01em; flex:1;
   display:flex; align-items:center; gap:5px;
   font-family:-apple-system,system-ui,"Segoe UI",sans-serif;
+  color:#FCD34D;
 }
+:host([data-theme="light"]) .rft-title{ color:#92400E; }
 .rft-actions{ display:flex; gap:2px; }
 
 .rft-btn{
@@ -791,7 +822,7 @@
 .rft-btn:hover{ background:rgba(255,255,255,.08); color:#E8EEF7; }
 :host([data-theme="light"]) .rft-btn:hover{ background:rgba(0,0,0,.06); color:#1E293B; }
 .rft-btn:active{ transform:scale(.92) }
-.rft-btn.rft-active{ background:#1E3A8A; color:#60A5FA; }
+.rft-btn.rft-active{ background:#78350F; color:#FCD34D; border:1px solid rgba(251,191,36,0.3); }
 .rft-btn.rft-flash{ background:#42C6A0; color:#fff; }
 .rft-btn svg{ width:13px; height:13px }
 

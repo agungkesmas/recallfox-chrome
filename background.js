@@ -7,13 +7,6 @@
 //   4. Sync trigger (debounced)
 //   5. Sync listener (merge changes from other devices)
 
-// Chrome MV3: Import webextension-polyfill supaya browser.* API jalan di Chrome.
-// Polyfill wrap chrome.* → browser.* dengan Promise support.
-// Di Firefox, browser.* sudah native → polyfill no-op.
-import './lib/browser-polyfill.min.js';
-// Chrome MV3: Cross-browser sidebar abstraction (Firefox sidebarAction vs Chrome sidePanel).
-import { openSidebar, closeSidebar, isSidebarOpen, toggleSidebar, setupSidebarBehavior } from './lib/sidebar-compat.js';
-
 // v3.11.11 (Issue #1): Helper escape HTML untuk COPY_SCREENSHOTS_BATCH
 function escHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -28,11 +21,6 @@ import {
   addItem,
   updateItem,
   getVault,
-  saveVault,
-  getScreenshotBlob,
-  deleteItem,
-  deleteBundle,
-  addNote,
   markBypass,
   isBypassed,
   getUserBlocklist,
@@ -43,71 +31,6 @@ import {
 } from './lib/storage.js';
 // v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async, lokal saja)
 import { chatWithFallback, isAssistantConfigured } from './lib/assistant.js';
-// Chrome MV3 (v3.20.4): dynamic import() is disallowed on ServiceWorkerGlobalScope
-// by the HTML spec — see https://github.com/w3c/ServiceWorker/issues/1356.
-// All previously-lazy-loaded modules are now imported statically. This is a
-// no-op refactor for Firefox (which supports dynamic import), but a hard
-// requirement for Chrome MV3 service worker.
-import {
-  fetchPrayerTimes,
-  reverseGeocode,
-  geocode,
-  getNextPrayer,
-  formatCountdown
-} from './lib/salahtime.js';
-import {
-  isLoggedIn,
-  signInWithEmail,
-  signUpWithEmail,
-  signInWithGmail,
-  signOut,
-  testConnection as testSupabaseConnection,
-  handleOAuthCallback,
-  proactiveRefresh,
-  selectRows  // v3.20.41: Static import — dynamic import() forbidden in MV3 service worker
-} from './lib/supabase-client.js';
-import {
-  startRealtimeSync,
-  subscribeRealtimeVault,
-  stopRealtimeSync,
-  getSupabaseStatus,
-  pushToSupabase,
-  pullFromSupabaseV33,
-  fullSync as supabaseFullSync,
-  deleteItemFromCloud,
-  deleteNoteFromCloud,
-  triggerAutoSync,
-  getOrDownloadScreenshotBlob,
-  handleRealtimeAlarm
-} from './lib/supabase-sync.js';
-import {
-  initBackup,
-  startBackupInterval,
-  manualBackupWithTimestamp,
-  buildBackupPayload,
-  handleBackupAlarm
-} from './lib/autobackup.js';
-import { clearBrowsingData } from './lib/clearcache.js';
-import { normalizeDb, getSiteVolume, setSiteVolume, extractDomain, isRestrictedUrl } from './lib/volume.js';
-import {
-  scheduleAutoSync,
-  getSyncProfiles,
-  addSyncProfile,
-  updateSyncProfile,
-  deleteSyncProfile,
-  setActiveProfile,
-  getActiveProfile,
-  pushStateToCloud,
-  pullStateFromCloud,
-  fullSync as profileFullSync,
-  testProfileConnection,
-  getSyncStatus
-} from './lib/sync-profile.js';
-import { buildPdfBlob } from './lib/pdf.js';
-import { getSunnahFastTomorrow, parseHijriString } from './lib/islamicCalendar.js';
-import { isExerciseTime, getQuranStatus } from './lib/habits.js';
-import { isAIPageFromOrigin } from './lib/ai-detect.js';
-
 // v3.7: Import untuk backup handlers
 import { encryptBackup, decryptBackup, isEncryptedBackup } from './lib/crypto.js';
 import {
@@ -123,35 +46,18 @@ import {
   DEFAULT_BLOCKED_SEARCH_QUERIES,
   DEFAULT_CHINA_YOUTUBE_SEARCHES,
   DEFAULT_CHINA_X_ACCOUNTS,
-  DEFAULT_CHINA_X_SEARCHES
+  DEFAULT_CHINA_X_SEARCHES,
+  // v3.21.0: Mode Fokus (Allowlist) — Pelindung Konten baru
+  DEFAULT_TOPIC_PROFILES,
+  generateProfileId,
+  seedDefaultTopicProfiles,
+  getActiveProfile,
+  matchesProfileSearchQuery,
+  isProfileFiltering
 } from './lib/contentguard.js';
 import { DEFAULT_ELEMENT_BLOCKER_RULES } from './lib/elementblocker.js';
 // v3.8.1: GDrive Sync (Apps Script bridge) — Issue #1, #2, #6
 import { initGDriveSync, flushNow as gdriveFlushNow, sendFullBackup as gdriveSendFullBackup, uploadScreenshot as gdriveUploadScreenshot, testConnection as gdriveTestConnection, getSyncMeta as gdriveGetMeta, getQueueLength as gdriveGetQueueLength, clearQueue as gdriveClearQueue } from './lib/gdrive-sync.js';
-
-// ===== Chrome MV3 SW helpers =====
-// URL.createObjectURL is NOT available in Chrome MV3 service worker (only in
-// Firefox SW + extension pages). For blob → download URL conversion in SW
-// context, we fall back to base64 data: URLs. btoa + TextEncoder are both
-// available in Chrome SW. See v3.20.4 changelog for the same fix in autobackup.
-async function blobToDownloadUrl(blob) {
-  if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
-    // Firefox SW / popup context — use efficient blob URL
-    return { url: URL.createObjectURL(blob), isBlobUrl: true };
-  }
-  // Chrome MV3 SW — fall back to data: URL
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  const base64 = btoa(binary);
-  return { url: `data:${blob.type || 'application/octet-stream'};base64,${base64}`, isBlobUrl: false };
-}
-function revokeDownloadUrl(urlInfo) {
-  if (urlInfo?.isBlobUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
-    try { URL.revokeObjectURL(urlInfo.url); } catch (e) {}
-  }
-  // data: URLs don't need revocation
-}
 
 // ===== Setup context menu on install =====
 
@@ -175,7 +81,7 @@ browser.runtime.onInstalled.addListener(async () => {
 
   // 3. Auto-backup initialization (creates Downloads/RecallFox/ folder)
   try {
-    
+    const { initBackup, startBackupInterval } = await import('./lib/autobackup.js');
     await initBackup();
     await startBackupInterval();
   } catch (e) {
@@ -207,10 +113,10 @@ browser.runtime.onInstalled.addListener(async () => {
   // alarm mati sampai Firefox di-restart → sync tidak real-time.
   // Solusi: gated isLoggedIn() (mirror onStartup pattern).
   try {
-    
+    const { isLoggedIn } = await import('./lib/supabase-client.js');
     const loggedIn = await isLoggedIn();
     if (loggedIn) {
-      
+      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
       await startRealtimeSync();
       await subscribeRealtimeVault();
       console.log('[RecallFox] onInstalled: Supabase realtime sync started (v3.13.3)');
@@ -227,7 +133,7 @@ browser.runtime.onInstalled.addListener(async () => {
   // Migration: parse [Tujuan: ...] dari body → set contextPurpose → bersihkan body.
   // Juga backfill snapshotDomain dari source.url untuk existing snapshots.
   try {
-    
+    const { getVault, saveVault } = await import('./lib/storage.js');
     const vault = await getVault();
     let migrated = 0;
     for (const item of (vault.items || [])) {
@@ -284,15 +190,13 @@ browser.runtime.onStartup.addListener(async () => {
   if (settings.sidebarAutoOpen) {
     try {
       setTimeout(async () => {
-        try { await openSidebar(); console.log('[RecallFox] Sidebar auto-opened on startup'); }
+        try { await browser.sidebarAction.open(); console.log('[RecallFox] Sidebar auto-opened on startup'); }
         catch (e) { console.warn('[RecallFox] Sidebar auto-open failed:', e.message); }
       }, 2000);
     } catch (e) {
       console.warn('[RecallFox] Sidebar auto-open setup failed:', e.message);
     }
   }
-  // Chrome MV3: Setup side panel behavior (openPanelOnActionClick=false)
-  setupSidebarBehavior().catch(e => console.warn('[RecallFox] Sidebar behavior setup failed:', e.message));
 
   // Prayer reminder checker (runs every 60s)
   try { startPrayerReminderChecker(); }
@@ -300,7 +204,7 @@ browser.runtime.onStartup.addListener(async () => {
 
   // Auto-backup interval timer
   try {
-    
+    const { startBackupInterval } = await import('./lib/autobackup.js');
     await startBackupInterval();
   } catch (e) {
     console.warn('[RecallFox] onStartup: Backup interval start failed:', e.message);
@@ -312,10 +216,10 @@ browser.runtime.onStartup.addListener(async () => {
 
   // v3.11.29: Start Supabase realtime sync kalau user sudah logged in
   try {
-    
+    const { isLoggedIn } = await import('./lib/supabase-client.js');
     const loggedIn = await isLoggedIn();
     if (loggedIn) {
-      
+      const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
       await startRealtimeSync();
       await subscribeRealtimeVault();
       console.log('[RecallFox] Supabase realtime sync started on startup (v3.11.33)');
@@ -407,7 +311,7 @@ async function setupContextMenu() {
     contexts: ['page'],
     documentUrlPatterns: ['http://*/*', 'https://*/*']
   });
-  // v3.20.9: Popout sidebar — context menu untuk toggle sidebar di halaman
+  // v3.20.4: Popout sidebar — context menu untuk toggle sidebar di halaman
   browser.contextMenus.create({
     id: 'rf-sidebar-in-page',
     title: 'Tampilkan RecallFox di halaman ini (popout)',
@@ -604,7 +508,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'rf-snapshot') {
     // v3.16.2: Cek via isAIPageFromOrigin (dynamic dari storage.aiSites)
     try {
-      
+      const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
       const isAI = await isAIPageFromOrigin(tab.url || info.pageUrl);
       if (!isAI) {
         console.log('[RecallFox] Snapshot dibatalkan — halaman bukan AI site (cek aiSites)');
@@ -619,29 +523,18 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     }
   } else if (info.menuItemId === 'rf-screenshot') {
     // Single FireShot-style entry — opens capture modal in active tab
-    // v3.20.11: JANGAN auto-save ke vault kalau overlay tidak terjangkau.
-    //   Sebelumnya: catch block → triggerScreenshot(tab, 'entire') → langsung
-    //   save ke vault tanpa modal. User complain: "screenshot yang tidak jadi
-    //   disave di vault, kamu malah save duluan". Sekarang: try inject overlay.js
-    //   + retry. Kalau masih gagal, tampilkan notifikasi error — TIDAK save apa2.
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
     } catch (e) {
-      console.warn('[RecallFox] overlay not reachable, trying inject + retry:', e.message);
-      try {
-        await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['lib/browser-polyfill.min.js', 'content/overlay.js'] });
-        await new Promise(r => setTimeout(r, 500));
-        await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
-      } catch (e2) {
-        console.warn('[RecallFox] overlay inject failed, screenshot cancelled:', e2.message);
-        try { browser.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('icons/icon-96.png'), title: 'RecallFox', message: 'Tidak bisa mengambil screenshot di halaman ini. Coba reload halaman lalu ulangi.' }); } catch (e3) {}
-      }
+      console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
+      await triggerScreenshot(tab, 'entire');
     }
   } else if (info.menuItemId === 'rf-sidebar-in-page') {
-    // v3.20.9: Toggle popout sidebar di halaman aktif
+    // v3.20.4: Toggle popout sidebar di halaman aktif
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'TOGGLE_SIDEBAR_IN_PAGE' });
     } catch (e) {
+      // Content script belum loaded — inject lalu toggle
       try {
         await browser.scripting.executeScript({
           target: { tabId: tab.id },
@@ -658,7 +551,7 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
   } else if (info.menuItemId === 'rf-clear-cache') {
     console.log('[RecallFox] Context menu → clear cache');
     const settings = await getSettings();
-    
+    const { clearBrowsingData } = await import('./lib/clearcache.js');
     const res = await clearBrowsingData({
       dataTypes: settings.clearCacheDataTypes,
       timePeriod: settings.clearCacheTimePeriod,
@@ -1140,7 +1033,7 @@ async function saveCaptureToVault(payload) {
   // Sekarang: auto-trigger Supabase push (debounced 3s) supaya screenshot otomatis
   // masuk ke cloud + Storage bucket.
   try {
-    
+    const { triggerAutoSync } = await import('./lib/supabase-sync.js');
     triggerAutoSync();
     console.log('[RecallFox] Auto-sync triggered after screenshot save');
   } catch (e) { /* Supabase mungkin belum di-setup — silent */ }
@@ -1154,7 +1047,7 @@ async function saveCaptureAs(payload) {
   let blob, ext, mime;
 
   if (format === 'pdf') {
-    
+    const { buildPdfBlob } = await import('./lib/pdf.js');
     blob = await buildPdfBlob(dataUrl, { title: payload.title || 'RecallFox Screenshot' });
     ext = 'pdf';
     mime = 'application/pdf';
@@ -1199,15 +1092,15 @@ async function saveCaptureAs(payload) {
   const finalName = `${safeName}.${ext}`;
 
   try {
-    const urlInfo = await blobToDownloadUrl(blob);
+    const url = URL.createObjectURL(blob);
     const downloadId = await browser.downloads.download({
-      url: urlInfo.url,
+      url,
       filename: `RecallFox/${finalName}`,
       saveAs: false,
       conflictAction: 'uniquify'
     });
-    // Revoke URL after a delay (download needs it to complete) — no-op for data: URLs
-    setTimeout(() => revokeDownloadUrl(urlInfo), 60000);
+    // Revoke URL after a delay (download needs it to complete)
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
     return { ok: true, downloadId };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -1330,9 +1223,9 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
 
   let sidebarAlreadyOpen = false;
   try {
-    sidebarAlreadyOpen = await isSidebarOpen();
+    sidebarAlreadyOpen = await browser.sidebarAction.isOpen({});
   } catch (e) {
-    // isOpen() not available — assume closed.
+    // isOpen() not available in older Firefox — assume closed.
   }
 
   if (!sidebarAlreadyOpen) {
@@ -1343,8 +1236,8 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
     // or in case the sidebar's init has already run and missed the storage
     // pending. The sidebar's runtime handler clears the storage pending
     // key immediately, so a duplicate fire is prevented.
-    try { await openSidebar(); } catch (e) {
-      console.warn('[RecallFox] openSidebar failed:', e);
+    try { await browser.sidebarAction.open(); } catch (e) {
+      console.warn('[RecallFox] sidebarAction.open failed:', e);
     }
   }
 
@@ -1367,107 +1260,9 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
   }, delay);
 }
 
-// ===== Keyboard commands listener =====
-//
-// Wired in manifest.json commands map. Three capture commands:
-//   capture-page     → Alt+Shift+5  → full-page capture (scroll-stitch)
-//   capture-area     → Alt+Shift+6  → drag-to-select area capture
-//   capture-visible  → Alt+Shift+7  → current viewport only
-
-// ===== Command handler — shared antara browser.commands.onCommand dan RF_COMMAND_FALLBACK =====
-// Chrome MV3: 4 commands punya suggested_key (capture-page, clear-cache, volume-up, volume-down).
-// 4 commands lainnya (capture-area, capture-visible, volume-reset, ask-ai) tidak punya suggested_key.
-// Content script overlay.js punya keydown listener fallback (Alt+Shift+6/7/0) yang kirim
-// message RF_COMMAND_FALLBACK → handler ini → logic yang sama dengan onCommand.
-async function handleCommand(cmd) {
-  if (cmd === 'capture-page' || cmd === 'capture-area' || cmd === 'capture-visible') {
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    const mode = cmd === 'capture-area' ? 'selection'
-               : cmd === 'capture-visible' ? 'visible'
-               : 'entire';
-    console.log('[RecallFox] Command →', cmd, '(mode:', mode + ') on tab', tab.id);
-    try {
-      await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP', mode });
-    } catch (e) {
-      // v3.20.11: JANGAN auto-save ke vault. Try inject overlay.js + retry.
-      //   Sebelumnya: triggerScreenshot(tab, mode) → langsung save tanpa modal.
-      console.warn('[RecallFox] overlay not reachable, trying inject + retry:', e.message);
-      try {
-        await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['lib/browser-polyfill.min.js', 'content/overlay.js'] });
-        await new Promise(r => setTimeout(r, 500));
-        await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP', mode });
-      } catch (e2) {
-        console.warn('[RecallFox] overlay inject failed, screenshot cancelled:', e2.message);
-        try { browser.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('icons/icon-96.png'), title: 'RecallFox', message: 'Tidak bisa mengambil screenshot di halaman ini. Coba reload halaman lalu ulangi.' }); } catch (e3) {}
-      }
-    }
-    return;
-  }
-
-  if (cmd === 'clear-cache') {
-    console.log('[RecallFox] Command → clear cache');
-    const settings = await getSettings();
-    
-    const res = await clearBrowsingData({
-      dataTypes: settings.clearCacheDataTypes,
-      timePeriod: settings.clearCacheTimePeriod,
-      currentTabOnly: settings.clearCacheCurrentTabOnly,
-      reload: settings.clearCacheReload,
-      notify: settings.clearCacheNotify
-    });
-    browser.runtime.sendMessage({
-      type: 'CLEAR_CACHE_RESULT',
-      result: res
-    }).catch(() => {});
-    return;
-  }
-
-  // === Volume control commands ===
-  if (cmd === 'volume-up' || cmd === 'volume-down' || cmd === 'volume-reset') {
-    
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id || !tab.url || isRestrictedUrl(tab.url)) return;
-
-    const domain = extractDomain(tab.url);
-    const currentDb = await getSiteVolume(domain);
-    let newDb;
-    if (cmd === 'volume-up') newDb = normalizeDb(currentDb + 1);
-    else if (cmd === 'volume-down') newDb = normalizeDb(currentDb - 1);
-    else newDb = 0;  // reset
-
-    await setSiteVolume(domain, newDb);
-    try {
-      await browser.tabs.sendMessage(tab.id, { command: 'setVolume', dB: newDb });
-    } catch (e) { /* volume-cs.js might not be loaded yet */ }
-    console.log('[RecallFox] Volume:', cmd, '→', newDb, 'dB for', domain);
-    return;
-  }
-
-  if (cmd === 'ask-ai') {
-    // Alt+Shift+A — get selected text from active tab and send to AI
-    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) return;
-    try {
-      const results = await browser.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: () => window.getSelection().toString().trim()
-      });
-      const text = results?.[0]?.result || '';
-      if (text.length < 3) return;
-      console.log('[RecallFox] Ask AI (keyboard shortcut):', text.slice(0, 80));
-      await routeAiQuery(text, { sourceUrl: tab.url || '', sourceTitle: tab.title || '' });
-    } catch (e) {
-      console.warn('[RecallFox] Ask AI shortcut failed:', e.message);
-    }
-    return;
-  }
-}
-
-// Register Chrome commands listener (4 commands dengan suggested_key)
-browser.commands.onCommand.addListener(async (cmd) => {
-  await handleCommand(cmd);
-});
+// ===== Keyboard commands removed — 0 shortcut (click-only) =====
+// All triggers via click: FAB sc, pill 📝/🧾, popup/sidebar, mode picker.
+// Hide-before-capture still via RF_HIDE_FOR_CAPTURE broadcast (capture.js).
 
 // ===== Message router =====
 
@@ -1475,13 +1270,6 @@ let syncTimer = null;
 
 browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
-  // Chrome MV3: Fallback keyboard shortcuts dari content script (commands tanpa suggested_key).
-  // Content script overlay.js kirim Alt+Shift+6/7/0 → route ke handleCommand.
-  if (msg.type === 'RF_COMMAND_FALLBACK') {
-    console.log('[RecallFox] Fallback command from content script:', msg.command);
-    await handleCommand(msg.command);
-    return;
-  }
   if (msg.type === 'TAPE_SAVE_TO_VAULT') {
     // v3.14.0: RecallTape — simpan tape ke vault sebagai tipe Prompt
     try {
@@ -1522,7 +1310,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       const settings = await getSettings();
       if (settings.syncAutoEnabled) {
-        
+        const { scheduleAutoSync } = await import('./lib/sync-profile.js');
         scheduleAutoSync();
       }
     } catch (e) { /* silent */ }
@@ -1550,14 +1338,24 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'OPEN_SIDEBAR') {
     // Toggle sidebar: open if closed, close if open
     try {
-      const result = await toggleSidebar();
-      if (result.ok) {
-        console.log('[RecallFox] Sidebar toggled:', result);
-        sendResponse({ ok: true, action: 'toggled' });
-      } else {
-        sendResponse({ ok: false, error: result.error || 'toggle_failed' });
+      // Check if sidebar is open (Firefox 124+)
+      let isOpen = false;
+      try {
+        isOpen = await browser.sidebarAction.isOpen({});
+      } catch (e) {
+        // isOpen() not available in older Firefox — assume closed
+        console.log('[RecallFox] sidebarAction.isOpen not available, trying open()');
       }
-      return;
+      
+      if (isOpen) {
+        await browser.sidebarAction.close();
+        console.log('[RecallFox] Sidebar closed');
+        sendResponse({ ok: true, action: 'closed' }); return;
+      } else {
+        await browser.sidebarAction.open();
+        console.log('[RecallFox] Sidebar opened');
+        sendResponse({ ok: true, action: 'opened' }); return;
+      }
     } catch (e) {
       console.error('[RecallFox] Sidebar toggle failed:', e);
       sendResponse({ ok: false, error: e.message }); return;
@@ -1654,96 +1452,21 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
 
-  // v3.20.21 FIX: COPY_TO_CLIPBOARD — fallback clipboard untuk popup/sidebar iframe.
-  //
-  // Root cause di Chrome MV3:
-  //   - navigator.clipboard.writeText() di background Service Worker Chrome MV3
-  //     SELALU gagal (SW tidak punya document context, tidak bisa focus)
-  //   - Sebelumnya: code di sini panggil navigator.clipboard langsung → diam-diam gagal
-  //
-  // Strategi baru:
-  //   1. Kirim { type: 'COPY_TEXT' } ke content script di tab aktif
-  //      (overlay.js ada di SEMUA halaman http(s) — paling reliable)
-  //   2. Kalau tab aktif adalah halaman internal (chrome://, about:blank), coba tab
-  //      lain yang ada content script-nya
-  //   3. Kalau semua gagal, return error — popup sudah harusnya pakai execCommand
-  //      fallback sendiri sebelum kirim ke sini
+  // v3.6: COPY_TO_CLIPBOARD — fallback untuk popup yang tidak punya akses clipboard
+  // (mis. di window popup kecil yang navigator.clipboard undefined)
   if (msg.type === 'COPY_TO_CLIPBOARD') {
     try {
-      const text = msg.text || '';
-      if (!text) { sendResponse({ ok: false, error: 'empty_text' }); return; }
-
-      // Strategi 1: tab aktif di window aktif
-      const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (activeTab?.id) {
-        try {
-          const res = await browser.tabs.sendMessage(activeTab.id, { type: 'COPY_TEXT', text });
-          if (res?.ok) { sendResponse({ ok: true }); return; }
-        } catch (e) {
-          console.warn('[RecallFox/bg] COPY_TEXT ke active tab gagal:', e.message);
-        }
-      }
-
-      // Strategi 2: cari tab lain yang punya content script overlay.js
-      const allTabs = await browser.tabs.query({});
-      for (const tab of allTabs) {
-        if (!tab.id || tab.id === activeTab?.id) continue;
-        const url = tab.url || '';
-        // Skip internal pages
-        if (!url.startsWith('http') && !url.startsWith('file://')) continue;
-        try {
-          const res = await browser.tabs.sendMessage(tab.id, { type: 'COPY_TEXT', text });
-          if (res?.ok) { sendResponse({ ok: true }); return; }
-        } catch (e) { /* tab mungkin tidak punya content script, skip */ }
-      }
-
-      sendResponse({ ok: false, error: 'no_content_script_available' }); return;
+      await navigator.clipboard.writeText(msg.text || '');
+      sendResponse({ ok: true }); return;
     } catch (e) {
-      console.error('[RecallFox/bg] COPY_TO_CLIPBOARD exception:', e);
-      sendResponse({ ok: false, error: e.message }); return;
-    }
-  }
-
-  // v3.20.22: COPY_IMAGE — relay image clipboard ke content script tab aktif.
-  // Dipakai oleh writeImageOnlyToClipboard / writeScreenshotToClipboard strategi D
-  // ketika navigator.clipboard.write gagal di iframe popout sidebar Chrome.
-  // Content script jalan di halaman web context (focused) → clipboard.write works.
-  if (msg.type === 'COPY_IMAGE') {
-    try {
-      const payload = {
-        type: 'COPY_IMAGE',
-        dataUrl: msg.dataUrl,
-        textPlain: msg.textPlain || null,
-        textHtml: msg.textHtml || null,
-        mode: msg.mode || 'image_only'
-      };
-
-      // Strategi 1: kirim ke tab aktif di window aktif
-      const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
-      if (activeTab?.id) {
-        try {
-          const res = await browser.tabs.sendMessage(activeTab.id, payload);
-          if (res?.ok) { sendResponse({ ok: true, via: 'active_tab' }); return; }
-        } catch (e) {
-          console.warn('[RecallFox/bg] COPY_IMAGE to active tab gagal:', e.message);
+      // Fallback: pakai content script di active tab
+      try {
+        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) {
+          await browser.tabs.sendMessage(tab.id, { type: 'COPY_TEXT', text: msg.text });
+          sendResponse({ ok: true }); return;
         }
-      }
-
-      // Strategi 2: cari tab lain yang punya content script
-      const allTabs = await browser.tabs.query({});
-      for (const tab of allTabs) {
-        if (!tab.id || tab.id === activeTab?.id) continue;
-        const url = tab.url || '';
-        if (!url.startsWith('http') && !url.startsWith('file://')) continue;
-        try {
-          const res = await browser.tabs.sendMessage(tab.id, payload);
-          if (res?.ok) { sendResponse({ ok: true, via: 'other_tab' }); return; }
-        } catch (e) { /* skip */ }
-      }
-
-      sendResponse({ ok: false, error: 'no_content_script_available' }); return;
-    } catch (e) {
-      console.error('[RecallFox/bg] COPY_IMAGE exception:', e);
+      } catch (e2) {}
       sendResponse({ ok: false, error: e.message }); return;
     }
   }
@@ -1767,10 +1490,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const blob = new Blob([content], { type: 'application/json' });
       const ts = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
       const filename = 'recallfox-backup-' + ts + '.' + ext;
-      // Pakai downloads API (Chrome MV3 SW: gunakan data: URL fallback via blobToDownloadUrl)
-      const urlInfo = await blobToDownloadUrl(blob);
+      // Pakai downloads API
+      const url = URL.createObjectURL(blob);
       await browser.downloads.download({
-        url: urlInfo.url,
+        url,
         filename,
         saveAs: false  // langsung simpan ke Downloads
       });
@@ -1838,7 +1561,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.7: MANUAL_BACKUP_NOW — trigger backup manual ke Downloads/RecallFox/
   if (msg.type === 'MANUAL_BACKUP_NOW') {
     try {
-      
+      const { manualBackupWithTimestamp } = await import('./lib/autobackup.js');
       const result = await manualBackupWithTimestamp();
       // v3.8.1 (Issue #6): Jika gdriveAutoBackupOnLocalBackup aktif, kirim juga ke GDrive
       try {
@@ -1847,7 +1570,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Kirim full backup async (fire-and-forget)
           (async () => {
             try {
-              
+              const { buildBackupPayload } = await import('./lib/autobackup.js');
               const payload = await buildBackupPayload();
               payload.backupType = 'manual';
               await gdriveSendFullBackup(payload);
@@ -1877,7 +1600,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'GDRIVE_FULL_BACKUP') {
     try {
-      
+      const { buildBackupPayload } = await import('./lib/autobackup.js');
       const payload = await buildBackupPayload();
       payload.backupType = 'manual';
       const result = await gdriveSendFullBackup(payload);
@@ -1926,43 +1649,43 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // ============================================================
   if (msg.type === 'SYNC_GET_PROFILES') {
     try {
-      
+      const { getSyncProfiles } = await import('./lib/sync-profile.js');
       sendResponse({ ok: true, data: await getSyncProfiles() }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_ADD_PROFILE') {
     try {
-      
+      const { addSyncProfile } = await import('./lib/sync-profile.js');
       const profile = await addSyncProfile(msg.profile);
       sendResponse({ ok: true, profile }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_UPDATE_PROFILE') {
     try {
-      
+      const { updateSyncProfile } = await import('./lib/sync-profile.js');
       const profile = await updateSyncProfile(msg.id, msg.patch);
       sendResponse({ ok: true, profile }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_DELETE_PROFILE') {
     try {
-      
+      const { deleteSyncProfile } = await import('./lib/sync-profile.js');
       const data = await deleteSyncProfile(msg.id);
       sendResponse({ ok: true, data }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_SET_ACTIVE') {
     try {
-      
+      const { setActiveProfile } = await import('./lib/sync-profile.js');
       await setActiveProfile(msg.id);
       sendResponse({ ok: true }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_PUSH') {
     try {
-      
+      const { pushStateToCloud, getActiveProfile } = await import('./lib/sync-profile.js');
       const profile = msg.profileId
-        ? getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
       if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await pushStateToCloud(profile);
@@ -1971,9 +1694,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'SYNC_PULL') {
     try {
-      
+      const { pullStateFromCloud, getActiveProfile } = await import('./lib/sync-profile.js');
       const profile = msg.profileId
-        ? getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
       if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await pullStateFromCloud(profile);
@@ -1992,9 +1715,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'SYNC_FULL') {
     try {
-      const fullSync = profileFullSync;
+      const { fullSync, getActiveProfile } = await import('./lib/sync-profile.js');
       const profile = msg.profileId
-        ? getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
+        ? (await import('./lib/sync-profile.js')).getSyncProfiles().then(d => d.profiles.find(p => p.id === msg.profileId))
         : await getActiveProfile();
       if (!profile) { sendResponse({ ok: false, error: 'No active profile' }); return; }
       const result = await fullSync(profile);
@@ -2012,14 +1735,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'SYNC_TEST_PROFILE') {
     try {
-      
+      const { testProfileConnection } = await import('./lib/sync-profile.js');
       const result = await testProfileConnection(msg.profile);
       sendResponse(result); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
   if (msg.type === 'SYNC_STATUS') {
     try {
-      
+      const { getSyncStatus } = await import('./lib/sync-profile.js');
       sendResponse({ ok: true, status: await getSyncStatus() }); return;
     } catch (e) { sendResponse({ ok: false, error: e.message }); return; }
   }
@@ -2211,14 +1934,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'CLEAR_CACHE') {
     // Sent from popup/sidebar "Clear Cache" button
-    // v3.20.6: Prefer msg.dataTypes + msg.timePeriod (sent by popup.js v3.20.6+).
+    // v3.20.2: Prefer msg.dataTypes + msg.timePeriod (sent by popup.js v3.20.2+).
     // Fallback ke settings (untuk backward compat dengan popup lama / shortcut keyboard).
     const settings = await getSettings();
+    const { clearBrowsingData } = await import('./lib/clearcache.js');
     const dataTypes = (Array.isArray(msg.dataTypes) && msg.dataTypes.length > 0)
       ? msg.dataTypes
       : (settings.clearCacheDataTypes || ['cache']);
     const timePeriod = msg.timePeriod || settings.clearCacheTimePeriod || 'all';
-
     const res = await clearBrowsingData({
       dataTypes,
       timePeriod,
@@ -2230,7 +1953,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'VOLUME_SET') {
     // Set volume for current tab's domain
-    
+    const { normalizeDb, setSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
@@ -2243,7 +1966,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'VOLUME_GET') {
     // Get volume for current tab's domain
-    
+    const { getSiteVolume, extractDomain, isRestrictedUrl } = await import('./lib/volume.js');
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_tab' }); return; }
     const domain = extractDomain(tab.url);
@@ -2275,7 +1998,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'RESTART_BACKUP_TIMER') {
     // User changed backup interval in Settings — restart timer
     try {
-      
+      const { startBackupInterval } = await import('./lib/autobackup.js');
       await startBackupInterval();
       sendResponse({ ok: true }); return;
     } catch (e) {
@@ -2296,25 +2019,48 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true, enabled: newEnabled }); return;
   }
 
-  // v3.7.2 (Issue 6): Toggle Mode Anak — 1 klik aktif/nonaktifkan YouTube Kids Only + Block Shorts.
-  // v3.10.0 (Issue 2): Mode Anak — bukan redirect ke youtubekids, tapi tetap di youtube.com
-  // dengan filter konten ramah anak via content script. Saat aktif:
-  //   - contentGuardKidModeFilter: ON  → content script hide non-kid content di youtube.com
-  //   - contentGuardBlockShorts: ON    → Shorts tetap di-hide (umumnya tidak ramah anak)
-  //   - contentGuardYoutubeKidsOnly: OFF (legacy, tidak dipakai default — user bisa aktifkan manual)
+  // v3.21.0: TOGGLE_KID_MODE — OBSOLETE. Sekarang hanya thin-shim: aktifkan profil
+  // Anak (strictWatch=true) sebagai profil aktif. Popup lama yang masih panggil pesan ini
+  // tetap berfungsi ( Profil Anak ON, profil lain OFF ). Mode Fokus (radio) menggantikan
+  // toggle ini di UI baru — lihat popup renderKontrolSitusPage & settings.js.
   if (msg.type === 'TOGGLE_KID_MODE') {
     const s = await getSettings();
     const newOn = msg.enabled !== undefined ? !!msg.enabled : !(s.contentGuardKidModeFilter === true);
-    await saveSettings({
+    const topicProfiles = s.contentGuardTopicProfiles || seedDefaultTopicProfiles(null);
+    // Cari profil dengan strictWatch=true (Profil Anak bawaan) — fallback ke profil kedua.
+    const kidProfile = topicProfiles.profiles.find(p => p.strictWatch === true)
+                   || topicProfiles.profiles[1]
+                   || topicProfiles.profiles[0]
+                   || null;
+    const patch = {
+      // Pertahankan kunci lama (migrasi) — value-nya now meaningless untuk filter.
       contentGuardKidModeFilter: newOn,
       contentGuardBlockShorts: newOn,
-      contentGuardKidModeArmUntil: 0
-    });
-    console.log('[RecallFox] Kid Mode (filter) toggled:', newOn);
-    // Notify all youtube tabs to re-apply filter
+      contentGuardKidModeArmUntil: 0,
+      contentGuardEnabled: newOn ? true : (s.contentGuardEnabled !== false)
+    };
+    if (newOn && kidProfile) {
+      patch.contentGuardTopicProfiles = {
+        profiles: topicProfiles.profiles,
+        activeProfileId: kidProfile.id
+      };
+    } else if (!newOn) {
+      // OFF → set profil aktif ke null (semua profil OFF) jika profil aktif saat ini
+      // adalah profil anak; biarkan kalau user sedang memakai profil lain.
+      const currentActiveId = topicProfiles.activeProfileId;
+      if (currentActiveId && kidProfile && currentActiveId === kidProfile.id) {
+        patch.contentGuardTopicProfiles = {
+          profiles: topicProfiles.profiles,
+          activeProfileId: null
+        };
+      }
+    }
+    await saveSettings(patch);
+    console.log('[RecallFox] TOGGLE_KID_MODE (legacy shim) → activeProfileId:', newOn ? (kidProfile?.id || null) : 'unchanged');
+    // Broadcast ke semua tab YouTube/X supaya re-scan
     browser.tabs.query({}).then(tabs => {
       for (const t of tabs) {
-        if (t.url && /youtube\.com|youtu\.be/.test(t.url)) {
+        if (t.url && /youtube\.com|youtu\.be|x\.com|twitter\.com/.test(t.url)) {
           browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
         }
       }
@@ -2349,7 +2095,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
 
     try {
-      
+      const { fetchPrayerTimes } = await import('./lib/salahtime.js');
       const times = await fetchPrayerTimes(s.prayerLatitude, s.prayerLongitude, {
         school: s.prayerAsrSchool || 0
       });
@@ -2372,7 +2118,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'PRAYER_REVERSE_GEOCODE') {
     // Reverse geocode coordinates to a human-readable location
-    
+    const { reverseGeocode } = await import('./lib/salahtime.js');
     try {
       const location = await reverseGeocode(msg.lat, msg.lng);
       sendResponse({ ok: true, location }); return;
@@ -2382,7 +2128,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'PRAYER_GEOCODE') {
     // Geocode an address string to coordinates
-
+    const { geocode } = await import('./lib/salahtime.js');
     try {
       const result = await geocode(msg.address);
       sendResponse({ ok: true, ...result }); return;
@@ -2398,6 +2144,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // capture karena Nominatim timeout, atau item lama sebelum fitur ini).
     // Fire-and-forget — popup re-render vault setelah patch sukses.
     try {
+      const { reverseGeocode } = await import('./lib/salahtime.js');
       const address = await reverseGeocode(msg.lat, msg.lng);
       if (address && msg.itemId) {
         // Patch vault item: set source.location.address + source.location.capturedAt (kalau belum)
@@ -2421,74 +2168,51 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'CAPTURE_FOR_PREVIEW') {
-    // v3.20.9: Broadcast RF_HIDE_FOR_CAPTURE to all tabs before capture.
-    // sidebar-cs.js (popout) listens for this → hides host + floater.
-    try {
-      const allTabs = await browser.tabs.query({});
-      for (const t of allTabs) {
-        browser.tabs.sendMessage(t.id, { type: 'RF_HIDE_FOR_CAPTURE' }).catch(() => {});
-      }
-    } catch (e) {}
-    // v3.20.14: Reduced delay 200→100ms (display:none is instant, no render needed)
-    await new Promise(r => setTimeout(r, 100));
-    // FireShot-style: capture full page, return dataUrl to caller (overlay.js)
+// v3.20.14: Optimasi hide/restore — hanya ke tab aktif (bukan broadcast).
+    // v3.20.13: hide/restore di-drive dari sini dengan try/finally.
+    // Sebelumnya (v3.20.12): RF_RESTORE_AFTER_CAPTURE hanya dikirim di
+    // SAVE_CAPTURE_AS / SAVE_CAPTURE_TO_VAULT. Kalau user batal di
+    // mode-picker atau close result modal tanpa save → restore tidak
+    // pernah dikirim → sidebar tetap hidden sampai fallback timer 30s
+    // (di sidebar-cs.js v3.20.12).
+    //
+    // Fix: pindahkan restore ke finally block di sini. Restore SELALU
+    // dikirim tidak peduli outcome capture (sukses / gagal / cancel).
+    // Hapus juga timer 30s fallback di sidebar-cs.js (sudah dilakukan).
+    //
+    // v3.20.14: Broadcast ke semua tabs → lambat kalau user punya banyak
+    // tab. Fix: hide/restore hanya ke tab aktif. Sidebar di tab lain
+    // tidak ikut tercapture anyway.
+    // Delay 200ms → 100ms (cukup untuk DOM update display:none).
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
-    const result = await captureFullPage(tab, { mode: msg.mode || 'entire' });
-    // v3.20.14: ALWAYS restore after capture — whether success, cancel, or error.
+
+    // v3.20.13: Hide sidebar + floater di tab aktif sebelum capture
+    browser.tabs.sendMessage(tab.id, { type: 'RF_HIDE_FOR_CAPTURE' }).catch(() => {});
+
+    // Delay supaya DOM update (display:none) ter-render sebelum capture
+    await new Promise(r => setTimeout(r, 100));
+
     try {
-      const ts = await browser.tabs.query({});
-      for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {});
-    } catch (e) {}
-    sendResponse(result); return;
+      const result = await captureFullPage(tab, { mode: msg.mode || 'entire' });
+      sendResponse(result);
+    } finally {
+      // v3.20.13/14: Restore SELALU — sukses, gagal, atau cancel.
+      // v3.20.14: Hanya ke tab aktif (bukan broadcast) supaya cepat.
+      // sidebar-cs.js punya fallback timer 5s kalau message ini gagal sampai.
+      browser.tabs.sendMessage(tab.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {});
+    }
+    return;
   }
   if (msg.type === 'SAVE_CAPTURE_AS') {
-    // v3.20.9: Restore popout sidebar visibility after capture
-    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
-    // Save captured image to Downloads folder as PDF / JPG / PNG
+    // v3.20.13: Restore dipindah ke finally block di CAPTURE_FOR_PREVIEW.
+    // Tidak perlu kirim RF_RESTORE_AFTER_CAPTURE di sini lagi.
     sendResponse(await saveCaptureAs(msg)); return;
   }
   if (msg.type === 'SAVE_CAPTURE_TO_VAULT') {
-    // v3.20.9: Restore popout sidebar visibility after capture
-    try { const ts = await browser.tabs.query({}); for (const t of ts) browser.tabs.sendMessage(t.id, { type: 'RF_RESTORE_AFTER_CAPTURE' }).catch(() => {}); } catch (e) {}
-    // Save captured image to vault as screenshot item
+    // v3.20.13: Restore dipindah ke finally block di CAPTURE_FOR_PREVIEW.
+    // Tidak perlu kirim RF_RESTORE_AFTER_CAPTURE di sini lagi.
     sendResponse(await saveCaptureToVault(msg)); return;
-  }
-  // v3.20.40: Upload file teks dari detached window — Chrome MV3 popup closes
-  // when file picker opens, jadi file dibaca di upload-window.js lalu dikirim ke sini.
-  if (msg.type === 'DOC_FILE_UPLOADED') {
-    try {
-      // v3.20.41 FIX: HAPUS dynamic import() — dilarang di ServiceWorkerGlobalScope.
-      // Sebelumnya: `const { addItem } = await import('./lib/storage.js');`
-      // Error: "import() is disallowed on ServiceWorkerGlobalScope by the HTML specification"
-      // Fix: addItem sudah di-import statically di top-level (line 28) — pakai langsung.
-      const file = msg.file;
-      if (!file || !file.body) {
-        sendResponse({ ok: false, error: 'no_file_data' });
-        return;
-      }
-      const newItem = await addItem({
-        type: 'file',
-        title: file.name,
-        body: file.body,
-        tags: ['file', file.kind],
-        source: {
-          kind: file.kind,
-          mime: file.mime,
-          fileName: file.name,
-          size: file.size,
-          uploadedFrom: 'upload-window'
-        }
-      });
-      console.log('[RecallFox] Doc file uploaded via detached window:', newItem.id);
-      // Notify vault updated
-      browser.runtime.sendMessage({ type: 'VAULT_UPDATED' }).catch(() => {});
-      sendResponse({ ok: true, id: newItem.id });
-    } catch (e) {
-      console.error('[RecallFox] DOC_FILE_UPLOADED failed:', e);
-      sendResponse({ ok: false, error: e.message });
-    }
-    return;
   }
   if (msg.type === 'CAPTURE_SCREENSHOT') {
     // Legacy: sent from popup/sidebar quick-action button — now triggers the modal flow
@@ -2505,29 +2229,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
-      // v3.20.11: JANGAN auto-save ke vault kalau overlay tidak terjangkau.
-      //   Sebelumnya: catch block → triggerScreenshot(tab, mode||'entire') →
-      //   langsung save ke vault tanpa modal. User complain: "screenshot yang
-      //   tidak jadi disave di vault, kamu malah save duluan. harusnya ada
-      //   trigger di modal screnshot yaitu save."
-      //   Sekarang: try inject overlay.js + retry. Kalau masih gagal, return
-      //   error — TIDAK save apa-apa ke vault.
-      console.warn('[RecallFox] overlay not reachable, trying inject + retry:', e.message);
-      try {
-        await browser.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: ['lib/browser-polyfill.min.js', 'content/overlay.js']
-        });
-        await new Promise(r => setTimeout(r, 500));
-        await browser.tabs.sendMessage(tab.id, {
-          type: 'TRIGGER_CAPTURE_FROM_POPUP',
-          mode: mode
-        });
-        sendResponse({ ok: true, deferred: true }); return;
-      } catch (e2) {
-        console.warn('[RecallFox] overlay inject failed, screenshot cancelled (NO auto-save):', e2.message);
-        sendResponse({ ok: false, error: 'overlay_not_reachable', message: 'Tidak bisa mengambil screenshot di halaman ini. Coba reload halaman lalu ulangi.' }); return;
-      }
+      // Fallback to direct save (skips modal)
+      sendResponse(await triggerScreenshot(tab, mode || 'entire')); return;
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {
@@ -2539,7 +2242,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // User audit: "Pull sync hanya transfer metadata, bukan blob gambar.
     //   Saat device lain coba copy/paste, blob lokal tidak ada → error 'no_blob'."
     try {
-      
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
       const res = await getOrDownloadScreenshotBlob(msg.id);
       sendResponse({ ok: res.ok, dataUrl: res.dataUrl, source: res.source, error: res.error });
       return;
@@ -2547,7 +2250,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       console.warn('[RecallFox] GET_SCREENSHOT_BLOB failed:', e.message);
       // Fallback ke cara lama (local-only) kalau supabase-sync gagal import
       try {
-        
+        const { getScreenshotBlob } = await import('./lib/storage.js');
         const dataUrl = await getScreenshotBlob(msg.id);
         sendResponse({ ok: true, dataUrl }); return;
       } catch (e2) {
@@ -2559,7 +2262,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Dipakai oleh popup/viewer.js untuk multi-page viewer.
   if (msg.type === 'GET_DOCUMENT_PAGES') {
     try {
-      
+      const { getVault } = await import('./lib/storage.js');
       const vault = await getVault();
       const item = (vault.items || []).find(i => i.id === msg.id);
       if (!item) {
@@ -2631,7 +2334,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     //   string (Base64)". Pattern ini sudah dipakai 4x di file ini (clipboard
     //   fallback) — sekarang konsisten.
     try {
-      
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
       const res = await getOrDownloadScreenshotBlob(msg.id);
       const dataUrl = res?.ok ? res.dataUrl : null;
       if (!dataUrl) { sendResponse({ ok: false, error: res?.error || 'no_blob' }); return; }
@@ -2641,17 +2344,16 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const mimeType = msg.format === 'jpeg' ? 'image/jpeg' : 'image/png';
       try {
         // v3.14.9: Konversi dataUrl → Blob → objectURL (pattern dari clipboard fallback line ~2361)
-        // v3.20.5: Pakai blobToDownloadUrl helper supaya jalan di Chrome MV3 SW (URL.createObjectURL unavailable)
         const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: mimeType });
-        const urlInfo = await blobToDownloadUrl(blob);
+        const objectUrl = URL.createObjectURL(blob);
         const id = await browser.downloads.download({
-          url: urlInfo.url,
+          url: objectUrl,
           filename: `RecallFox/${safeName}_${ts}.${ext}`,
           saveAs: false,
           conflictAction: 'uniquify'
         });
-        // Revoke objectURL setelah 30s (cukup untuk download dimulai) — no-op for data: URLs
-        setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
+        // Revoke objectURL setelah 30s (cukup untuk download dimulai)
+        setTimeout(() => { try { URL.revokeObjectURL(objectUrl); } catch (e) {} }, 30000);
         sendResponse({ ok: true, downloadId: id }); return;
       } catch (e) {
         console.warn('[RecallFox] DOWNLOAD_SCREENSHOT download failed:', e.message);
@@ -2679,8 +2381,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // Returns: { ok: bool, message?: string, error?: string }
     try {
       // v3.11.35: Pakai lazy download — kalau blob lokal null, fetch dari cloud.
-      
-      
+      const { getOrDownloadScreenshotBlob } = await import('./lib/supabase-sync.js');
+      const { getVault } = await import('./lib/storage.js');
       const blobRes = await getOrDownloadScreenshotBlob(msg.id);
       const dataUrl = blobRes.dataUrl;
       if (!dataUrl) { sendResponse({ ok: false, error: blobRes.error || 'no_blob' }); return; }
@@ -2793,18 +2495,17 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // sebagai fallback (lebih reliable daripada clipboard.setImageData).
         if (awaited?.needsFallback) {
           // v3.11.22: Download screenshot sebagai file PNG (fallback kalau clipboard tidak support)
-          // v3.20.5: Pakai blobToDownloadUrl (Chrome MV3 SW fallback)
           try {
             const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-            const urlInfo = await blobToDownloadUrl(blob);
+            const objectUrl = URL.createObjectURL(blob);
             const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
             await browser.downloads.download({
-              url: urlInfo.url,
+              url: objectUrl,
               filename: filename,
               saveAs: false
             });
-            // Revoke URL after delay — no-op for data: URLs
-            setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
+            // Revoke URL after delay
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
             if (msg.withCaption) {
               // Copy caption ke clipboard sebagai text fallback
               try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
@@ -2821,14 +2522,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (result && result.error && result.error.includes('clipboard')) {
         try {
           const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-          const urlInfo = await blobToDownloadUrl(blob);
+          const objectUrl = URL.createObjectURL(blob);
           const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
           await browser.downloads.download({
-            url: urlInfo.url,
+            url: objectUrl,
             filename: filename,
             saveAs: false
           });
-          setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
           if (msg.withCaption) {
             try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
           }
@@ -2904,13 +2605,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (awaited?.ok) {
           sendResponse(awaited); return;
         }
-        // Fallback: download file (v3.20.5: pakai blobToDownloadUrl untuk Chrome MV3 SW)
+        // Fallback: download file
         try {
           const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-          const urlInfo = await blobToDownloadUrl(blob);
+          const objectUrl = URL.createObjectURL(blob);
           const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
-          await browser.downloads.download({ url: urlInfo.url, filename, saveAs: false });
-          setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
+          await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
+          setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
           if (withCaption && textPlain) {
             try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
           }
@@ -2923,10 +2624,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Fallback: download file
       try {
         const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
-        const urlInfo = await blobToDownloadUrl(blob);
+        const objectUrl = URL.createObjectURL(blob);
         const filename = 'screenshot-' + new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '') + '.png';
-        await browser.downloads.download({ url: urlInfo.url, filename, saveAs: false });
-        setTimeout(() => revokeDownloadUrl(urlInfo), 30000);
+        await browser.downloads.download({ url: objectUrl, filename, saveAs: false });
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
         if (withCaption && textPlain) {
           try { await navigator.clipboard.writeText(textPlain); } catch (e) {}
         }
@@ -2972,7 +2673,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!Array.isArray(ids) || ids.length === 0) {
         sendResponse({ ok: false, error: 'no_ids' }); return;
       }
-      
+      const { getScreenshotBlob, getVault } = await import('./lib/storage.js');
       const vault = await getVault();
       const screenshots = [];
       for (const id of ids) {
@@ -3140,7 +2841,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!Array.isArray(ids) || ids.length === 0) {
         sendResponse({ ok: false, error: 'no_ids' }); return;
       }
-      
+      const { deleteItem, deleteBundle, getVault } = await import('./lib/storage.js');
       // Ambil vault sekali untuk cek apakah id adalah item atau bundle
       const vault = await getVault();
       const itemIdSet = new Set((vault.items || []).map(i => i.id));
@@ -3166,7 +2867,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       // Trigger sync sekali setelah semua hapus (lebih efisien daripada sync per item)
       try {
-        
+        const { pushToSync } = await import('./lib/storage.js');
         await pushToSync();
       } catch (e) { /* silent — sync opsional */ }
       sendResponse({
@@ -3327,13 +3028,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_LOGIN — login email/password
   if (msg.type === 'SUPABASE_LOGIN') {
     try {
-      
+      const { signInWithEmail } = await import('./lib/supabase-client.js');
       const res = await signInWithEmail(msg.email, msg.password);
       // v3.11.29: Start realtime sync setelah login sukses
       // v3.11.33: Also subscribe to Realtime WebSocket channel
       if (res.ok) {
         try {
-          
+          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
           await startRealtimeSync();
           await subscribeRealtimeVault();
         } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
@@ -3347,13 +3048,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_SIGNUP — signup email/password baru
   if (msg.type === 'SUPABASE_SIGNUP') {
     try {
-      
+      const { signUpWithEmail } = await import('./lib/supabase-client.js');
       const res = await signUpWithEmail(msg.email, msg.password);
       // v3.11.29: Start realtime sync setelah signup sukses
       // v3.11.33: Also subscribe to Realtime WebSocket channel
       if (res.ok) {
         try {
-          
+          const { startRealtimeSync, subscribeRealtimeVault } = await import('./lib/supabase-sync.js');
           await startRealtimeSync();
           await subscribeRealtimeVault();
         } catch (e) { console.warn('[RecallFox] Realtime sync start failed:', e.message); }
@@ -3367,7 +3068,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_GMAIL — login via Gmail OAuth (redirect)
   if (msg.type === 'SUPABASE_GMAIL') {
     try {
-      
+      const { signInWithGmail } = await import('./lib/supabase-client.js');
       const res = await signInWithGmail();
       sendResponse(res); return;
     } catch (e) {
@@ -3380,10 +3081,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       // v3.11.29: Stop realtime sync sebelum logout
       try {
-        
+        const { stopRealtimeSync } = await import('./lib/supabase-sync.js');
         await stopRealtimeSync();
       } catch (e) {}
-      
+      const { signOut } = await import('./lib/supabase-client.js');
       await signOut();
       sendResponse({ ok: true }); return;
     } catch (e) {
@@ -3394,7 +3095,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_STATUS — cek login status + user info
   if (msg.type === 'SUPABASE_STATUS') {
     try {
-      
+      const { getSupabaseStatus } = await import('./lib/supabase-sync.js');
       const status = await getSupabaseStatus();
       sendResponse({ ok: true, status }); return;
     } catch (e) {
@@ -3405,7 +3106,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_PUSH — upload local state ke cloud
   if (msg.type === 'SUPABASE_PUSH') {
     try {
-      
+      const { pushToSupabase } = await import('./lib/supabase-sync.js');
       const res = await pushToSupabase();
       sendResponse(res); return;
     } catch (e) {
@@ -3419,7 +3120,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // v3.13.3 (A2 fix): Pakai pullFromSupabaseV33 — variant yang filter
       // deleted_at IS NULL server-side + hapus item lokal yang sudah di-hard-delete
       // di device lain. Variant lama (pullFromSupabase) tidak ada reconciliation.
-      
+      const { pullFromSupabaseV33 } = await import('./lib/supabase-sync.js');
       const res = await pullFromSupabaseV33();
       sendResponse(res); return;
     } catch (e) {
@@ -3430,7 +3131,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_FULL_SYNC — push + pull
   if (msg.type === 'SUPABASE_FULL_SYNC') {
     try {
-      const fullSync = supabaseFullSync;
+      const { fullSync } = await import('./lib/supabase-sync.js');
       const res = await fullSync();
       sendResponse(res); return;
     } catch (e) {
@@ -3441,35 +3142,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_TEST_CONNECTION — test koneksi ke project (tanpa login)
   if (msg.type === 'SUPABASE_TEST_CONNECTION') {
     try {
-      const testConnection = testSupabaseConnection;
+      const { testConnection } = await import('./lib/supabase-client.js');
       const res = await testConnection();
       sendResponse(res); return;
-    } catch (e) {
-      sendResponse({ ok: false, error: e.message }); return;
-    }
-  }
-
-  // v3.20.36 port dari Firefox: SUPABASE_GET_ITEM_URL — query gdrive_file_url dari vault_items.
-  // Dipakai copyFileUrlToClipboard sebagai fallback terakhir kalau URL tidak ada di storage.local.
-  if (msg.type === 'SUPABASE_GET_ITEM_URL') {
-    try {
-      // v3.20.41 FIX: selectRows sudah di-import statically — hapus dynamic import()
-      const res = await selectRows('vault_items', {
-        filter: 'id=eq.' + msg.itemId,
-        select: 'gdrive_file_url,gdrive_file_id',
-        limit: 1
-      });
-      if (res.ok && res.data && res.data.length > 0) {
-        const url = res.data[0].gdrive_file_url;
-        if (url) {
-          sendResponse({ ok: true, url: url, fileId: res.data[0].gdrive_file_id });
-        } else {
-          sendResponse({ ok: false, error: 'no_url_in_cloud' });
-        }
-      } else {
-        sendResponse({ ok: false, error: res?.error || 'item_not_found_in_cloud' });
-      }
-      return;
     } catch (e) {
       sendResponse({ ok: false, error: e.message }); return;
     }
@@ -3479,7 +3154,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.11.29: Fix — gunakan msg.itemId (bukan msg.id) supaya cocok dengan storage.js
   if (msg.type === 'SUPABASE_DELETE_ITEM') {
     try {
-      
+      const { deleteItemFromCloud } = await import('./lib/supabase-sync.js');
       const res = await deleteItemFromCloud(msg.itemId || msg.id);
       // v3.11.29: Setelah delete di cloud, trigger pull supaya device lain dapat update
       // (realtime subscription akan handle ini, tapi pull sebagai fallback)
@@ -3494,7 +3169,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.11.29: Fix — gunakan msg.noteId (bukan msg.id)
   if (msg.type === 'SUPABASE_DELETE_NOTE') {
     try {
-      
+      const { deleteNoteFromCloud } = await import('./lib/supabase-sync.js');
       const res = await deleteNoteFromCloud(msg.noteId || msg.id);
       console.log('[RecallFox] SUPABASE_DELETE_NOTE:', msg.noteId || msg.id, '→', res.ok ? 'OK' : res.error);
       sendResponse(res); return;
@@ -3507,7 +3182,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v3.11.29: Sekaligus trigger pull setelah push (untuk realtime sync)
   if (msg.type === 'SUPABASE_AUTO_SYNC') {
     try {
-      
+      const { triggerAutoSync } = await import('./lib/supabase-sync.js');
       triggerAutoSync();
       sendResponse({ ok: true }); return;
     } catch (e) {
@@ -3518,7 +3193,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // SUPABASE_OAUTH_CALLBACK — handle redirect dari Gmail OAuth (parse token dari URL hash)
   if (msg.type === 'SUPABASE_OAUTH_CALLBACK') {
     try {
-      
+      const { handleOAuthCallback } = await import('./lib/supabase-client.js');
       const res = await handleOAuthCallback();
       sendResponse(res || { ok: false, error: 'no_callback_data' }); return;
     } catch (e) {
@@ -3563,37 +3238,17 @@ console.log('[RecallFox] background script loaded');
 
 let prayerReminderTimer = null;
 
-// v3.20.5: Chrome MV3 service worker is terminated after ~30s of inactivity,
-// killing any setInterval callbacks. Prayer & exercise reminders MUST use
-// browser.alarms API so they fire reliably even when SW is asleep.
-// Firefox MV3 SW keeps setInterval alive longer, but alarms are also the
-// recommended pattern there (and Firefox addon v3.20.1 already uses alarms
-// for Supabase realtime + auto-discard — we're aligning with that pattern).
-const PRAYER_ALARM_NAME = 'rf-prayer-reminder';
-const EXERCISE_ALARM_NAME = 'rf-exercise-reminder';
-
 function startPrayerReminderChecker() {
-  // v3.20.5: Register browser.alarms for prayer + exercise reminders.
-  // Minimum periodInMinutes is 0.5 (30s) in Chrome, 1 in Firefox. We use 1.
-  // Also run once shortly after startup (best-effort via setTimeout — only
-  // fires if SW happens to be alive, which it is right after onStartup).
-  try {
-    browser.alarms.create(PRAYER_ALARM_NAME, { periodInMinutes: 1 });
-    browser.alarms.create(EXERCISE_ALARM_NAME, { periodInMinutes: 1 });
-    console.log('[RecallFox] Prayer + exercise reminder alarms created (every 1 min)');
-  } catch (e) {
-    console.warn('[RecallFox] Failed to create reminder alarms, fallback to setInterval:', e.message);
-    // Fallback: setInterval (less reliable in Chrome SW, better than nothing)
-    if (prayerReminderTimer) clearInterval(prayerReminderTimer);
-    prayerReminderTimer = setInterval(checkPrayerReminder, 60000);
-    setInterval(checkExerciseReminder, 60000);
-  }
-  // One-shot shortly after startup (best-effort)
+  if (prayerReminderTimer) clearInterval(prayerReminderTimer);
+  // Run every 60 seconds
+  prayerReminderTimer = setInterval(checkPrayerReminder, 60000);
+  // Also run once shortly after startup
   setTimeout(checkPrayerReminder, 5000);
-  // Start badge updater too (same interval is fine)
+// Start badge updater too (same interval is fine)
   setTimeout(updatePrayerBadge, 8000);
   // Start exercise reminder checker
   setTimeout(checkExerciseReminder, 10000);
+  setInterval(checkExerciseReminder, 60000);
   console.log('[RecallFox] Prayer reminder checker started');
 }
 
@@ -3610,7 +3265,7 @@ async function checkPrayerReminder() {
     const today = new Date().toISOString().slice(0, 10);
     if (!times || times.date !== today) {
       try {
-        
+        const { fetchPrayerTimes } = await import('./lib/salahtime.js');
         times = await fetchPrayerTimes(settings.prayerLatitude, settings.prayerLongitude, {
           school: settings.prayerAsrSchool || 0
         });
@@ -3624,13 +3279,13 @@ async function checkPrayerReminder() {
       }
     }
 
-    
+    const { getNextPrayer, formatCountdown } = await import('./lib/salahtime.js');
     const next = getNextPrayer(times.timings);
     if (!next) return;
 
     // === Puasa sunnah H-1 notification ===
     try {
-      
+      const { getSunnahFastTomorrow, parseHijriString } = await import('./lib/islamicCalendar.js');
       // Use robust parser (handles diacritics + English month name aliases)
       const hijriObj = times.hijri ? parseHijriString(times.hijri) : null;
       if (hijriObj) {
@@ -3816,7 +3471,7 @@ async function updatePrayerBadge() {
       return;
     }
 
-    
+    const { getNextPrayer, formatCountdown } = await import('./lib/salahtime.js');
     const next = getNextPrayer(times.timings);
     if (!next) {
       try {
@@ -3893,7 +3548,7 @@ async function checkExerciseReminder() {
       await saveSettings({ exerciseLastReminderKey: reminderKey });
     } else {
       // Mode interval (lama)
-      
+      const { isExerciseTime } = await import('./lib/habits.js');
       if (!isExerciseTime(settings)) return;
     }
 
@@ -3935,7 +3590,7 @@ async function checkExerciseReminder() {
       // v3.16.2: Cek AI page via isAIPageFromOrigin (dynamic dari storage.aiSites)
       let isOnAI = false;
       try {
-        
+        const { isAIPageFromOrigin } = await import('./lib/ai-detect.js');
         isOnAI = await isAIPageFromOrigin(activeUrl);
       } catch (e) {
         // Fallback: kalau ai-detect.js gagal load, anggap bukan AI
@@ -4123,46 +3778,22 @@ browser.alarms.onAlarm.addListener((alarm) => {
     });
   }
   // v3.11.30: Realtime sync alarm — pull dari Supabase kalau ada perubahan
-  // v3.20.5: handleRealtimeAlarm sekarang di-import statically (dynamic import()
-  // di ServiceWorkerGlobalScope dilarang oleh HTML spec — broken di Chrome MV3).
   if (alarm.name === 'rf-supabase-realtime') {
     console.log('[RecallFox] Realtime alarm fired');
-    try {
+    import('./lib/supabase-sync.js').then(({ handleRealtimeAlarm }) => {
       handleRealtimeAlarm().catch(e => {
         console.warn('[RecallFox/Supabase] Realtime alarm handler error:', e.message);
       });
-    } catch (e) {
-      console.warn('[RecallFox/Supabase] Realtime alarm invoke error:', e.message);
-    }
+    }).catch(() => {});
   }
-  // v3.20.5: Prayer + exercise reminders via alarms (Chrome MV3 SW kills setInterval).
-  if (alarm.name === PRAYER_ALARM_NAME) {
-    checkPrayerReminder().catch(e => {
-      console.warn('[RecallFox/Prayer] Alarm check error:', e.message);
-    });
-  }
-  if (alarm.name === EXERCISE_ALARM_NAME) {
-    checkExerciseReminder().catch(e => {
-      console.warn('[RecallFox/Exercise] Alarm check error:', e.message);
-    });
-  }
-  // v3.20.5: Auto-backup via alarm (Chrome MV3 SW kills setInterval — 6h interval would never fire).
-  if (alarm.name === 'rf-auto-backup') {
-    handleBackupAlarm().catch(e => {
-      console.warn('[RecallFox/Backup] Alarm handler error:', e.message);
-    });
-  }
-  // v3.20.27: Proactive token refresh — keep session alive indefinitely.
-  // Uses statically-imported proactiveRefresh (Chrome MV3 SW forbids dynamic import()).
+  // v3.20.27: Proactive token refresh — keep session alive
   if (alarm.name === 'rf-supabase-refresh') {
     console.log('[RecallFox/Supabase] Proactive refresh alarm fired');
-    try {
+    import('./lib/supabase-client.js').then(({ proactiveRefresh }) => {
       proactiveRefresh().catch(e => {
         console.warn('[RecallFox/Supabase] Proactive refresh error:', e.message);
       });
-    } catch (e) {
-      console.warn('[RecallFox/Supabase] Proactive refresh invoke error:', e.message);
-    }
+    }).catch(() => {});
   }
 });
 
@@ -4175,9 +3806,8 @@ startAutoDiscardChecker();
 // so refresh_token gets rotated and its expiry gets extended. Without this,
 // user gets logged out after ~1 day of inactivity (refresh_token expires).
 //
-// Chrome MV3: alarms wake up the service worker even after it's been terminated.
-// Alarm fires every 45 minutes. proactiveRefresh() calls getSession() which
-// checks if token is within 5-min window of expiry and refreshes if needed.
+// Alarm fires every 45 minutes. getSession() inside proactiveRefresh() will
+// check if token is within 5-min window of expiry and refresh if needed.
 // If user isn't logged in, proactiveRefresh returns false (no-op).
 function startProactiveTokenRefresh() {
   console.log('[RecallFox/Supabase] Starting proactive token refresh alarm (every 45 min)');
@@ -4206,7 +3836,7 @@ async function checkQuranReminder() {
     if (settings.quranLastReminderKey === reminderKey) return; // already notified today
 
     // Check if user already completed ngaji today
-    
+    const { getQuranStatus } = await import('./lib/habits.js');
     const status = await getQuranStatus(settings);
     if (status.isComplete) return; // already done, no need to remind
 
@@ -4279,33 +3909,28 @@ async function initContentGuardDefaults() {
   if (!s.contentGuardChinaXSearches) {
     patch.contentGuardChinaXSearches = DEFAULT_CHINA_X_SEARCHES;
   }
+  // v3.21.0: Mode Fokus (Allowlist) — seed 2 profil bawaan jika belum ada.
+  // Skema: { profiles: [{id, emoji, name, topics[], channels[], strictWatch}], activeProfileId }
+  // Lihat lib/contentguard.js DEFAULT_TOPIC_PROFILES & seedDefaultTopicProfiles.
+  if (!s.contentGuardTopicProfiles || !Array.isArray(s.contentGuardTopicProfiles.profiles)) {
+    patch.contentGuardTopicProfiles = seedDefaultTopicProfiles(s.contentGuardTopicProfiles || null);
+  }
   if (!Array.isArray(s.contentGuardUserBlocklist)) {
     patch.contentGuardUserBlocklist = [];
   }
-  // v0.8.28: Force-enable master switch & filter feeds — ini SETTING KRITIS
-  // yang kalau off, content script tidak akan scan apapun (status panel MATI).
-  // Karena user sering tidak sengaja turn off, kita force ON kalau belum pernah
-  // diset explicit (undefined). Kalau user explicit set false, hargai.
+  // v0.8.28: Master switch default ON. Mode Fokus sendiri dikendalikan oleh
+  // contentGuardTopicProfiles.activeProfileId (null = semua profil OFF = YouTube normal).
   if (s.contentGuardEnabled === undefined) {
     patch.contentGuardEnabled = true;
   }
-  if (s.contentGuardFilterFeeds === undefined) {
-    patch.contentGuardFilterFeeds = true;
-  }
-  if (s.contentGuardNuclearMode === undefined) {
-    patch.contentGuardNuclearMode = true;
-  }
+  // v3.21.0: Toggle FilterFeeds/ScanDescription/NuclearMode/BlockSearchQueries TIDAK lagi
+  // di-seed default — fitur-fitur tersebut sudah dibongkar. Kunci settings lama tetap
+  // dibaca untuk migrasi (lihat §5.6 instruksi), tapi tidak dipakai kode baru.
   if (s.contentGuardBlockYtChannels === undefined) {
     patch.contentGuardBlockYtChannels = true;
   }
   if (s.contentGuardBlockXAccounts === undefined) {
     patch.contentGuardBlockXAccounts = true;
-  }
-  if (s.contentGuardScanDescription === undefined) {
-    patch.contentGuardScanDescription = true;
-  }
-  if (s.contentGuardBlockSearchQueries === undefined) {
-    patch.contentGuardBlockSearchQueries = true;
   }
   if (Object.keys(patch).length > 0) {
     await saveSettings(patch);
@@ -4322,57 +3947,90 @@ async function initElementBlockerDefaults() {
   }
 }
 
-// Cek apakah URL harus di-redirect ke takeover/blocked
-// v0.8.35: Anti-loop guard KUAT — max 1 redirect per tab per 1 JAM (bukan 10 detik)
-const lastRedirectMap = new Map();  // tabId → timestamp
-const redirectCountMap = new Map(); // tabId → count (kalau > 3 → disable redirect permanen)
+// v3.21.0: checkContentGuard — Pelindung Konten (Mode Fokus Allowlist)
+// ====================================================================
+// Prilaku (lihat instruksi §4):
+//   - Master OFF (contentGuardEnabled === false) → tidak ada redirect apapun.
+//   - Block Shorts: navigasi ke /shorts/<id> → redirect ke home (tetap dipertahankan).
+//   - Search Lock: bila Mode Fokus AKTIF (master ON + activeProfileId valid + profil
+//     punya ≥1 topik), navigasi ke halaman search YouTube/X yang query-nya TIDAK
+//     mengandung topik profil → redirect ke contentguard/searchlock.html
+//     (guard max 1×/menit/tab).
+//   - Watch strict: profil aktif strictWatch=true → request redirect watch→home
+//     datang dari content script (lihat handler CG_WATCH_STRICT_REDIRECT),
+//     di-guard max 1×/5menit/tab di sini.
+// DIBONGKAR v3.21.0: redirect home→takeover, blokir search query Tiongkok,
+//   blokir domain berita Indonesia, redirect youtubekids.com (Mode Anak lama).
+// ====================================================================
+// v3.21.2 FIX: Cooldown anti-loop pindah ke browser.storage.session.
+// Sebelumnya: in-memory Map (lastSearchLockMap, lastWatchStrictMap) yang HILANG
+// saat Firefox MV3 event page di-suspend/restart → cooldown reset → redirect
+// loop terlihat seperti "reload terus".
+// Sekarang: timestamp disimpan di storage.session (volatile per-session, cocok
+// untuk cooldown). Fallback ke storage.local kalau storage.session tidak ada.
+const SEARCH_LOCK_COOLDOWN_MS = 60 * 1000;        // 1 menit
+const WATCH_STRICT_COOLDOWN_MS = 5 * 60 * 1000;   // 5 menit
+
+// Cache in-memory per event page lifetime (supaya tidak baca storage tiap pesan)
+const _cooldownCache = new Map();  // key → timestamp
+
+async function _getCooldown(key) {
+  // Cek cache dulu
+  if (_cooldownCache.has(key)) return _cooldownCache.get(key);
+  // Baca dari storage.session (fallback storage.local)
+  const storageArea = browser.storage.session || browser.storage.local;
+  try {
+    const data = await storageArea.get(key);
+    const ts = data[key] || 0;
+    _cooldownCache.set(key, ts);
+    return ts;
+  } catch (e) {
+    return 0;
+  }
+}
+
+async function _setCooldown(key, timestamp) {
+  _cooldownCache.set(key, timestamp);
+  const storageArea = browser.storage.session || browser.storage.local;
+  try {
+    await storageArea.set({ [key]: timestamp });
+  } catch (e) {}
+}
+
+// v3.21.2 FIX: Helper untuk normalisasi URL — bandingkan tanpa trailing slash.
+// Dipakai Fix 2 (guard URL sama = jangan redirect).
+function _normalizeYoutubeHomeUrl(url) {
+  if (!url) return '';
+  // Hilangkan trailing slash, normalize www
+  return url.replace(/\/+$/, '').replace('https://www.youtube.com', 'https://youtube.com').replace('https://youtube.com', 'https://www.youtube.com');
+}
+
+// v3.21.2 FIX: Cek apakah tab sudah berada di URL target.
+// Kalau sudah sama → jangan tabs.update (di Firefox, update URL sama = reload).
+async function _isAlreadyAtUrl(tabId, targetUrl) {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    if (!tab || !tab.url) return false;
+    // Normalisasi kedua URL: hilangkan trailing slash
+    const normCurrent = tab.url.replace(/\/+$/, '');
+    const normTarget = targetUrl.replace(/\/+$/, '');
+    return normCurrent === normTarget;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function checkContentGuard(tabId, url, tab) {
   if (!url || !/^https?:\/\//.test(url)) return;
-  // Jangan proses URL extension sendiri
+  // Jangan proses URL extension sendiri (takeover/blocked/searchlock).
+  // Loop-safe: Search Lock redirect target = searchlock.html (extension URL) → di-skip di sini.
   if (url.startsWith(browser.runtime.getURL(''))) return;
 
   const s = await getSettings();
   if (s.contentGuardEnabled === false) return;
 
-  // ===== v3.7.2 (Issue 6): Mode Anak — YouTube Kids Only =====
-  // DIPASANG SEBELUM anti-loop guard karena loop-safe:
-  // target redirect (youtubekids.com) dicek via isAlreadyKids, tidak akan redirect ulang.
-  if (s.contentGuardYoutubeKidsOnly === true) {
-    try {
-      const u = new URL(url);
-      const host = u.hostname.toLowerCase();
-      const isYoutubeMain = host === 'youtube.com' ||
-                            host === 'www.youtube.com' ||
-                            host === 'm.youtube.com' ||
-                            host.endsWith('.youtube.com') ||
-                            host === 'youtube-nocookie.com' ||
-                            host.endsWith('.youtube-nocookie.com');
-      const isAlreadyKids = host === 'youtubekids.com' || host.endsWith('.youtubekids.com');
-      if (isYoutubeMain && !isAlreadyKids) {
-        const kidsUrl = 'https://www.youtubekids.com';
-        console.log('[RecallFox/CG] Kid Mode: redirect youtube.com → youtubekids.com');
-        // Tidak pakai redirectWithNotify anti-loop counter — pakai direct update + optional notif
-        try { await browser.tabs.update(tabId, { url: kidsUrl }); }
-        catch (e) { console.warn('[RecallFox/CG] Kid Mode tab update failed:', e.message); return; }
-        if (s.contentGuardNotifyOnBlock !== false) {
-          try {
-            await browser.notifications.create({
-              type: 'basic',
-              title: '👶 Mode Anak Aktif',
-              message: 'Navigasi YouTube dialihkan ke YouTube Kids.',
-              iconUrl: browser.runtime.getURL('icons/icon-96.png'),
-              priority: 1
-            });
-          } catch (e) {}
-        }
-        return;
-      }
-    } catch (e) { /* URL parse error — skip */ }
-  }
-
-  // ===== v3.7.2 (Issue 6): Block YouTube Shorts navigation =====
-  // Loop-safe: target redirect adalah youtube.com/ (home), dan isYouTubeHome() di Case 1
-  // hanya aktif saat contentGuardForceRedirect !== false (default false → tidak akan re-redirect).
+  // ===== Block YouTube Shorts navigation (dipertahankan dari versi lama) =====
+  // Loop-safe: target = youtube.com/ (home), home tidak di-redirect lagi.
   if (s.contentGuardBlockShorts === true) {
     try {
       const u = new URL(url);
@@ -4384,6 +4042,11 @@ async function checkContentGuard(tabId, url, tab) {
                         host.endsWith('.youtube-nocookie.com');
       if (isYoutube && u.pathname.startsWith('/shorts/')) {
         const homeUrl = 'https://www.youtube.com/';
+        // v3.21.2 FIX 2: Guard URL sama — jangan redirect kalau tab sudah di home.
+        if (await _isAlreadyAtUrl(tabId, homeUrl)) {
+          console.log('[RecallFox/CG] BlockShorts: tab already at home — skip redirect');
+          return;
+        }
         console.log('[RecallFox/CG] BlockShorts: /shorts/ → home');
         try { await browser.tabs.update(tabId, { url: homeUrl }); }
         catch (e) { console.warn('[RecallFox/CG] BlockShorts tab update failed:', e.message); return; }
@@ -4403,88 +4066,81 @@ async function checkContentGuard(tabId, url, tab) {
     } catch (e) { /* URL parse error — skip */ }
   }
 
-  // v0.8.35: ANTI-LOOP KUAT
-  // - Max 1 redirect per tab per 1 JAM (3600000 ms)
-  // - Kalau sudah redirect 3x dalam 1 jam → disable redirect permanen untuk tab itu
-  const now = Date.now();
-  const lastRedirect = lastRedirectMap.get(tabId) || 0;
-  const redirectCount = redirectCountMap.get(tabId) || 0;
+  // ===== Mode Fokus (Allowlist) — cek profil aktif =====
+  const topicProfiles = s.contentGuardTopicProfiles;
+  const activeProfile = getActiveProfile(topicProfiles);
+  // Mode Fokus AKTIF hanya jika: master ON + ada activeProfileId + profil valid + profil punya topik/channel.
+  // Profil kosong (tidak punya topik maupun channel) → tidak filter + Search Lock nonaktif (§4.2).
+  const focusModeActive = !!(activeProfile && isProfileFiltering(activeProfile));
 
-  // Kalau sudah redirect 3x+ → tab ini bermasalah, disable redirect permanen
-  if (redirectCount >= 3) {
-    return;
-  }
-  // Kalau redirect < 1 jam yang lalu → skip
-  if (now - lastRedirect < 3600000) {
-    return;
-  }
+  // ===== Search Lock (§4.6) — berlaku untuk SEMUA profil dengan ≥1 topik =====
+  // Hanya jalan saat Mode Fokus AKTIF. Query search yang TIDAK mengandung topik profil
+  // → redirect ke searchlock.html (guard max 1×/menit/tab, loop-safe via extension URL skip).
+  if (focusModeActive) {
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      const isYoutubeHost = host === 'youtube.com' || host === 'www.youtube.com' ||
+                            host === 'm.youtube.com' || host.endsWith('.youtube.com') ||
+                            host.endsWith('.youtube-nocookie.com');
+      const isXHost = host === 'x.com' || host === 'www.x.com' ||
+                      host === 'twitter.com' || host === 'www.twitter.com' ||
+                      host.endsWith('.x.com') || host.endsWith('.twitter.com');
 
-  // Cek bypass (user sudah klik "Lewati" dalam 60 detik terakhir)
-  if (await isBypassed(url)) return;
-
-  // ===== Case 1: YouTube / X home → redirect ke takeover =====
-  if (s.contentGuardForceRedirect !== false) {
-    if (isYouTubeHome(url)) {
-      const takeoverUrl = browser.runtime.getURL('contentguard/takeover.html')
-        + '?platform=youtube&url=' + encodeURIComponent(url);
-      console.log('[RecallFox/CG] YouTube home → takeover');
-      await redirectWithNotify(tabId, takeoverUrl, s,
-        'YouTube → Konten Positif Tiongkok',
-        'Feed YouTube diganti dengan kurasi konten positif Tiongkok.');
-      return;
-    }
-    if (isXHome(url)) {
-      const takeoverUrl = browser.runtime.getURL('contentguard/takeover.html')
-        + '?platform=x&url=' + encodeURIComponent(url);
-      console.log('[RecallFox/CG] X home → takeover');
-      await redirectWithNotify(tabId, takeoverUrl, s,
-        'X (Twitter) → Konten Positif Tiongkok',
-        'Timeline X diganti dengan kurasi konten positif Tiongkok.');
-      return;
-    }
-  }
-
-  // ===== v0.8.24 Case 1.5: Search query politik → redirect ke search Tiongkok =====
-  if (s.contentGuardBlockSearchQueries !== false) {
-    const searchInfo = detectSearchQuery(url);
-    if (searchInfo && searchInfo.isSearch) {
-      const blockedQueries = s.contentGuardBlockedSearchQueries || DEFAULT_BLOCKED_SEARCH_QUERIES;
-      const matched = matchesBlockedSearchQuery(searchInfo.query, blockedQueries);
-      if (matched) {
-        console.log('[RecallFox/CG] Search query blocked:', searchInfo.query, '→ matched:', matched);
-        // Redirect ke search positif Tiongkok
-        const newSearch = searchInfo.platform === 'youtube'
-          ? 'kehidupan di tiongkok vlog'
-          : 'china technology';
-        const newUrl = searchInfo.platform === 'youtube'
-          ? `https://www.youtube.com/results?search_query=${encodeURIComponent(newSearch)}`
-          : `https://x.com/search?q=${encodeURIComponent(newSearch)}&src=typed_query&f=top`;
-        await redirectWithNotify(tabId, newUrl, s,
-          'Pencarian Diblokir',
-          `Pencarian "${searchInfo.query.slice(0, 40)}" diarahkan ke konten positif Tiongkok.`);
-        return;
+      let searchQuery = '';
+      let platform = '';
+      if (isYoutubeHost && u.pathname === '/results') {
+        searchQuery = u.searchParams.get('search_query') || '';
+        platform = 'youtube';
+      } else if (isXHost && u.pathname === '/search') {
+        searchQuery = u.searchParams.get('q') || '';
+        platform = 'x';
       }
-    }
+
+      if (searchQuery && platform) {
+        const matches = matchesProfileSearchQuery(searchQuery, activeProfile);
+        if (!matches) {
+          // v3.21.2 FIX 1: Cooldown via storage.session (bukan in-memory Map).
+          // Event page Firefox bisa di-suspend → Map hilang → cooldown reset → loop.
+          const now = Date.now();
+          const cooldownKey = 'cg_lock_search_' + tabId;
+          const last = await _getCooldown(cooldownKey);
+          if (now - last < SEARCH_LOCK_COOLDOWN_MS) {
+            console.log('[RecallFox/CG] Search Lock cooldown — skip (tab', tabId, ')');
+            return;
+          }
+          // v3.21.2 FIX 2: Guard URL sama — jangan redirect kalau tab sudah di lockUrl.
+          const lockUrl = browser.runtime.getURL('contentguard/searchlock.html')
+            + '?platform=' + encodeURIComponent(platform)
+            + '&profileId=' + encodeURIComponent(activeProfile.id);
+          if (await _isAlreadyAtUrl(tabId, lockUrl)) {
+            console.log('[RecallFox/CG] Search Lock: tab already at lockUrl — skip redirect');
+            return;
+          }
+          await _setCooldown(cooldownKey, now);
+          console.log('[RecallFox/CG] Search Lock redirect:', platform, 'query=', searchQuery.slice(0, 60));
+          try { await browser.tabs.update(tabId, { url: lockUrl }); }
+          catch (e) { console.warn('[RecallFox/CG] Search Lock tab update failed:', e.message); return; }
+          if (s.contentGuardNotifyOnBlock !== false) {
+            try {
+              await browser.notifications.create({
+                type: 'basic',
+                title: '🔒 Pencarian Dikunci',
+                message: 'Pencarian di luar topik aktif diblokir. Pilih topik dari halaman Kunci Pencarian.',
+                iconUrl: browser.runtime.getURL('icons/icon-96.png'),
+                priority: 1
+              });
+            } catch (e) {}
+          }
+          return;
+        }
+      }
+    } catch (e) { /* URL parse error — skip */ }
   }
 
-  // ===== Case 2: Domain berita Indonesia → redirect ke blocked =====
-  if (s.contentGuardBlockIdNews !== false) {
-    const matchedDomain = matchesIdNewsDomain(url, s.contentGuardIdNewsDomains);
-    if (matchedDomain) {
-      const blockedUrl = browser.runtime.getURL('contentguard/blocked.html')
-        + '?domain=' + encodeURIComponent(matchedDomain)
-        + '&url=' + encodeURIComponent(url);
-      console.log('[RecallFox/CG] ID news domain blocked:', matchedDomain);
-      await redirectWithNotify(tabId, blockedUrl, s,
-        'Berita Negatif Diblokir',
-        `Situs ${matchedDomain} diblokir. Arahkan ke konten positif Tiongkok?`);
-      return;
-    }
-  }
-
-  // v0.8.36: HAPUS Case 3 (watch intercept) — kirim CG_RESCAN_NOW setiap watch page
-  // bikin loop di content script (scan → modify DOM → MutationObserver → scan → ...)
-  // Content script sudah punya interval scan sendiri, tidak perlu paksa dari background.
+  // v0.8.36: Watch intercept TIDAK dilakukan di background — content script
+  // yang baca judul video dari DOM & kirim CG_WATCH_STRICT_REDIRECT bila perlu.
+  // Lihat handler di bawah.
 }
 
 // Helper: redirect tab + notifikasi (jika diaktifkan)
@@ -4549,6 +4205,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!s.contentGuardChinaXAccounts) s.contentGuardChinaXAccounts = DEFAULT_CHINA_X_ACCOUNTS;
       if (!s.contentGuardChinaXSearches) s.contentGuardChinaXSearches = DEFAULT_CHINA_X_SEARCHES;
       if (!Array.isArray(s.contentGuardUserBlocklist)) s.contentGuardUserBlocklist = [];
+      // v3.21.0: Seed topic profiles kalau belum ada (Mode Fokus).
+      if (!s.contentGuardTopicProfiles || !Array.isArray(s.contentGuardTopicProfiles.profiles)) {
+        s.contentGuardTopicProfiles = seedDefaultTopicProfiles(s.contentGuardTopicProfiles || null);
+      }
       sendResponse({ settings: s });
     });
     return true;  // async
@@ -4579,6 +4239,168 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'CG_GET_BLOCKLIST') {
     getUserBlocklist().then(list => sendResponse({ ok: true, list })).catch(e => sendResponse({ ok: false, error: e.message }));
     return true;
+  }
+
+  // ===== v3.21.0: Mode Fokus (Allowlist) — profil & topik =====
+  // Skema: contentGuardTopicProfiles = { profiles: [...], activeProfileId: string|null }
+
+  // CG_GET_TOPIC_PROFILES — kembalikan skema lengkap (seed default bila belum ada).
+  if (msg.type === 'CG_GET_TOPIC_PROFILES') {
+    getSettings().then(s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      sendResponse({ ok: true, topicProfiles: tp });
+    }).catch(e => sendResponse({ ok: false, error: e.message }));
+    return true;
+  }
+
+  // CG_SET_ACTIVE_PROFILE — set profil aktif (radio: null = semua OFF).
+  // Payload: { profileId: string|null }
+  // Broadcast CG_SETTINGS_UPDATED supaya content script re-scan.
+  if (msg.type === 'CG_SET_ACTIVE_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      const newId = msg.profileId || null;
+      // Validasi: pastikan ID ada di daftar profil (atau null)
+      if (newId && !tp.profiles.some(p => p.id === newId)) {
+        sendResponse({ ok: false, error: 'Profil tidak ditemukan' });
+        return;
+      }
+      tp.activeProfileId = newId;
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        // Broadcast ke semua tab YouTube/X
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) {
+          browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        }
+        sendResponse({ ok: true, topicProfiles: tp });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_ADD_TOPIC_PROFILE — tambah profil baru (nama default "Profil Baru N").
+  // Payload: { profile: { name?, emoji?, topics?, channels?, strictWatch? } } (opsional)
+  if (msg.type === 'CG_ADD_TOPIC_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      const n = tp.profiles.length + 1;
+      const newProfile = {
+        id: generateProfileId(),
+        emoji: (msg.profile && msg.profile.emoji) || '👤',
+        name: (msg.profile && msg.profile.name) || ('Profil Baru ' + n),
+        topics: Array.isArray(msg.profile?.topics) ? msg.profile.topics : [],
+        channels: Array.isArray(msg.profile?.channels) ? msg.profile.channels : [],
+        strictWatch: !!(msg.profile && msg.profile.strictWatch === true)
+      };
+      tp.profiles.push(newProfile);
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        sendResponse({ ok: true, topicProfiles: tp, newProfileId: newProfile.id });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_SAVE_TOPIC_PROFILE — simpan perubahan profil (nama/emoji/topik/channel/strictWatch).
+  // Payload: { profileId: string, profile: { name, emoji, topics, channels, strictWatch } }
+  if (msg.type === 'CG_SAVE_TOPIC_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      const idx = tp.profiles.findIndex(p => p.id === msg.profileId);
+      if (idx < 0) { sendResponse({ ok: false, error: 'Profil tidak ditemukan' }); return; }
+      const incoming = msg.profile || {};
+      tp.profiles[idx] = {
+        id: tp.profiles[idx].id,
+        emoji: typeof incoming.emoji === 'string' ? incoming.emoji : (tp.profiles[idx].emoji || '👤'),
+        name: typeof incoming.name === 'string' && incoming.name.trim() ? incoming.name.trim() : (tp.profiles[idx].name || 'Profil'),
+        topics: Array.isArray(incoming.topics) ? incoming.topics.map(t => String(t).trim()).filter(Boolean) : (tp.profiles[idx].topics || []),
+        channels: Array.isArray(incoming.channels) ? incoming.channels.map(c => String(c).trim()).filter(Boolean) : (tp.profiles[idx].channels || []),
+        strictWatch: !!incoming.strictWatch
+      };
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        sendResponse({ ok: true, topicProfiles: tp });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_DELETE_TOPIC_PROFILE — hapus profil. Aturan: minimal 1 profil tersisa;
+  // profil aktif tidak bisa dihapus tanpa pindah dulu.
+  // Payload: { profileId: string }
+  if (msg.type === 'CG_DELETE_TOPIC_PROFILE') {
+    getSettings().then(async s => {
+      let tp = s.contentGuardTopicProfiles;
+      if (!tp || !Array.isArray(tp.profiles)) tp = seedDefaultTopicProfiles(tp || null);
+      if (tp.profiles.length <= 1) {
+        sendResponse({ ok: false, error: 'Minimal 1 profil harus tersisa' });
+        return;
+      }
+      if (tp.activeProfileId === msg.profileId) {
+        sendResponse({ ok: false, error: 'Profil sedang aktif — pindah ke profil lain dulu' });
+        return;
+      }
+      tp.profiles = tp.profiles.filter(p => p.id !== msg.profileId);
+      try {
+        await saveSettings({ contentGuardTopicProfiles: tp });
+        const tabs = await browser.tabs.query({});
+        for (const t of tabs) browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
+        sendResponse({ ok: true, topicProfiles: tp });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    });
+    return true;
+  }
+
+  // CG_WATCH_STRICT_REDIRECT — dipanggil content script (lihat contentguard-cs.js)
+  // ketika watch page video TIDAK cocok profil aktif + strictWatch=true.
+  // Background menerapkan guard max 1×/5menit/tab, lalu redirect ke home.
+  // Loop-safe: home tidak di-redirect lagi (Case 1 sudah dihapus).
+  if (msg.type === 'CG_WATCH_STRICT_REDIRECT') {
+    const tabId = sender.tab && sender.tab.id;
+    if (typeof tabId !== 'number') { sendResponse({ ok: false, redirected: false }); return false; }
+    // v3.21.2 FIX 1+2: Async IIFE karena listener synchronous, tapi butuh await untuk storage.session
+    (async () => {
+      const now = Date.now();
+      const cooldownKey = 'cg_lock_watch_' + tabId;
+      const last = await _getCooldown(cooldownKey);
+      if (now - last < WATCH_STRICT_COOLDOWN_MS) {
+        sendResponse({ ok: true, redirected: false, reason: 'cooldown' });
+        return;
+      }
+      const homeUrl = 'https://www.youtube.com/';
+      // v3.21.2 FIX 2: Guard URL sama — jangan redirect kalau tab sudah di home.
+      if (await _isAlreadyAtUrl(tabId, homeUrl)) {
+        console.log('[RecallFox/CG] Watch Strict: tab already at home — skip redirect (prevent loop)');
+        await _setCooldown(cooldownKey, now);
+        sendResponse({ ok: true, redirected: false, reason: 'already_at_home' });
+        return;
+      }
+      await _setCooldown(cooldownKey, now);
+      try {
+        await browser.tabs.update(tabId, { url: homeUrl });
+        sendResponse({ ok: true, redirected: true });
+      } catch (e) {
+        sendResponse({ ok: false, redirected: false, error: e.message });
+      }
+    })();
+    return true;  // keep channel open for async sendResponse
   }
 
   // v0.8.29: CG_SAVE_SETTING — sudah dipindahkan ke listener 1 (v0.9.7)
@@ -4686,11 +4508,9 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }).catch(() => {});
 
         // Notification (non-blocking)
-        // v3.20.6: Tambah iconUrl (Chrome MV3 requires PNG — silently rejects if missing).
         try {
           await browser.notifications.create({
             type: 'basic',
-            iconUrl: browser.runtime.getURL('icons/icon-96.png'),
             title: '🎯 Elemen diblokir',
             message: 'Selector "' + selector.slice(0, 60) + (selector.length > 60 ? '…' : '') + '" ditambahkan ke aturan untuk ' + domain + '.'
           });
@@ -4711,7 +4531,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const { markdown, text, grandTotal } = msg;
-        
+        const { addNote } = await import('./lib/storage.js');
         const note = await addNote(markdown || text, {
           title: '🧮 RecallTape — Total: ' + (grandTotal || 0).toLocaleString('id-ID'),
           group: 'RecallTape'
@@ -4721,6 +4541,74 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         console.error('[RecallFox] SAVE_TAPE_TO_VAULT failed:', e);
         sendResponse({ ok: false, error: e.message });
       }
+    })();
+    return true;
+  }
+  // v3.21.15: UPDATE_VAULT_NOTE — autosave dari floating note (vaultNoteId)
+  if (msg.type === 'UPDATE_VAULT_NOTE') {
+    (async () => {
+      try {
+        const { noteId, text } = msg;
+        if (!noteId || typeof text !== 'string') { sendResponse({ ok: false, error: 'invalid' }); return; }
+        const { getVault, saveVault } = await import('./lib/storage.js');
+        const vault = await getVault();
+        const note = (vault.notes || []).find(n => n.id === noteId);
+        if (!note) { sendResponse({ ok: false, error: 'not_found' }); return; }
+        note.body = text;
+        note.updatedAt = Date.now();
+        await saveVault(vault);
+        sendResponse({ ok: true });
+      } catch (e) {
+        console.error('[RecallFox] UPDATE_VAULT_NOTE failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+  // v3.21.16: Floater pill 4 tombol — RF_OPEN_NOTE/TAPE dari sidebar-cs.js floater
+  if (msg.type === 'RF_OPEN_NOTE') {
+    (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id){
+          try{ await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE'}); }
+          catch(e){ await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/notes-cs.js']}); await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE'}); }
+        }
+        sendResponse({ok:true});
+      }catch(e){ sendResponse({ok:false, error:e.message}); }
+    })();
+    return true;
+  }
+  if (msg.type === 'RF_OPEN_TAPE') {
+    (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id){
+          try{ await browser.tabs.sendMessage(tab.id, {type:'OPEN_TAPE'}); }
+          catch(e){ await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/tape-cs.js']}); await browser.tabs.sendMessage(tab.id, {type:'OPEN_TAPE'}); }
+        }
+        sendResponse({ok:true});
+      }catch(e){ sendResponse({ok:false, error:e.message}); }
+    })();
+    return true;
+  }
+  if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
+    (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id && msg.msgType){
+          try{ await browser.tabs.sendMessage(tab.id, {type: msg.msgType}); }
+          catch(e){
+            const file = msg.msgType==='OPEN_NOTE'?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js':'content/sidebar-cs.js';
+            await browser.scripting.executeScript({target:{tabId:tab.id}, files:[file]});
+            await browser.tabs.sendMessage(tab.id, {type: msg.msgType});
+          }
+        }
+        sendResponse({ok:true});
+      }catch(e){ sendResponse({ok:false, error:e.message}); }
     })();
     return true;
   }
@@ -4783,19 +4671,26 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;  // async response
   }
 
-  // v3.20.9: RF_FORWARD_TO_ACTIVE_TAB — forward message from content script
+  // v3.20.10: RF_FORWARD_TO_ACTIVE_TAB — forward message from content script
   // to active tab's content script. Used by sidebar-cs.js (popout) to send
   // OPEN_TAPE to tape-cs.js. Content scripts don't have browser.tabs access.
+  // v3.20.21: Forward extra fields (text, mode, dst.) supaya bisa dipakai untuk
+  // COPY_TEXT (clipboard fallback di popout sidebar).
   if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
     (async () => {
       try {
         const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
         if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
+        // v3.20.21: Build message payload dengan forward extra fields
+        const payload = { type: msg.msgType };
+        if (msg.text !== undefined) payload.text = msg.text;
+        if (msg.mode !== undefined) payload.mode = msg.mode;
+        if (msg.data !== undefined) payload.data = msg.data;
         try {
-          await browser.tabs.sendMessage(tab.id, { type: msg.msgType });
-          sendResponse({ ok: true });
+          const res = await browser.tabs.sendMessage(tab.id, payload);
+          sendResponse(res || { ok: true });
         } catch (e) {
-          // Content script not loaded — inject then retry
+          // Content script not loaded — inject then retry (hanya untuk OPEN_TAPE)
           if (msg.msgType === 'OPEN_TAPE') {
             await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/tape-cs.js'] });
             setTimeout(() => browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' }).catch(() => {}), 200);
@@ -4805,6 +4700,37 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
       } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+
+  // v3.20.23: RF_OPEN_SETTINGS_VIA_BG — last resort fallback untuk buka settings.
+  // Dipanggil dari popup/sidebar kalau tabs.create() DAN openOptionsPage() keduanya
+  // no-op (bug Firefox terkenal di sidebar/iframe context).
+  // Background SW punya akses penuh ke browser.tabs — panggil langsung dari sini.
+  if (msg.type === 'RF_OPEN_SETTINGS_VIA_BG') {
+    (async () => {
+      try {
+        const settingsUrl = browser.runtime.getURL('settings/settings.html');
+        // Cek apakah tab settings sudah terbuka — fokus ke sana kalau ya
+        const existing = await browser.tabs.query({ url: settingsUrl });
+        if (existing.length > 0) {
+          await browser.tabs.update(existing[0].id, { active: true });
+          await browser.windows.update(existing[0].windowId, { focused: true });
+          sendResponse({ ok: true, reused: true });
+          return;
+        }
+        // Buat tab baru
+        const tab = await browser.tabs.create({ url: settingsUrl });
+        if (tab && tab.id) {
+          sendResponse({ ok: true, tabId: tab.id });
+        } else {
+          sendResponse({ ok: false, error: 'tab_create_returned_no_id' });
+        }
+      } catch (e) {
+        console.error('[RecallFox/bg] RF_OPEN_SETTINGS_VIA_BG failed:', e);
         sendResponse({ ok: false, error: e.message });
       }
     })();
@@ -4833,20 +4759,26 @@ browser.runtime.onInstalled.addListener(async (details) => {
 });
 
 // ============================================================================
-// v3.20.16–v3.20.19: Relay Point — generate resume context via OmniRouter
-// (silent, async, lokal saja). Chrome MV3 port dari Firefox v3.20.19.
+// v3.20.16: Relay Point — generate resume context via OmniRouter (silent, async)
+// ============================================================================
+// Tujuan: Saat Snapshot diambil di domain AI, generate "resume context" —
+// ringkasan status kerja terakhir yang bisa di-paste ke akun AI baru untuk
+// melanjutkan pekerjaan. Disimpan menyatu di metadata snapshot (bukan item baru).
 //
-// Strategi:
+// Deteksi AI domain: snapshotDomain sudah di-set oleh content.js extractConversation()
+// (hanya di-set kalau isAIPage() true). Jadi tidak perlu cek ulang di sini —
+// kalau msg.body ada dan cukup panjang, asumsikan ini snapshot dari AI domain.
+//
+// STRATEGI AMAN (pelajaran dari v3.20.16 broken sebelumnya):
+//   - Resume context HANYA disimpan di local storage (lib/storage.js addItem).
+//   - TIDAK sync ke Supabase (lib/supabase-sync.js TIDAK diubah) → cloud sync
+//     tetap pakai schema lama, tidak akan PGRST204 error.
 //   - Auto-generate: fire-and-forget setelah CAPTURE_SNAPSHOT save.
 //     Non-blocking — snapshot sudah tersimpan, resume context update via updateItem().
 //   - Manual-generate: user klik "Generate Resume Context" di action sheet.
 //     Sync lewat GENERATE_RESUME_CONTEXT message.
 //   - Kalau OmniRouter belum dikonfigurasi atau gagal, resumeContext = null.
 //     Snapshot tetap berfungsi normal seperti sebelumnya.
-//
-// v3.20.19 (Anchor AI Answer): prompt sekarang explicit ANCHOR = jawaban AI
-// terakhir (bukan pertanyaan user). AI harus bandingkan jawaban AI terakhir
-// dengan jawaban AI sebelumnya untuk deteksi "nyambung atau tidak".
 // ============================================================================
 
 const RESUME_CONTEXT_SYSTEM_PROMPT = `Anda adalah "Si Pandai Relay Agent" — pakar serah terima konteks kerja (HANDOVER BRIEF) berbasis standar Kombinasi Repo GitHub Teratas (ayghri/i-have-adhd ⭐22.48k & wilbeibi/catchup ⭐65).
@@ -4953,9 +4885,6 @@ function truncateBodyForResume(body) {
  * relevansi backward dari pair terakhir — bisa ambil 3-6 pairs terakhir
  * tergantung kontinuitas topik. Word limit 800 kata (sebelumnya 300).
  *
- * v3.20.19 (Anchor AI Answer): Prompt sekarang explicit ANCHOR = jawaban AI
- * terakhir. AI harus bandingkan jawaban AI terakhir dengan jawaban AI sebelumnya.
- *
  * @param {string} itemId — ID snapshot item
  * @param {string} body — snapshot body (percakapan AI, full 50 msgs)
  * @param {string} title — snapshot title (untuk konteks)
@@ -4995,10 +4924,6 @@ async function generateResumeContext(itemId, body, title) {
  * rantai relevansi backward — ambil 3-6 pairs terakhir yang nyambung topik.
  * Word limit 800 kata (sebelumnya 300 — user bilang terlalu terbatas).
  *
- * v3.20.19 (Anchor AI Answer): Prompt sekarang explicit ANCHOR = jawaban AI
- * terakhir (bukan pertanyaan user). AI harus bandingkan jawaban AI terakhir
- * dengan jawaban AI sebelumnya untuk deteksi "nyambung atau tidak".
- *
  * @param {string} body — snapshot body (full 50 msgs)
  * @param {string} title — snapshot title
  * @returns {Promise<string|null>} — resume context text, atau null kalau gagal
@@ -5028,3 +4953,40 @@ async function generateResumeContextSync(body, title) {
   }
   return content;
 }
+
+// v3.21.16: Cross-tab floating sync — broadcast show to new tab + all tabs on change
+try {
+  browser.tabs.onActivated.addListener(async (info) => {
+    try {
+      const r = await browser.storage.local.get(['floatNoteState','floatTapeState']);
+      for (const key of ['floatNoteState','floatTapeState']) {
+        const float = r[key];
+        if (float && float.isOpen) {
+          const tab = await browser.tabs.get(info.tabId);
+          if (tab && tab.url && /^(https?|file):/i.test(tab.url)) {
+            const type = key==='floatNoteState' ? 'SHOW_NOTE' : 'SHOW_TAPE';
+            browser.tabs.sendMessage(info.tabId, {type}).catch(()=>{});
+          }
+        }
+      }
+    } catch(e){}
+  });
+  browser.storage.onChanged.addListener((changes, area)=>{
+    if (area!=='local') return;
+    for (const key of ['floatNoteState','floatTapeState']) {
+      if (changes[key]) {
+        const float = changes[key].newValue;
+        if (float && float.isOpen) {
+          browser.tabs.query({}).then(tabs=>{
+            tabs.forEach(t=>{
+              if (t.id && t.url && /^(https?:|file):/i.test(t.url)) {
+                const type = key==='floatNoteState' ? 'SHOW_NOTE' : 'SHOW_TAPE';
+                browser.tabs.sendMessage(t.id, {type}).catch(()=>{});
+              }
+            });
+          });
+        }
+      }
+    }
+  });
+} catch(e){}

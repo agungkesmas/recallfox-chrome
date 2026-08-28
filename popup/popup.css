@@ -70,6 +70,11 @@ body.rf-sidebar-body .popup{
 .iconbtn:hover{background:var(--hover);color:var(--text)}
 .iconbtn:active{transform:scale(.92)}
 .iconbtn svg{width:15px;height:15px}
+/* RecallNote vs Tape - beda warna biar tidak ketuker (safe, tidak ganggu tombol lain) */
+#tapeBtn{ color:#FBBF24; border:1px solid rgba(245,158,11,0.25); }
+#tapeBtn:hover{ background:rgba(245,158,11,0.12); color:#FCD34D; }
+#noteBtn{ color:#34D399; border:1px solid rgba(16,185,129,0.25); }
+#noteBtn:hover{ background:rgba(16,185,129,0.12); color:#6EE7B7; }
 
 /* Command bar */
 .cmd{margin:2px 12px 8px;display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:0 10px;height:38px;transition:.15s;flex:none}
@@ -99,6 +104,23 @@ body.rf-sidebar-body .popup{
 .strip-detail{max-height:0;overflow:hidden;transition:max-height .25s ease,margin .25s ease}
 .strip.open .strip-detail{max-height:380px;margin-top:6px}
 .strip-detail-in{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px;font-size:12px}
+/* Pomodoro sticky — clone strip sholat (v3.21.14) */
+.pomodoro-strip{margin:0 12px 10px;flex:none}
+.pomodoro-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:7px 10px;font-size:11px;color:var(--text-2);cursor:pointer;transition:.15s;user-select:none}
+.pomodoro-bar:hover{border-color:var(--border-strong);background:var(--surface-2)}
+.pomodoro-cell{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.pomodoro-cell b{color:var(--text);font-weight:700}
+.pomodoro-sep{width:1px;height:12px;background:var(--border);flex:none}
+.pomodoro-btn{padding:4px 8px;border-radius:6px;background:var(--primary-soft);color:var(--primary);font-size:11px;font-weight:600;border:none;cursor:pointer}
+.pomodoro-btn:hover{background:var(--primary-soft-2)}
+.pomodoro-preset{margin-left:4px;font-weight:600;color:var(--text);font-size:11px}
+.pomodoro-sound{margin-left:auto;border:none;background:none;cursor:pointer;font-size:13px;color:var(--text-2)}
+.pomodoro-chev{margin-left:4px;color:var(--muted);transition:.2s;flex:none}
+.pomodoro-strip.open .pomodoro-chev{transform:rotate(180deg)}
+.pomodoro-detail{max-height:0;overflow:hidden;transition:max-height .25s ease,margin .25s ease}
+.pomodoro-strip.open .pomodoro-detail{max-height:320px;margin-top:6px}
+.pomodoro-detail-in{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 12px;font-size:12px}
+.pomodoro-chips button.on{background:var(--primary);color:#fff;border-color:var(--primary)}
 /* v3.11.3: pray-grid responsive — 3 kolom default, 2 kolom di narrow */
 .pray-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
 @media(max-width:380px){

@@ -20,4 +20,3 @@ node_modules/
 *.xpi
 recallfox-*.zip
 !recallfox-v*.zip
-*.zip

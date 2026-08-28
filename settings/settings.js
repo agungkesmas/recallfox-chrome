@@ -1,8 +1,5 @@
 // settings/settings.js — Settings page logic
 // RecallFox v0.1.0
-// Chrome MV3: Import polyfill + sidebar compat.
-import '../lib/browser-polyfill.min.js';
-import { openSidebar } from '../lib/sidebar-compat.js';
 
 import {
   getVault,
@@ -167,33 +164,17 @@ async function init() {
     setChk('rf-set-shot-sync-full', !!s.screenshotSyncFullImage);
   } catch (e) { console.warn('[RecallFox] settings: screenshot section failed:', e); }
 
-  // === Content Guardian settings (v0.8.20 → 0.8.21) ===
+  // === Pelindung Konten settings (v3.21.0 — Mode Fokus Allowlist) ===
   try {
     setChk('rf-set-cg-enabled', s.contentGuardEnabled !== false);
-    setChk('rf-set-cg-block-idnews', s.contentGuardBlockIdNews !== false);
-    setChk('rf-set-cg-force-redirect', s.contentGuardForceRedirect !== false);
-    setChk('rf-set-cg-filter-feeds', s.contentGuardFilterFeeds !== false);
     setChk('rf-set-cg-block-yt', s.contentGuardBlockYtChannels !== false);
     setChk('rf-set-cg-block-x', s.contentGuardBlockXAccounts !== false);
-    setChk('rf-set-cg-strict', s.contentGuardStrictMode !== false);
+    setChk('rf-set-cg-block-shorts', s.contentGuardBlockShorts === true);
     setChk('rf-set-cg-notify', s.contentGuardNotifyOnBlock !== false);
     setChk('rf-set-cg-debug', !!s.contentGuardDebugMode);
-    setChk('rf-set-cg-nuclear', s.contentGuardNuclearMode !== false);
-    setChk('rf-set-cg-block-search', s.contentGuardBlockSearchQueries !== false);
-    setChk('rf-set-cg-scan-desc', s.contentGuardScanDescription !== false);
-
-    // Textareas: keywords & domains
-    const kwEl = document.getElementById('rf-set-cg-keywords');
-    if (kwEl) {
-      const kws = s.contentGuardNegativeKeywords || [];
-      kwEl.value = Array.isArray(kws) ? kws.join(', ') : '';
-    }
-    const domEl = document.getElementById('rf-set-cg-domains');
-    if (domEl) {
-      const doms = s.contentGuardIdNewsDomains || [];
-      domEl.value = Array.isArray(doms) ? doms.join('\n') : '';
-    }
-  } catch (e) { console.warn('[RecallFox] settings: contentguard section failed:', e); }
+    // v3.21.0: Render profil cards + editor (Mode Fokus)
+    await renderPelindungKontenProfiles();
+  } catch (e) { console.warn('[RecallFox] settings: pelindung konten section failed:', e); }
 
   // === Render User Blocklist ===
   try { await renderUserBlocklist(); }
@@ -419,19 +400,13 @@ function bindEvents() {
     ['rf-set-shot-default-mode', 'screenshotDefaultMode', 'value'],
     ['rf-set-shot-max-height', 'screenshotMaxFullHeight', 'value'],
     ['rf-set-shot-sync-full', 'screenshotSyncFullImage', 'checked'],
-    // Content Guardian
+    // Pelindung Konten (v3.21.0 Mode Fokus) — toggle-toggle yang tersisa
     ['rf-set-cg-enabled', 'contentGuardEnabled', 'checked'],
-    ['rf-set-cg-block-idnews', 'contentGuardBlockIdNews', 'checked'],
-    ['rf-set-cg-force-redirect', 'contentGuardForceRedirect', 'checked'],
-    ['rf-set-cg-filter-feeds', 'contentGuardFilterFeeds', 'checked'],
     ['rf-set-cg-block-yt', 'contentGuardBlockYtChannels', 'checked'],
     ['rf-set-cg-block-x', 'contentGuardBlockXAccounts', 'checked'],
-    ['rf-set-cg-strict', 'contentGuardStrictMode', 'checked'],
+    ['rf-set-cg-block-shorts', 'contentGuardBlockShorts', 'checked'],
     ['rf-set-cg-notify', 'contentGuardNotifyOnBlock', 'checked'],
     ['rf-set-cg-debug', 'contentGuardDebugMode', 'checked'],
-    ['rf-set-cg-nuclear', 'contentGuardNuclearMode', 'checked'],
-    ['rf-set-cg-block-search', 'contentGuardBlockSearchQueries', 'checked'],
-    ['rf-set-cg-scan-desc', 'contentGuardScanDescription', 'checked'],
     // Primary assistant
     ['rf-set-assistant-provider', 'assistantProvider', 'value'],
     ['rf-set-assistant-apikey', 'assistantApiKey', 'value'],
@@ -688,40 +663,8 @@ function bindEvents() {
     }
   }
 
-  // ===== Content Guardian: textarea bindings (keywords & domains) =====
-  const cgKeywordsEl = document.getElementById('rf-set-cg-keywords');
-  if (cgKeywordsEl) {
-    let kwTimer = null;
-    cgKeywordsEl.addEventListener('input', () => {
-      clearTimeout(kwTimer);
-      kwTimer = setTimeout(async () => {
-        const arr = cgKeywordsEl.value
-          .split(',')
-          .map(s => s.trim())
-          .filter(s => s.length > 0);
-        await saveSettings({ contentGuardNegativeKeywords: arr });
-        try { await browser.runtime.sendMessage({ type: 'CG_SETTINGS_UPDATED' }); } catch (e) {}
-      }, 700);
-    });
-    cgKeywordsEl.addEventListener('blur', () => toast('Tersimpan'));
-  }
-
-  const cgDomainsEl = document.getElementById('rf-set-cg-domains');
-  if (cgDomainsEl) {
-    let domTimer = null;
-    cgDomainsEl.addEventListener('input', () => {
-      clearTimeout(domTimer);
-      domTimer = setTimeout(async () => {
-        const arr = cgDomainsEl.value
-          .split('\n')
-          .map(s => s.trim())
-          .filter(s => s.length > 0);
-        await saveSettings({ contentGuardIdNewsDomains: arr });
-        try { await browser.runtime.sendMessage({ type: 'CG_SETTINGS_UPDATED' }); } catch (e) {}
-      }, 700);
-    });
-    cgDomainsEl.addEventListener('blur', () => toast('Tersimpan'));
-  }
+  // v3.21.0: textarea keyword & domain berita sudah dihapus (lihat settings.html).
+  // Mode Fokus pakai profil + topik (lihat renderPelindungKontenProfiles di bawah).
 
   // v0.8.44: Auto Tab Discard — textarea excluded domains
   const adDomainsEl = document.getElementById('rf-set-ad-excluded-domains');
@@ -881,203 +824,11 @@ function bindEvents() {
     adDomainsEl.addEventListener('blur', () => toast('Tersimpan'));
   }
 
-  // ===== Content Guardian: test buttons =====
-  const testYtBtn = document.getElementById('rf-set-cg-test-takeover-yt');
-  if (testYtBtn) {
-    testYtBtn.addEventListener('click', () => {
-      const url = browser.runtime.getURL('contentguard/takeover.html')
-        + '?platform=youtube&url=' + encodeURIComponent('https://www.youtube.com/');
-      browser.tabs.create({ url });
-    });
-  }
-  const testXBtn = document.getElementById('rf-set-cg-test-takeover-x');
-  if (testXBtn) {
-    testXBtn.addEventListener('click', () => {
-      const url = browser.runtime.getURL('contentguard/takeover.html')
-        + '?platform=x&url=' + encodeURIComponent('https://x.com/home');
-      browser.tabs.create({ url });
-    });
-  }
-  const testBlockedBtn = document.getElementById('rf-set-cg-test-blocked');
-  if (testBlockedBtn) {
-    testBlockedBtn.addEventListener('click', () => {
-      const url = browser.runtime.getURL('contentguard/blocked.html')
-        + '?domain=detik.com&url=' + encodeURIComponent('https://www.detik.com/');
-      browser.tabs.create({ url });
-    });
-  }
-  const resetCgBtn = document.getElementById('rf-set-cg-reset');
-  if (resetCgBtn) {
-    resetCgBtn.addEventListener('click', async () => {
-      if (!confirm('Reset kata kunci & domain berita ke default? Custom list Anda akan hilang.')) return;
-      try {
-        const resp = await browser.runtime.sendMessage({ type: 'CG_GET_SETTINGS' });
-        const defaults = {
-          contentGuardNegativeKeywords: resp?.settings?.contentGuardNegativeKeywords || [],
-          contentGuardIdNewsDomains: resp?.settings?.contentGuardIdNewsDomains || []
-        };
-        // Reload defaults dari lib/contentguard.js via dynamic import
-        const cg = await import('../lib/contentguard.js');
-        await saveSettings({
-          contentGuardNegativeKeywords: cg.DEFAULT_NEGATIVE_KEYWORDS,
-          contentGuardIdNewsDomains: cg.DEFAULT_ID_NEWS_DOMAINS,
-          contentGuardChinaSearches: cg.DEFAULT_CHINA_YOUTUBE_SEARCHES,
-          contentGuardChinaXAccounts: cg.DEFAULT_CHINA_X_ACCOUNTS,
-          contentGuardChinaXSearches: cg.DEFAULT_CHINA_X_SEARCHES
-        });
-        // Re-render textareas
-        const kwEl = document.getElementById('rf-set-cg-keywords');
-        if (kwEl) kwEl.value = cg.DEFAULT_NEGATIVE_KEYWORDS.join(', ');
-        const domEl = document.getElementById('rf-set-cg-domains');
-        if (domEl) domEl.value = cg.DEFAULT_ID_NEWS_DOMAINS.join('\n');
-        try { await browser.runtime.sendMessage({ type: 'CG_SETTINGS_UPDATED' }); } catch (e) {}
-        toast('Reset ke default');
-      } catch (e) {
-        toast('Gagal reset: ' + e.message);
-      }
-    });
-  }
+  // v3.21.0: Test buttons (takeover/blocked/reset/force-enable/force-rescan) sudah dihapus
+  // dari HTML — fitur takeover/blocked dibongkar, diganti Search Lock + Mode Fokus.
+  // Lihat renderPelindungKontenProfiles untuk UI editor profil baru.
 
-  // v0.8.28: FORCE ENABLE ALL — nyalakan SEMUA Content Guardian settings critical
-  const forceEnableBtn = document.getElementById('rf-set-cg-force-enable');
-  if (forceEnableBtn) {
-    forceEnableBtn.addEventListener('click', async () => {
-      if (!confirm('🚨 FORCE ENABLE ALL akan menyalakan SEMUA setting Content Guardian:\n\n' +
-                   '✓ Master switch ON\n' +
-                   '✓ Filter feed ON\n' +
-                   '✓ Block berita Indonesia ON\n' +
-                   '✓ Force redirect YouTube/X ON\n' +
-                   '✓ Block channel YT berita ON\n' +
-                   '✓ Block akun X berita ON\n' +
-                   '✓ Nuclear Mode ON\n' +
-                   '✓ Block pencarian politik ON\n' +
-                   '✓ Scan deskripsi video ON\n' +
-                   '✓ Mode paksa (2x klik) ON\n' +
-                   '✓ Notifikasi ON\n\n' +
-                   'Lanjutkan?')) return;
-      const orig = forceEnableBtn.textContent;
-      forceEnableBtn.disabled = true;
-      forceEnableBtn.textContent = '🚨 Menyalakan semua...';
-      try {
-        // Force-enable SEMUA settings critical
-        await saveSettings({
-          contentGuardEnabled: true,
-          contentGuardBlockIdNews: true,
-          contentGuardForceRedirect: true,
-          contentGuardFilterFeeds: true,
-          contentGuardBlockYtChannels: true,
-          contentGuardBlockXAccounts: true,
-          contentGuardStrictMode: true,
-          contentGuardNotifyOnBlock: true,
-          contentGuardDebugMode: false,
-          contentGuardNuclearMode: true,
-          contentGuardBlockSearchQueries: true,
-          contentGuardInterceptWatch: true,
-          contentGuardScanDescription: true
-        });
-        console.log('[RecallFox/Settings] FORCE ENABLE ALL — settings saved');
-
-        // Update UI toggles
-        const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val; };
-        setChk('rf-set-cg-enabled', true);
-        setChk('rf-set-cg-block-idnews', true);
-        setChk('rf-set-cg-force-redirect', true);
-        setChk('rf-set-cg-filter-feeds', true);
-        setChk('rf-set-cg-block-yt', true);
-        setChk('rf-set-cg-block-x', true);
-        setChk('rf-set-cg-strict', true);
-        setChk('rf-set-cg-notify', true);
-        setChk('rf-set-cg-debug', false);
-        setChk('rf-set-cg-nuclear', true);
-        setChk('rf-set-cg-block-search', true);
-        setChk('rf-set-cg-scan-desc', true);
-
-        // Broadcast
-        await browser.runtime.sendMessage({ type: 'CG_SETTINGS_UPDATED' });
-
-        // Force re-scan semua tab YouTube/X
-        const tabs = await browser.tabs.query({ url: [
-          '*://*.youtube.com/*', '*://*.youtube-nocookie.com/*',
-          '*://*.x.com/*', '*://*.twitter.com/*'
-        ] });
-        for (const t of tabs) {
-          browser.tabs.sendMessage(t.id, { type: 'CG_RESCAN_NOW' }).catch(() => {});
-        }
-
-        forceEnableBtn.textContent = '✓ SEMUA DINYALAKAN!';
-        toast(`✓ Force Enable All berhasil! ${tabs.length} tab di-rescan. Refresh tab YouTube/X (Ctrl+Shift+R).`);
-        setTimeout(() => {
-          forceEnableBtn.disabled = false;
-          forceEnableBtn.textContent = orig;
-        }, 5000);
-      } catch (e) {
-        forceEnableBtn.textContent = '⚠ Error';
-        toast('Error: ' + e.message);
-        setTimeout(() => {
-          forceEnableBtn.disabled = false;
-          forceEnableBtn.textContent = orig;
-        }, 2000);
-      }
-    });
-  }
-
-  // v0.8.26: Force Re-scan All Tabs
-  const forceRescanBtn = document.getElementById('rf-set-cg-force-rescan');
-  if (forceRescanBtn) {
-    forceRescanBtn.addEventListener('click', async () => {
-      const orig = forceRescanBtn.textContent;
-      forceRescanBtn.disabled = true;
-      forceRescanBtn.textContent = '🔄 Re-scanning...';
-      try {
-        // 1. Reload settings dari lib/contentguard.js defaults
-        const cg = await import('../lib/contentguard.js');
-        const s = await getSettings();
-        // Pastikan settings terbaru tersimpan
-        await saveSettings({
-          contentGuardNegativeKeywords: s.contentGuardNegativeKeywords || cg.DEFAULT_NEGATIVE_KEYWORDS,
-          contentGuardBlockedYtChannels: s.contentGuardBlockedYtChannels || cg.DEFAULT_BLOCKED_YT_CHANNELS,
-          contentGuardBlockedXAccounts: s.contentGuardBlockedXAccounts || cg.DEFAULT_BLOCKED_X_ACCOUNTS,
-          contentGuardBlockedSearchQueries: s.contentGuardBlockedSearchQueries || cg.DEFAULT_BLOCKED_SEARCH_QUERIES
-        });
-
-        // 2. Broadcast CG_SETTINGS_UPDATED
-        await browser.runtime.sendMessage({ type: 'CG_SETTINGS_UPDATED' });
-
-        // 3. Cari semua tab YouTube/X dan kirim CG_RESCAN_NOW
-        const tabs = await browser.tabs.query({ url: [
-          '*://*.youtube.com/*',
-          '*://*.youtube-nocookie.com/*',
-          '*://*.x.com/*',
-          '*://*.twitter.com/*'
-        ] });
-        let successCount = 0;
-        for (const t of tabs) {
-          try {
-            await browser.tabs.sendMessage(t.id, { type: 'CG_RESCAN_NOW' });
-            successCount++;
-          } catch (e) {
-            // Tab mungkin tidak memiliki content script (e.g., tab sudah terbuka sebelum addon install)
-            console.warn('[RecallFox] Cannot reach tab', t.id, t.url, '— refresh tab manually');
-          }
-        }
-        forceRescanBtn.textContent = '✓ Re-scan selesai';
-        toast(`Re-scan: ${successCount}/${tabs.length} tab terjangkau. Refresh tab manually jika 0.`);
-        setTimeout(() => {
-          forceRescanBtn.disabled = false;
-          forceRescanBtn.textContent = orig;
-        }, 3000);
-      } catch (e) {
-        forceRescanBtn.textContent = '⚠ Error';
-        toast('Error: ' + e.message);
-        setTimeout(() => {
-          forceRescanBtn.disabled = false;
-          forceRescanBtn.textContent = orig;
-        }, 2000);
-      }
-    });
-  }
-
-  // ===== Content Guardian: User Blocklist (add manual + list + clear) =====
+  // ===== Pelindung Konten: User Blocklist (add manual + list + clear) =====
   const blAddBtn = document.getElementById('rf-set-cg-bl-add');
   if (blAddBtn) {
     blAddBtn.addEventListener('click', async () => {
@@ -1641,6 +1392,330 @@ async function refreshLastBackupDisplay() {
   } catch (e) {}
 }
 
+// ===== Pelindung Konten: Render Profil & Editor (Mode Fokus Allowlist) =====
+// v3.21.0 — Render kartu profil (radio) + editor (nama/emoji/topik/channel/strictWatch).
+// State lokal editor — tidak langsung simpan; user klik "Simpan perubahan".
+let _cgEditingProfileId = null;   // profil yang sedang diedit (null = belum dipilih)
+let _cgEditingTopics = [];        // topik sementara di editor
+let _cgEditingChannels = [];      // channel sementara di editor
+
+async function renderPelindungKontenProfiles() {
+  const cardsEl = document.getElementById('rf-cg-profile-cards');
+  const slStatusEl = document.getElementById('rf-cg-searchlock-status');
+  if (!cardsEl) return;
+
+  // Ambil topic profiles dari background
+  let topicProfiles = null;
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'CG_GET_TOPIC_PROFILES' });
+    if (res?.ok && res.topicProfiles) topicProfiles = res.topicProfiles;
+  } catch (e) {}
+  if (!topicProfiles || !Array.isArray(topicProfiles.profiles)) {
+    topicProfiles = { profiles: [], activeProfileId: null };
+  }
+
+  const masterOn = (await getSettings()).contentGuardEnabled !== false;
+  const activeId = topicProfiles.activeProfileId;
+
+  // Render kartu profil (radio)
+  const cards = topicProfiles.profiles.map(p => {
+    const isActive = p.id === activeId;
+    const emoji = p.emoji || '👤';
+    const name = p.name || 'Profil';
+    const topicCount = Array.isArray(p.topics) ? p.topics.length : 0;
+    const chanCount = Array.isArray(p.channels) ? p.channels.length : 0;
+    const isEmpty = topicCount === 0 && chanCount === 0;
+    const topicsPreview = (p.topics || []).slice(0, 3).join(', ')
+      + (topicCount > 3 ? ', …' : '');
+    const dim = masterOn ? '' : 'opacity:.5;cursor:not-allowed;';
+    const cardStyle = 'border:2px solid ' + (isActive ? '#16a34a' : 'var(--border)')
+      + ';border-radius:10px;padding:10px 12px;cursor:pointer;min-width:160px;max-width:220px;'
+      + 'background:' + (isActive ? 'rgba(34,197,94,0.10)' : 'var(--surface)') + ';' + dim;
+    return '<div class="rf-cg-profile-card" data-profile-id="' + escHtml(p.id) + '" style="' + cardStyle + '">'
+      +   '<div style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;">'
+      +     '<span style="font-size:11px;color:' + (isActive ? '#16a34a' : 'var(--text-muted)') + ';">'
+      +       (isActive ? '●' : '○') + '</span>'
+      +     '<span style="font-size:18px;">' + escHtml(emoji) + '</span>'
+      +     '<span>' + escHtml(name) + '</span>'
+      +   '</div>'
+      +   '<div style="font-size:11px;color:var(--text-muted);margin-top:4px;line-height:1.4;">'
+      +     (isEmpty ? '<em style="color:#f59e0b;">Profil kosong</em>' : escHtml(topicsPreview || '—'))
+      +   '</div>'
+      + '</div>';
+  }).join('');
+  // Kartu "Tambah Profil Baru"
+  cardsEl.innerHTML = cards
+    + '<div class="rf-cg-profile-add" id="rf-cg-profile-add" '
+    +   'style="border:2px dashed var(--border);border-radius:10px;padding:10px 12px;cursor:pointer;'
+    +   'min-width:160px;max-width:220px;display:flex;align-items:center;justify-content:center;'
+    +   'font-size:13px;color:var(--text-muted);' + (masterOn ? '' : 'opacity:.5;cursor:not-allowed;') + '">'
+    +   '➕ Tambah Profil Baru</div>';
+
+  // Status Search Lock
+  const activeProfile = topicProfiles.profiles.find(p => p.id === activeId) || null;
+  const hasTopics = activeProfile && Array.isArray(activeProfile.topics) && activeProfile.topics.length > 0;
+  if (slStatusEl) {
+    if (!masterOn) slStatusEl.textContent = 'Nonaktif (master OFF)';
+    else if (!activeProfile) slStatusEl.textContent = 'Nonaktif (tidak ada profil aktif)';
+    else if (!hasTopics) slStatusEl.textContent = 'Nonaktif (profil aktif tanpa topik)';
+    else slStatusEl.textContent = 'AKTIF — query di luar topik → Kunci Pencarian';
+  }
+
+  // Bind kartu profil (klik = ganti profil aktif)
+  cardsEl.querySelectorAll('.rf-cg-profile-card').forEach(card => {
+    card.addEventListener('click', async () => {
+      if (!masterOn) { toast('Nyalakan master Pelindung Konten dulu'); return; }
+      const pid = card.dataset.profileId;
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_SET_ACTIVE_PROFILE', profileId: pid });
+        if (res?.ok) {
+          // Set profil yang sedang diedit ke profil yang baru dipilih
+          _cgEditingProfileId = pid;
+          await loadProfileIntoEditor(pid);
+          await renderPelindungKontenProfiles();
+          toast('Profil aktif diganti');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+  });
+  // Bind tombol "Tambah Profil Baru"
+  const addBtn = document.getElementById('rf-cg-profile-add');
+  if (addBtn) addBtn.addEventListener('click', async () => {
+    if (!masterOn) { toast('Nyalakan master Pelindung Konten dulu'); return; }
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'CG_ADD_TOPIC_PROFILE', profile: { name: 'Profil Baru', emoji: '👤', topics: [], channels: [], strictWatch: false } });
+      if (res?.ok) {
+        _cgEditingProfileId = res.newProfileId;
+        await loadProfileIntoEditor(res.newProfileId);
+        await renderPelindungKontenProfiles();
+        toast('Profil baru ditambahkan — isi topik lalu Simpan');
+      } else {
+        toast('Gagal: ' + (res?.error || 'unknown'));
+      }
+    } catch (e) { toast('Error: ' + e.message); }
+  });
+
+  // Default: kalau belum ada editor yang dipilih, pakai profil aktif (atau profil pertama).
+  if (!_cgEditingProfileId) {
+    _cgEditingProfileId = activeId || (topicProfiles.profiles[0] && topicProfiles.profiles[0].id) || null;
+  }
+  await loadProfileIntoEditor(_cgEditingProfileId);
+  bindProfileEditorEvents();
+}
+
+// Muat profil ke editor (input nama/emoji, chip topik/channel, radio strictWatch).
+async function loadProfileIntoEditor(profileId) {
+  _cgEditingProfileId = profileId;
+  let topicProfiles = null;
+  try {
+    const res = await browser.runtime.sendMessage({ type: 'CG_GET_TOPIC_PROFILES' });
+    if (res?.ok && res.topicProfiles) topicProfiles = res.topicProfiles;
+  } catch (e) {}
+  if (!topicProfiles || !Array.isArray(topicProfiles.profiles)) return;
+  const p = topicProfiles.profiles.find(x => x.id === profileId) || null;
+
+  const titleEl = document.getElementById('rf-cg-edit-title');
+  const nameEl = document.getElementById('rf-cg-edit-name');
+  const emojiEl = document.getElementById('rf-cg-edit-emoji');
+  const topicListEl = document.getElementById('rf-cg-edit-topic-list');
+  const channelListEl = document.getElementById('rf-cg-edit-channel-list');
+  const deleteBtn = document.getElementById('rf-cg-edit-delete');
+  const msgEl = document.getElementById('rf-cg-edit-msg');
+
+  if (!p) {
+    if (titleEl) titleEl.textContent = '—';
+    if (nameEl) nameEl.value = '';
+    if (emojiEl) emojiEl.value = '';
+    if (topicListEl) topicListEl.innerHTML = '<em style="color:var(--text-muted);font-size:11px;">Pilih/klik profil di atas untuk mengedit.</em>';
+    if (channelListEl) channelListEl.innerHTML = '';
+    if (deleteBtn) deleteBtn.disabled = true;
+    _cgEditingTopics = [];
+    _cgEditingChannels = [];
+    return;
+  }
+
+  if (titleEl) titleEl.textContent = (p.emoji || '👤') + ' ' + (p.name || 'Profil');
+  if (nameEl) nameEl.value = p.name || '';
+  if (emojiEl) emojiEl.value = p.emoji || '';
+  _cgEditingTopics = Array.isArray(p.topics) ? [...p.topics] : [];
+  _cgEditingChannels = Array.isArray(p.channels) ? [...p.channels] : [];
+  renderTopicChips();
+  renderChannelChips();
+
+  // Radio strictWatch
+  const radios = document.querySelectorAll('input[name="rf-cg-edit-strict"]');
+  radios.forEach(r => {
+    r.checked = (r.value === 'true') ? (p.strictWatch === true) : (p.strictWatch !== true);
+  });
+
+  // Disable delete jika profil aktif atau hanya 1 profil tersisa.
+  const activeId = topicProfiles.activeProfileId;
+  if (deleteBtn) {
+    const isActive = p.id === activeId;
+    const onlyOne = topicProfiles.profiles.length <= 1;
+    deleteBtn.disabled = isActive || onlyOne;
+    deleteBtn.title = isActive ? 'Profil sedang aktif — pindah ke profil lain dulu sebelum hapus'
+                    : onlyOne ? 'Minimal 1 profil harus tersisa' : '';
+  }
+  if (msgEl) msgEl.textContent = '';
+}
+
+function renderTopicChips() {
+  const el = document.getElementById('rf-cg-edit-topic-list');
+  if (!el) return;
+  if (_cgEditingTopics.length === 0) {
+    el.innerHTML = '<em style="color:var(--text-muted);font-size:11px;">Belum ada topik.</em>';
+    return;
+  }
+  el.innerHTML = _cgEditingTopics.map((t, i) =>
+    '<span style="display:inline-flex;align-items:center;gap:4px;background:var(--primary-soft);color:var(--primary);padding:3px 8px;border-radius:12px;font-size:11px;">'
+    + escHtml(t)
+    + '<button data-topic-idx="' + i + '" class="rf-cg-chip-del" style="background:none;border:none;color:inherit;cursor:pointer;font-size:13px;line-height:1;">✕</button>'
+    + '</span>'
+  ).join('');
+  el.querySelectorAll('.rf-cg-chip-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.topicIdx, 10);
+      if (!isNaN(idx)) _cgEditingTopics.splice(idx, 1);
+      renderTopicChips();
+    });
+  });
+}
+
+function renderChannelChips() {
+  const el = document.getElementById('rf-cg-edit-channel-list');
+  if (!el) return;
+  if (_cgEditingChannels.length === 0) {
+    el.innerHTML = '<em style="color:var(--text-muted);font-size:11px;">Belum ada channel whitelist.</em>';
+    return;
+  }
+  el.innerHTML = _cgEditingChannels.map((c, i) =>
+    '<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(59,130,246,0.15);color:#3b82f6;padding:3px 8px;border-radius:12px;font-size:11px;">'
+    + escHtml(c)
+    + '<button data-channel-idx="' + i + '" class="rf-cg-chip-del" style="background:none;border:none;color:inherit;cursor:pointer;font-size:13px;line-height:1;">✕</button>'
+    + '</span>'
+  ).join('');
+  el.querySelectorAll('.rf-cg-chip-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.channelIdx, 10);
+      if (!isNaN(idx)) _cgEditingChannels.splice(idx, 1);
+      renderChannelChips();
+    });
+  });
+}
+
+// Bind event untuk editor (tambah topik, tambah channel, simpan, hapus, tambah baru).
+// Dipanggil sekali per renderPelindungKontenProfiles; guard pakai dataset flag anti-duplikat.
+function bindProfileEditorEvents() {
+  const editorRoot = document.querySelector('.rf-section#rf-cg-section, .rf-section');
+  // Tambah topik
+  const topicAddBtn = document.getElementById('rf-cg-edit-topic-add');
+  const topicInput = document.getElementById('rf-cg-edit-topic-input');
+  if (topicAddBtn && topicInput && !topicAddBtn.dataset.rfCgBound) {
+    topicAddBtn.dataset.rfCgBound = '1';
+    topicAddBtn.addEventListener('click', () => {
+      const v = (topicInput.value || '').trim();
+      if (!v) return;
+      if (_cgEditingTopics.indexOf(v) < 0) _cgEditingTopics.push(v);
+      topicInput.value = '';
+      renderTopicChips();
+    });
+    topicInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); topicAddBtn.click(); }
+    });
+  }
+  // Tambah channel
+  const chanAddBtn = document.getElementById('rf-cg-edit-channel-add');
+  const chanInput = document.getElementById('rf-cg-edit-channel-input');
+  if (chanAddBtn && chanInput && !chanAddBtn.dataset.rfCgBound) {
+    chanAddBtn.dataset.rfCgBound = '1';
+    chanAddBtn.addEventListener('click', () => {
+      const v = (chanInput.value || '').trim();
+      if (!v) return;
+      if (_cgEditingChannels.indexOf(v) < 0) _cgEditingChannels.push(v);
+      chanInput.value = '';
+      renderChannelChips();
+    });
+    chanInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); chanAddBtn.click(); }
+    });
+  }
+  // Simpan
+  const saveBtn = document.getElementById('rf-cg-edit-save');
+  if (saveBtn && !saveBtn.dataset.rfCgBound) {
+    saveBtn.dataset.rfCgBound = '1';
+    saveBtn.addEventListener('click', async () => {
+      if (!_cgEditingProfileId) { toast('Pilih profil dulu'); return; }
+      const name = (document.getElementById('rf-cg-edit-name')?.value || '').trim();
+      const emoji = (document.getElementById('rf-cg-edit-emoji')?.value || '').trim() || '👤';
+      const strictRadio = document.querySelector('input[name="rf-cg-edit-strict"]:checked');
+      const strictWatch = strictRadio ? strictRadio.value === 'true' : false;
+      if (!name) { toast('Nama profil tidak boleh kosong'); return; }
+      try {
+        const res = await browser.runtime.sendMessage({
+          type: 'CG_SAVE_TOPIC_PROFILE',
+          profileId: _cgEditingProfileId,
+          profile: { name, emoji, topics: _cgEditingTopics, channels: _cgEditingChannels, strictWatch }
+        });
+        if (res?.ok) {
+          toast('Profil disimpan');
+          await renderPelindungKontenProfiles();
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+  }
+  // Hapus
+  const delBtn = document.getElementById('rf-cg-edit-delete');
+  if (delBtn && !delBtn.dataset.rfCgBound) {
+    delBtn.dataset.rfCgBound = '1';
+    delBtn.addEventListener('click', async () => {
+      if (!_cgEditingProfileId) return;
+      if (delBtn.disabled) return;
+      if (!confirm('Hapus profil ini? Topik & channel whitelist akan hilang.')) return;
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_DELETE_TOPIC_PROFILE', profileId: _cgEditingProfileId });
+        if (res?.ok) {
+          _cgEditingProfileId = null;
+          toast('Profil dihapus');
+          await renderPelindungKontenProfiles();
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+  }
+  // Tambah profil baru
+  const newBtn = document.getElementById('rf-cg-edit-addnew');
+  if (newBtn && !newBtn.dataset.rfCgBound) {
+    newBtn.dataset.rfCgBound = '1';
+    newBtn.addEventListener('click', async () => {
+      try {
+        const res = await browser.runtime.sendMessage({ type: 'CG_ADD_TOPIC_PROFILE', profile: { name: 'Profil Baru', emoji: '👤', topics: [], channels: [], strictWatch: false } });
+        if (res?.ok) {
+          _cgEditingProfileId = res.newProfileId;
+          await loadProfileIntoEditor(res.newProfileId);
+          await renderPelindungKontenProfiles();
+          toast('Profil baru ditambahkan — isi topik lalu Simpan');
+        } else {
+          toast('Gagal: ' + (res?.error || 'unknown'));
+        }
+      } catch (e) { toast('Error: ' + e.message); }
+    });
+  }
+}
+
+// Helper escape HTML (lokal; settings.js tidak punya escHtml global sebelumnya)
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
 // ===== Content Guardian: Render User Blocklist =====
 async function renderUserBlocklist() {
   const listEl = document.getElementById('rf-cg-bl-list');
@@ -1871,16 +1946,19 @@ async function initSidebarSyncRedirect() {
     if (!btn) return;
     btn.addEventListener('click', async () => {
       try {
-        // Chrome MV3: pakai openSidebar() dari sidebar-compat.js (handle Firefox + Chrome).
-        const result = await openSidebar();
-        if (!result.ok) {
-          alert('Sidebar tidak didukung di browser ini. Buka sidebar RecallFox manual dari toolbar.');
+        // Buka sidebar RecallFox (Firefox-specific API)
+        if (browser.sidebarAction && browser.sidebarAction.open) {
+          await browser.sidebarAction.open();
+        } else if (browser.sidebar && browser.sidebar.open) {
+          await browser.sidebar.open();
+        } else {
+          alert('Sidebar tidak didukung di browser ini. Buka sidebar RecallFox manual dari toolbar Firefox.');
           return;
         }
         // Tampilkan toast pengingat
         toast('🦊 Buka tab "Alat" → "Sync Cloud" di sidebar');
       } catch (e) {
-        alert('Gagal membuka sidebar: ' + e.message + '\n\nBuka sidebar RecallFox manual dari toolbar, lalu pilih tab Alat → Sync Cloud.');
+        alert('Gagal membuka sidebar: ' + e.message + '\n\nBuka sidebar RecallFox manual dari toolbar Firefox, lalu pilih tab Alat → Sync Cloud.');
       }
     });
   } catch (e) {
@@ -2006,7 +2084,7 @@ function showLinkPackPreviewModal(pack, opts) {
     if (it.type === 'link') {
       detail = `<span class="rf-linkpack-item-url">${escapeHtml(it.url)}</span>`;
     } else if (it.type === 'prompt' || it.type === 'context' || it.type === 'note' || it.type === 'snapshot') {
-      // Tampilkan preview body (80 char pertama)
+      // Tampilkan preview body (60 char pertama)
       const bodyPreview = (it.body || '').slice(0, 80).replace(/\n/g, ' ');
       detail = `<span class="rf-linkpack-item-body">${escapeHtml(bodyPreview)}${(it.body || '').length > 80 ? '…' : ''}</span>`;
       // Tampilkan contextPurpose kalau ada
@@ -2086,39 +2164,13 @@ function showLinkPackPreviewModal(pack, opts) {
       if (tc.note) parts.push(`${tc.note} catatan`);
       if (tc.snapshot) parts.push(`${tc.snapshot} snapshot`);
       const summary = parts.join(', ') || result.itemCount + ' item';
-      showToast('✓ Paket "' + pack.name + '" berhasil diimpor (' + summary + ').', true);
+      toast('✓ Paket "' + pack.name + '" berhasil diimpor (' + summary + ').');
       // Reload vault data supaya statistik update
       try { currentVault = await getVault(); } catch (e) {}
     } else {
-      showToast('⚠ Gagal import: ' + (result.error || 'unknown'), false);
+      toast('⚠ Gagal import: ' + (result.error || 'unknown'));
       if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = importLabel; }
       if (cancelBtn) cancelBtn.disabled = false;
     }
   });
-}
-
-// Helper: escape HTML supaya safe render — reuse escapeHtml() yang sudah ada di file ini
-// (defined at line ~1613). Tidak perlu redefine.
-
-// Helper: toast notifikasi — pakai toast() yang sudah ada di settings.js (line ~1619).
-// Wrapper showToast(msg, isOk) supaya bisa set warna berdasarkan success/error.
-function showToast(msg, isOk) {
-  // Pakai toast() bawaan kalau ada
-  if (typeof toast === 'function') {
-    toast(msg);
-    return;
-  }
-  // Fallback: buat element toast temporary
-  let t = document.getElementById('rf-linkpack-toast');
-  if (!t) {
-    t = document.createElement('div');
-    t.id = 'rf-linkpack-toast';
-    t.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1c1917;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:100000;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:90vw;';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.style.background = isOk === false ? '#b91c1c' : '#0f766e';
-  t.style.display = 'block';
-  clearTimeout(window._rfLinkPackToastTimer);
-  window._rfLinkPackToastTimer = setTimeout(() => { t.style.display = 'none'; }, 4000);
 }

@@ -303,24 +303,6 @@
     if (e.key === 'Escape') {
       hideButton();
     }
-    // Alt+Shift+A = send selected text to AI (keyboard fallback)
-    if (e.altKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
-      e.preventDefault();
-      e.stopPropagation();
-      // Try live selection first, then cached
-      let text = '';
-      try {
-        const live = window.getSelection().toString().trim();
-        if (live.length >= 3) text = live;
-      } catch (e) {}
-      if (!text && cachedSelection.text && Date.now() - cachedSelection.ts < 30000) {
-        text = cachedSelection.text;
-      }
-      if (text) {
-        console.log('[RecallFox] Alt+Shift+A → sending to AI:', text.slice(0, 80));
-        sendToAI(text);
-      }
-    }
   });
 
   console.log('[RecallFox] selection-ai.js v0.8.7 loaded');

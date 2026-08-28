@@ -203,7 +203,7 @@ Test setiap action di popout sidebar untuk pastikan network fix tidak break logi
 5. Cek console (F12) untuk log `[RecallFox]` messages
 
 ### Chrome
-1. Download `recallfox-chrome-v3.20.34-dev.zip`
+1. Download `recallfox-firefox-v3.20.34-dev.zip`
 2. Extract → `chrome://extensions` → enable Developer mode → Load unpacked
 3. Buka halaman web → klik tombol "rf" floater → popout sidebar muncul
 4. Klik "💬 Perintah" → ketik perintah → eksekusi
