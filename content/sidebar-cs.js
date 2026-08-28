@@ -16,6 +16,7 @@
   const FLOATER_ID = 'recallfox-sidebar-floater-pair';
   const STORAGE_KEY = 'recallfox_sidebar_in_page_state';
   const FLOATER_POS_KEY = 'recallfox_popout_floater_pos';
+  const FLOATER_EDGE = 48;  // v3.21.24: threshold mentok pinggir viewport (kiri/kanan/atas/bawah)
   const DEFAULT_WIDTH = 280;
   const MIN_WIDTH = 280;
   const MAX_WIDTH = 600;
@@ -89,8 +90,58 @@
     } catch (e) {}
     return null;
   }
-  function saveFloaterPos(x, y) {
-    try { localStorage.setItem(FLOATER_POS_KEY, JSON.stringify({ x, y })); } catch (e) {}
+  function saveFloaterPos(x, y, orient) {
+    try {
+      // v3.21.24: persist orient supaya reload tetap orient terakhir.
+      // orient opsional — kalau undefined, baca dari current state floaterPair.
+      const o = orient || (floaterPair && floaterPair.dataset.orient) || 'horizontal';
+      localStorage.setItem(FLOATER_POS_KEY, JSON.stringify({ x, y, orient: o }));
+    } catch (e) {}
+  }
+
+  // v3.21.24: computeOrientation — tentukan orientasi berdasarkan posisi floater
+  // relatif ke viewport. Dipanggil saat drop (pointerup), bukan live saat drag,
+  // supaya tidak berkedip di pojok.
+  //
+  // Aturan (konfirmasi user):
+  // - x < FLOATER_EDGE atau x > vw - FLOATER_EDGE - pw  → vertical (kiri/kanan mentok)
+  // - y < FLOATER_EDGE atau y > vh - FLOATER_EDGE - ph  → horizontal (atas/bawah mentok)
+  // - Tengah (tidak mentok mana pun) → horizontal (default)
+  // - Pojok (kiri/kanan + atas/bawah bareng) → vertikal menang (biar tidak berkedip)
+  //
+  // Parameter:
+  //   x, y — posisi floater (left, top dalam pixel)
+  //   vw, vh — viewport width/height
+  //   pw, ph — floater width/height (tergantung orient saat ini, approx)
+  // Return: 'horizontal' atau 'vertical'
+  function computeOrientation(x, y, vw, vh, pw, ph) {
+    const edge = FLOATER_EDGE;
+    const atLeft   = x < edge;
+    const atRight  = x > vw - edge - pw;
+    const atTop    = y < edge;
+    const atBottom = y > vh - edge - ph;
+    const horizontalEdge = atTop || atBottom;  // mentok atas/bawah
+    const verticalEdge   = atLeft || atRight;  // mentok kiri/kanan
+    // Pojok (kedua sumbu mentok) → vertikal menang
+    if (verticalEdge && horizontalEdge) return 'vertical';
+    // Hanya kiri/kanan yang mentok → vertikal
+    if (verticalEdge) return 'vertical';
+    // Hanya atas/bawah yang mentok, ATAU tengah → horizontal (default)
+    return 'horizontal';
+  }
+
+  // v3.21.24: applyOrientation — set flex-direction + adjust ukuran container.
+  // Horizontal: row, lebar 4*36+gap = ~170px, tinggi 36px.
+  // Vertical:   column, lebar 36px, tinggi 4*36+gap = ~170px.
+  function applyOrientation(orient) {
+    if (!floaterPair) return;
+    const o = (orient === 'vertical') ? 'vertical' : 'horizontal';
+    floaterPair.dataset.orient = o;
+    if (o === 'vertical') {
+      floaterPair.style.flexDirection = 'column';
+    } else {
+      floaterPair.style.flexDirection = 'row';
+    }
   }
 
   // ===== Mount host + iframe + resize + pin =====
@@ -253,14 +304,23 @@
     floaterPair.appendChild(noteBtn);
     floaterPair.appendChild(tapeBtn);
 
-    // Restore position — 4 buttons need ~170px width
+    // Restore position — 4 buttons need ~170px width (horizontal) / 170px height (vertical)
     const savedPos = loadFloaterPos();
     if (savedPos) {
-      floaterPair.style.left = Math.max(0, Math.min(window.innerWidth - 170, savedPos.x)) + 'px';
-      floaterPair.style.top = Math.max(0, Math.min(window.innerHeight - 36, savedPos.y)) + 'px';
+      // v3.21.24: Apply orient yang di-save dulu sebelum set posisi,
+      // supaya getBoundingClientRect() di onUp baca ukuran yang benar.
+      const initialOrient = savedPos.orient === 'vertical' ? 'vertical' : 'horizontal';
+      applyOrientation(initialOrient);
+      // Clamp posisi supaya tidak keluar viewport — pakai ukuran sesuai orient
+      const isV = initialOrient === 'vertical';
+      const pw = isV ? 44 : 170;  // 36 + 8 padding
+      const ph = isV ? 170 : 44;
+      floaterPair.style.left = Math.max(0, Math.min(window.innerWidth - pw, savedPos.x)) + 'px';
+      floaterPair.style.top  = Math.max(0, Math.min(window.innerHeight - ph, savedPos.y)) + 'px';
     } else {
       floaterPair.style.bottom = '24px';
       floaterPair.style.right = '24px';
+      applyOrientation('horizontal');  // default
     }
 
     // ===== Drag logic (pair container, bukan per-button) =====
@@ -309,9 +369,21 @@
         try { floaterPair.releasePointerCapture(e.pointerId); } catch (err) {}
       }
       if (dragState.moved) {
-        // Drag — save position
+        // v3.21.24: Drag selesai — compute orient baru dari posisi drop, apply, persist.
+        // Compute dilakukan SETELAH drag (bukan live saat drag) supaya tidak berkedip.
         const rect = floaterPair.getBoundingClientRect();
-        saveFloaterPos(rect.left, rect.top);
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const newOrient = computeOrientation(rect.left, rect.top, vw, vh, rect.width, rect.height);
+        applyOrientation(newOrient);
+        // Setelah applyOrientation, rect mungkin berubah (horizontal↔vertical).
+        // Re-clamp posisi supaya tidak keluar viewport dengan ukuran baru.
+        const newRect = floaterPair.getBoundingClientRect();
+        let clampedLeft = Math.max(0, Math.min(vw - newRect.width, rect.left));
+        let clampedTop  = Math.max(0, Math.min(vh - newRect.height, rect.top));
+        floaterPair.style.left = clampedLeft + 'px';
+        floaterPair.style.top  = clampedTop + 'px';
+        saveFloaterPos(clampedLeft, clampedTop, newOrient);
       } else {
         // Click — determine which button was clicked (4 buttons)
         if (dragState.target === rfBtn || rfBtn.contains(dragState.target)) {
