@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🔒 Pencarian Dikunci — Pelindung Konten RecallFox</title>
+  <link rel="stylesheet" href="searchlock.css" />
+</head>
+<body>
+  <div class="sl-wrap">
+    <!-- Header -->
+    <header class="sl-header">
+      <div class="sl-logo">🔒</div>
+      <div>
+        <h1>Pencarian Diblokir</h1>
+        <p class="sl-sub" id="sl-sub">Pencarian di luar topik aktif tidak tersedia.</p>
+      </div>
+    </header>
+
+    <!-- Banner: profil aktif -->
+    <div class="sl-banner">
+      <div class="sl-banner-icon">🛡️</div>
+      <div class="sl-banner-text">
+        <strong>Mode Fokus aktif.</strong>
+        Pencarian bebas tidak tersedia saat Mode Fokus aktif.
+        Profil aktif: <strong id="sl-profile-name">—</strong>
+        <br />
+        Pilih salah satu topik di bawah untuk melanjutkan pencarian di
+        <span id="sl-platform-label">platform</span>.
+      </div>
+    </div>
+
+    <!-- Topik cards -->
+    <section class="sl-section">
+      <h2 class="sl-section-title">
+        <span id="sl-section-icon">🔎</span>
+        <span>Pilih topik untuk melanjutkan</span>
+      </h2>
+      <div class="sl-grid" id="sl-grid">
+        <!-- diisi oleh searchlock.js -->
+      </div>
+    </section>
+
+    <!-- Catatan -->
+    <footer class="sl-footer">
+      <div class="sl-meta">
+        <span>RecallFox v3.21.0 · Pelindung Konten</span>
+        <button id="sl-open-settings" class="sl-link-btn">⚙️ Buka Pengaturan</button>
+      </div>
+      <p class="sl-note">
+        ℹ️ Klik kartu = langsung membuka pencarian topik itu di
+        <span id="sl-platform-label-2">platform</span>. Pencarian bebas hanya bisa
+        dibuka dengan mematikan Pelindung Konten dari popup / pengaturan.
+      </p>
+    </footer>
+  </div>
+
+  <script src="searchlock.js"></script>
+</body>
+</html>
