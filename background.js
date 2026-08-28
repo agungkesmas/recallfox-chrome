@@ -2168,7 +2168,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
   if (msg.type === 'CAPTURE_FOR_PREVIEW') {
-// v3.20.14: Optimasi hide/restore — hanya ke tab aktif (bukan broadcast).
+// v3.21.24-fix: Batal klik luar tidak boleh auto-capture.
+// Root cause: klik luar modal resolve(null) tapi handler pakai msg.mode||'entire'
+// → null dianggap 'entire' → auto capture + save ke vault.
+// Fix: guard eksplisit — kalau mode bukan string valid, kembalikan cancelled.
+    // v3.20.14: Optimasi hide/restore — hanya ke tab aktif (bukan broadcast).
     // v3.20.13: hide/restore di-drive dari sini dengan try/finally.
     // Sebelumnya (v3.20.12): RF_RESTORE_AFTER_CAPTURE hanya dikirim di
     // SAVE_CAPTURE_AS / SAVE_CAPTURE_TO_VAULT. Kalau user batal di
@@ -2184,6 +2188,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // tab. Fix: hide/restore hanya ke tab aktif. Sidebar di tab lain
     // tidak ikut tercapture anyway.
     // Delay 200ms → 100ms (cukup untuk DOM update display:none).
+    const _capMode = (typeof msg.mode === 'string' && ['visible','entire','selection'].includes(msg.mode)) ? msg.mode : null;
+    if (!_capMode) {
+      sendResponse({ ok: false, error: 'cancelled' });
+      return;
+    }
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
 
@@ -2194,7 +2203,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     await new Promise(r => setTimeout(r, 100));
 
     try {
-      const result = await captureFullPage(tab, { mode: msg.mode || 'entire' });
+      const result = await captureFullPage(tab, { mode: _capMode });
       sendResponse(result);
     } finally {
       // v3.20.13/14: Restore SELALU — sukses, gagal, atau cancel.
@@ -2229,8 +2238,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
-      // Fallback to direct save (skips modal)
-      sendResponse(await triggerScreenshot(tab, mode || 'entire')); return;
+      // Fallback to direct save (skips modal) — v3.21.24-fix: jangan fallback kalau mode undefined/cancelled
+      // Sebelumnya: mode||'entire' → klik luar modal yang batal ikut fallback capture entire + auto-save vault.
+      if (!mode) {
+        sendResponse({ ok: false, error: 'cancelled' }); return;
+      }
+      sendResponse(await triggerScreenshot(tab, mode)); return;
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {

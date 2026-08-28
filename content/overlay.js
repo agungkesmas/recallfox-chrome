@@ -503,8 +503,18 @@
         if (e.key === 'Escape') close(null);
       };
 
-      modalEl.querySelector('.rf-cap-dialog-close').addEventListener('click', () => close(null));
-      modalEl.addEventListener('click', (e) => { if (e.target === modalEl) close(null); });
+      modalEl.querySelector('.rf-cap-dialog-close').addEventListener('click', (e) => { e.stopPropagation(); close(null); });
+      // v3.21.24-fix: Robust outside-click dismiss — sebelumnya hanya e.target===modalEl
+      // Click sembarang di luar dialog (backdrop) harus batal, tidak auto-capture.
+      // Fix: cek apakah click di luar .rf-cap-dialog (bukan strict ===), stopPropagation
+      // supaya tidak bubble ke document click lain yang bisa trigger triggerScreenshot.
+      modalEl.addEventListener('click', (e) => {
+        const dialog = modalEl.querySelector('.rf-cap-dialog');
+        if (!dialog || !dialog.contains(e.target)) {
+          e.stopPropagation();
+          close(null);
+        }
+      });
       document.addEventListener('keydown', escHandler, true);
 
       modalEl.querySelectorAll('.rf-cap-choice').forEach(btn => {
