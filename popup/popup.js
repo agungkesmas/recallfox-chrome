@@ -6648,17 +6648,30 @@ async function doShot(mode) {
   }
 
   const modeLabel = mode === 'selection' ? 'area' : mode === 'visible' ? 'viewport' : mode === 'entire' ? 'full page' : 'picker';
-  toast('🖼️ Menangkap (' + modeLabel + ')…');
+  // v3.21.25: Toast sebelumnya bilang "Tersimpan" padahal CAPTURE_SCREENSHOT return
+  // {ok: true, deferred: true} yang cuma berarti modal dibuka — belum tentu user
+  // pilih mode. Fix: toast bilang "Modal dibuka" bukan "Tersimpan".
+  toast('🖼️ Modal screenshot dibuka…');
   try {
     const res = await browser.runtime.sendMessage({ type: 'CAPTURE_SCREENSHOT', mode });
     if (res?.ok) {
-      toast('Tersimpan — siap PDF/JPG ✓');
-      if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
+      // Modal berhasil dibuka di tab. User pilih mode di sana → capture + save
+      // terjadi via overlay.js → background. Popup tidak perlu toast "Tersimpan"
+      // karena screenshot belum tentu diambil (user mungkin cancel modal).
+      if (res.deferred) {
+        // Modal defer — tutup popup biar user lihat modal di halaman
+        if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 400);
+      } else {
+        // Direct capture (mis. dari keyboard shortcut yang langsung specify mode)
+        toast('Tersimpan — siap PDF/JPG ✓');
+        if (!document.body.classList.contains('rf-sidebar-body')) setTimeout(() => window.close(), 700);
+      }
     } else {
       const err = res?.error || 'gagal';
       let msg = 'Gagal';
       if (err === 'no_active_tab') msg = 'Tidak ada tab aktif';
       else if (err === 'not_http_page') msg = 'Bukan halaman web';
+      else if (err === 'cannot_show_modal') msg = res?.message || 'Tidak bisa buka modal screenshot di halaman ini';
       else msg = 'Error: ' + String(err).slice(0, 40);
       toast(msg, false);
     }

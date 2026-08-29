@@ -523,11 +523,35 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
     }
   } else if (info.menuItemId === 'rf-screenshot') {
     // Single FireShot-style entry — opens capture modal in active tab
+    // v3.21.25: HAPUS fallback direct save. Sebelumnya kalau sendMessage gagal,
+    // langsung triggerScreenshot(tab, 'entire') → capture + save TANPA modal.
+    // User report: "klik area sembarang (cancel modal), tapi tetep capture
+    // otomatis + save ke vault." Root cause: fallback ini jalan saat content
+    // script belum loaded, bypass modal entirely.
+    // Fix: kalau sendMessage gagal, inject content script lalu retry. Kalau
+    // masih gagal (halaman internal chrome://, about:, PDF), return error —
+    // JANGAN auto-capture.
     try {
       await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
     } catch (e) {
-      console.warn('[RecallFox] overlay not reachable, falling back to direct save:', e.message);
-      await triggerScreenshot(tab, 'entire');
+      console.warn('[RecallFox] overlay not reachable, trying inject+retry:', e.message);
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/overlay.js']
+        });
+        await new Promise(r => setTimeout(r, 300));
+        await browser.tabs.sendMessage(tab.id, { type: 'TRIGGER_CAPTURE_FROM_POPUP' });
+      } catch (e2) {
+        console.warn('[RecallFox] overlay inject failed, cannot show modal:', e2.message);
+        // JANGAN fallback ke direct save — user tidak minta capture tanpa modal.
+        try {
+          await browser.tabs.sendMessage(tab.id, {
+            type: 'SHOW_TOAST',
+            message: 'Tidak bisa buka modal screenshot di halaman ini. Coba di halaman web biasa (http/https).'
+          });
+        } catch (_) {}
+      }
     }
   } else if (info.menuItemId === 'rf-sidebar-in-page') {
     // v3.20.4: Toggle popout sidebar di halaman aktif
@@ -2219,6 +2243,12 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // via overlay.js in the active tab. msg.mode can be 'entire' | 'visible' | 'selection'
     // or undefined (which shows the mode-picker dialog).
     // Guard: only forward string modes; ignore accidental event objects.
+    // v3.21.25: HAPUS fallback direct save. Sebelumnya kalau sendMessage ke tab
+    // gagal, langsung triggerScreenshot(tab, mode || 'entire') → capture + save
+    // TANPA modal. User report: "modal ilang, tapi tetep capture otomatis + save
+    // ke vault." Root cause: fallback ini jalan saat content script belum loaded.
+    // Fix: kalau sendMessage gagal, inject overlay.js lalu retry. Kalau masih
+    // gagal, return error — JANGAN auto-capture tanpa modal.
     const mode = (typeof msg.mode === 'string') ? msg.mode : undefined;
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
@@ -2229,8 +2259,23 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       sendResponse({ ok: true, deferred: true }); return;
     } catch (e) {
-      // Fallback to direct save (skips modal)
-      sendResponse(await triggerScreenshot(tab, mode || 'entire')); return;
+      console.warn('[RecallFox] CAPTURE_SCREENSHOT: overlay not reachable, trying inject+retry:', e.message);
+      try {
+        await browser.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content/overlay.js']
+        });
+        await new Promise(r => setTimeout(r, 300));
+        await browser.tabs.sendMessage(tab.id, {
+          type: 'TRIGGER_CAPTURE_FROM_POPUP',
+          mode: mode
+        });
+        sendResponse({ ok: true, deferred: true }); return;
+      } catch (e2) {
+        console.warn('[RecallFox] CAPTURE_SCREENSHOT: overlay inject failed:', e2.message);
+        // JANGAN fallback ke triggerScreenshot() — user tidak minta capture tanpa modal.
+        sendResponse({ ok: false, error: 'cannot_show_modal', message: 'Tidak bisa buka modal screenshot di halaman ini. Coba di halaman web biasa (http/https).' }); return;
+      }
     }
   }
   if (msg.type === 'GET_SCREENSHOT_BLOB') {
