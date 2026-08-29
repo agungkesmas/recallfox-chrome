@@ -18,8 +18,20 @@ import {
   updateNote,
   deleteNote,
   toggleNotePin,
-  getNoteGroups
+  getNoteGroups,
+  getFileDataUrl
 } from '../lib/storage.js';
+// v3.22.0 (Fase 2): Klasifikasi tipe file (teks + binary Office/gambar) —
+// pure module, lihat lib/file-kinds.js.
+import {
+  detectFileKind,
+  rejectHintFor,
+  kindIcon,
+  formatBytes,
+  FILE_ACCEPT_ATTR,
+  MAX_TEXT_UPLOAD_BYTES,
+  MAX_BINARY_UPLOAD_BYTES
+} from '../lib/file-kinds.js';
 import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
 import { AI_TOOLS, groupByRegion, matchCurrentTool, getEffectiveTools, getVisibleTools } from '../lib/ai-tools.js';
 import { getAllToppings, buildFinalPrompt } from '../lib/toppings.js';
@@ -1028,6 +1040,11 @@ async function vaultBatchCopyTextAction() {
     const T = TYPE[it.type] || { label: it.type };
     const header = '## ' + (it.title || it.type) + ' [' + T.label + ']';
     if (it.type === 'link') return header + '\n' + (it.linkUrl || it.body || '');
+    // v3.22.0 (Fase 2): file binary tidak punya isi teks → sertakan URL cloud.
+    if (it.type === 'file' && it.source && it.source.isBinary) {
+      const url = resolveImageUrl(it);
+      return header + '\n' + (url ? '🔗 ' + url : '(file binary — pakai Unduh dari item)');
+    }
     return header + '\n' + (it.body || '');
   });
   const fullText = parts.join('\n\n---\n\n');
@@ -1175,26 +1192,9 @@ async function copyImageUrlToClipboard(id) {
 
 // v3.20.35-dev: File upload handlers — pakai addItem yang sudah di-import di top-level
 // (TIDAK pakai dynamic import supaya tidak ada masalah circular dependency)
-const FILE_UPLOAD_WHITELIST = {
-  '.md':       { kind: 'md',   mime: 'text/markdown' },
-  '.markdown': { kind: 'md',   mime: 'text/markdown' },
-  '.txt':      { kind: 'txt',  mime: 'text/plain' },
-  '.json':     { kind: 'json', mime: 'application/json' },
-  '.html':     { kind: 'html', mime: 'text/html' },
-  '.htm':      { kind: 'html', mime: 'text/html' },
-  '.csv':      { kind: 'csv',  mime: 'text/csv' },
-  '.yaml':     { kind: 'yaml', mime: 'text/yaml' },
-  '.yml':      { kind: 'yaml', mime: 'text/yaml' }
-};
-const MAX_FILE_UPLOAD_BYTES = 2 * 1024 * 1024;
-
-function detectFileKind(file) {
-  if (!file || !file.name) return null;
-  const dotIdx = file.name.lastIndexOf('.');
-  if (dotIdx < 0) return null;
-  const ext = file.name.slice(dotIdx).toLowerCase();
-  return FILE_UPLOAD_WHITELIST[ext] || null;
-}
+// v3.22.0 (Fase 2): Whitelist & detectFileKind dipindah ke lib/file-kinds.js
+// (pure module, bisa di-test Node) + dukungan binary Office/gambar (10MB).
+// Batas: teks 2MB (MAX_TEXT_UPLOAD_BYTES), binary 10MB (MAX_BINARY_UPLOAD_BYTES).
 
 async function handleDocFileUpload(fileList) {
   if (!fileList || fileList.length === 0) return;
@@ -1206,26 +1206,53 @@ async function handleDocFileUpload(fileList) {
     try {
       const info = detectFileKind(file);
       if (!info) {
-        toast('⚠ ' + file.name + ': format tidak didukung' + progress, false);
+        const hint = rejectHintFor(file);
+        toast('⚠ ' + file.name + ': format tidak didukung' + (hint ? ' — ' + hint : '') + progress, false);
         fail++;
         continue;
       }
-      if (file.size > MAX_FILE_UPLOAD_BYTES) {
-        toast('⚠ ' + file.name + ': terlalu besar (maks 2MB)' + progress, false);
+      const maxBytes = info.binary ? MAX_BINARY_UPLOAD_BYTES : MAX_TEXT_UPLOAD_BYTES;
+      if (file.size > maxBytes) {
+        toast('⚠ ' + file.name + ': terlalu besar (maks ' + (info.binary ? '10MB' : '2MB') + ')' + progress, false);
         fail++;
         continue;
       }
-      const text = await file.text();
-      if (!text || text.length === 0) {
-        toast('⚠ ' + file.name + ': file kosong' + progress, false);
-        fail++;
-        continue;
-      }
-      // addItem sudah di-import di top-level popup.js
-      // v3.20.36-dev: addItem() otomatis trigger directUpsertVaultItem ke Supabase.
-      // Kalau Supabase error (auth/RLS/network), error di-catch di sini + toast jelas.
-      try {
-        await addItem({
+
+      // v3.22.0 (Fase 2): binary → arrayBuffer + blob terpisah (JANGAN
+      // file.text() — decode teks merusak bytes binary secara permanen).
+      // item.body tetap kosong; blob masuk key rf_file_{id} di storage.js.
+      let itemPayload = null, itemOpts = {};
+      if (info.binary) {
+        const buf = await file.arrayBuffer();
+        if (!buf || buf.byteLength === 0) {
+          toast('⚠ ' + file.name + ': file kosong' + progress, false);
+          fail++;
+          continue;
+        }
+        itemPayload = {
+          type: 'file',
+          title: file.name,
+          body: '',
+          tags: ['file', info.kind],
+          source: {
+            kind: info.kind,
+            mime: info.mime,
+            fileName: file.name,
+            size: file.size,
+            isBinary: true,
+            uploadedFrom: 'addon-upload',
+            capturedAt: new Date().toISOString()
+          }
+        };
+        itemOpts = { fileBlob: new Blob([buf], { type: info.mime }) };
+      } else {
+        const text = await file.text();
+        if (!text || text.length === 0) {
+          toast('⚠ ' + file.name + ': file kosong' + progress, false);
+          fail++;
+          continue;
+        }
+        itemPayload = {
           type: 'file',
           title: file.name,
           body: text,
@@ -1238,7 +1265,13 @@ async function handleDocFileUpload(fileList) {
             uploadedFrom: 'addon-upload',
             capturedAt: new Date().toISOString()
           }
-        });
+        };
+      }
+      // addItem sudah di-import di top-level popup.js
+      // v3.20.36-dev: addItem() otomatis trigger directUpsertVaultItem ke Supabase.
+      // Kalau Supabase error (auth/RLS/network), error di-catch di sini + toast jelas.
+      try {
+        await addItem(itemPayload, itemOpts);
       } catch (addItemErr) {
         // addItem gagal — kemungkinan storage.local penuh atau sync error
         console.error('[RecallFox] File upload: addItem gagal:', file.name, addItemErr);
@@ -1282,6 +1315,11 @@ async function handleDocFileUpload(fileList) {
 async function copyFileContentToClipboard(id) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item || item.type !== 'file') { toast('Item file tidak ditemukan', false); return; }
+  // v3.22.0 (Fase 2): binary tidak punya isi teks — arahkan ke Salin Tautan.
+  if (item.source && item.source.isBinary) {
+    toast('File binary tidak punya isi teks — pakai "Salin Tautan"', false);
+    return;
+  }
   if (!item.body) { toast('File kosong', false); return; }
   // _copyTextWithFallback di-defined di bawah (hoisted), aman dipanggil di sini
   const ok = await _copyTextWithFallback(item.body);
@@ -1371,14 +1409,44 @@ async function copyFileUrlToClipboard(id) {
 async function downloadFileItem(id) {
   const item = currentVault.items.find(i => i.id === id);
   if (!item || item.type !== 'file') { toast('Item file tidak ditemukan', false); return; }
-  if (!item.body) { toast('File kosong', false); return; }
+  const isBinary = !!(item.source && item.source.isBinary);
+  let blob = null;
+  if (isBinary) {
+    // v3.22.0 (Fase 2): blob dari key lokal rf_file_{id}, fallback fetch URL cloud.
+    const dataUrl = await getFileDataUrl(item.id);
+    if (dataUrl) {
+      try { blob = await (await fetch(dataUrl)).blob(); } catch (e) {
+        console.warn('[RecallFox] downloadFileItem: decode dataUrl gagal:', e.message);
+      }
+    }
+    if (!blob) {
+      const url = resolveImageUrl(item);
+      if (url) {
+        toast('⏳ Blob lokal tidak ada — mengunduh dari cloud...');
+        try {
+          const res = await fetch(url);
+          if (res.ok) blob = await res.blob();
+          else console.warn('[RecallFox] downloadFileItem: fetch cloud gagal, status', res.status);
+        } catch (e) {
+          console.warn('[RecallFox] downloadFileItem: fetch cloud error:', e.message);
+        }
+      }
+    }
+    if (!blob) {
+      toast('File tidak tersedia (blob lokal & cloud kosong)', false);
+      return;
+    }
+  } else {
+    if (!item.body) { toast('File kosong', false); return; }
+    blob = new Blob([item.body], { type: (item.source && item.source.mime) || 'text/plain' });
+  }
   try {
     const mime = (item.source && item.source.mime) || 'text/plain';
-    const blob = new Blob([item.body], { type: mime });
+    if (isBinary) blob = new Blob([blob], { type: mime });
     const objUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = objUrl;
-    a.download = (item.source && item.source.fileName) || item.title || 'file.txt';
+    a.download = (item.source && item.source.fileName) || item.title || (isBinary ? 'file.bin' : 'file.txt');
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -1386,6 +1454,42 @@ async function downloadFileItem(id) {
     toast('⬇️ ' + a.download + ' di-download');
   } catch (e) {
     toast('Gagal download: ' + e.message, false);
+  }
+}
+
+// v3.22.0 (Fase 2): Pratinjau file binary — PDF & gambar dirender inline di
+// sheet (embed/img), Office tidak bisa dipratinjau browser → arahkan Unduh.
+async function previewFileItem(id) {
+  const item = currentVault.items.find(i => i.id === id);
+  if (!item || item.type !== 'file') { toast('Item file tidak ditemukan', false); return; }
+  const isBinary = !!(item.source && item.source.isBinary);
+  if (!isBinary) { copyFileContentToClipboard(id); return; }
+  const kind = (item.source && item.source.kind) || '';
+  const mime = (item.source && item.source.mime) || '';
+  const title = item.title || 'Pratinjau';
+
+  let srcUrl = await getFileDataUrl(item.id);
+  if (!srcUrl) srcUrl = resolveImageUrl(item);
+  if (!srcUrl) {
+    toast('Pratinjau tidak tersedia (blob lokal belum ada, URL cloud belum siap)', false);
+    return;
+  }
+  if (kind === 'pdf') {
+    openSheet('👁 ' + title, null, b => {
+      b.innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">'
+        + '<button class="btn btn-p" id="pvDl">' + ICONS.download + 'Unduh</button></div>'
+        + '<embed src="' + srcUrl + '" type="application/pdf" style="width:100%;height:70vh;border:none;border-radius:8px">';
+      b.querySelector('#pvDl').addEventListener('click', () => { closeSheet(); downloadFileItem(id); });
+    });
+  } else if (mime.startsWith('image/')) {
+    openSheet('👁 ' + title, null, b => {
+      b.innerHTML = '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">'
+        + '<button class="btn btn-p" id="pvDl">' + ICONS.download + 'Unduh</button></div>'
+        + '<img src="' + srcUrl + '" style="max-width:100%;max-height:70vh;display:block;margin:0 auto;border-radius:8px">';
+      b.querySelector('#pvDl').addEventListener('click', () => { closeSheet(); downloadFileItem(id); });
+    });
+  } else {
+    toast('File Office tidak bisa dipratinjau di browser — gunakan Unduh', false);
   }
 }
 
@@ -2580,7 +2684,7 @@ function showMagicCommandConfirmModal(steps, allItems) {
     const itemPills = (plan.itemIds || []).slice(0, 8).map(id => {
       const it = itemLookup.get(id);
       if (!it) return '';
-      const typeIcon = it.type === 'link' ? '🔗' : it.type === 'prompt' ? '✨' : it.type === 'context' ? '📦' : it.type === 'snapshot' ? '📸' : it.type === 'file' ? '📄' : it.type === 'screenshot' ? '🖼️' : '📄';
+      const typeIcon = it.type === 'link' ? '🔗' : it.type === 'prompt' ? '✨' : it.type === 'context' ? '📦' : it.type === 'snapshot' ? '📸' : it.type === 'file' ? ((it.source && it.source.isBinary) ? (kindIcon(it.source.kind) || '📎') : '📄') : it.type === 'screenshot' ? '🖼️' : '📄';
       return `<span class="rf-magicfolder-item-pill">${typeIcon} ${esc((it.title || 'Untitled').slice(0, 25))}</span>`;
     }).join('');
     const morePill = (plan.itemIds || []).length > 8 ? `<span class="rf-magicfolder-item-pill rf-magicfolder-more">+${plan.itemIds.length - 8} lainnya</span>` : '';
@@ -3455,7 +3559,19 @@ function bindItemClicks() {
           copyFileContentToClipboard(it.id);
         } else if (action === 'inject') {
           // v3.20.47: Sisipkan isi file ke chat AI
-          if (it.body) {
+          // v3.22.0 (Fase 2): binary → kirim URL publik + metadata (AI fetch
+          // sendiri), bukan isi mentah (bytes tidak bisa di-paste sebagai teks).
+          if (it.source && it.source.isBinary) {
+            const url = resolveImageUrl(it);
+            const size = formatBytes(it.source && it.source.size);
+            let meta = '📎 [File: ' + it.title + (size ? ' · ' + size : '') + ']';
+            if (url) {
+              meta += '\n🔗 ' + url + '\n(AI: akses/fetch file via URL di atas kalau perlu isinya)';
+            } else {
+              meta += '\n⚠ URL cloud belum tersedia — gunakan Unduh lalu lampirkan file manual.';
+            }
+            await doInject(meta, it.id);
+          } else if (it.body) {
             await doInject(it.body, it.id);
           } else {
             toast('File kosong', false);
@@ -5390,7 +5506,10 @@ function itemSheet(id) {
       // AI fetch gambar dari URL.
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-url">' + ICONS.copy + '<div>🔗 Salin Tautan<div class="ad">URL public gambar — paste ke AI chat yang tidak support paste gambar</div></div></button>' : '')
       // v3.20.42: Tombol untuk type='file' — standarisasi label (sama seperti tipe lain)
-      + (it.type === 'file' ? '<button class="act" data-a="copy-file-content">' + ICONS.copy + '<div>📋 Salin Konten<div class="ad">Salin isi file (teks) ke clipboard — paste ke AI chat</div></div></button>' : '')
+      // v3.22.0 (Fase 2): binary tidak punya konten teks → tombol Salin Konten
+      // disembunyikan, diganti tombol Pratinjau (PDF/gambar inline di sheet).
+      + (it.type === 'file' && !(it.source && it.source.isBinary) ? '<button class="act" data-a="copy-file-content">' + ICONS.copy + '<div>📋 Salin Konten<div class="ad">Salin isi file (teks) ke clipboard — paste ke AI chat</div></div></button>' : '')
+      + (it.type === 'file' && it.source && it.source.isBinary ? '<button class="act" data-a="file-preview">' + ICONS.image + '<div>👁 Pratinjau<div class="ad">Lihat PDF/gambar di sheet — file Office: gunakan Unduh</div></div></button>' : '')
       + (it.type === 'file' ? '<button class="act" data-a="copy-file-url">' + ICONS.copy + '<div>🔗 Salin Tautan<div class="ad">URL public file — paste ke AI chat, AI bisa fetch isi dari URL</div></div></button>' : '')
       + (it.type === 'file' ? '<button class="act" data-a="download-file">' + ICONS.download + '<div>⬇️ Unduh<div class="ad">Download file ke komputer</div></div></button>' : '')
       // v3.21.4: Opsi baru khusus Bundle — "📋 Salin Link + Keterangan"
@@ -5406,7 +5525,12 @@ function itemSheet(id) {
       if (k === 'primary') {
         closeSheet();
         // v3.20.36-dev: Untuk type='file', primary action = kopi isi file (bukan buka itemSheet lagi)
-        if (it.type === 'file') { copyFileContentToClipboard(it.id); return; }
+        // v3.22.0 (Fase 2): binary → primary action = Unduh (tidak ada isi teks).
+        if (it.type === 'file') {
+          if (it.source && it.source.isBinary) downloadFileItem(it.id);
+          else copyFileContentToClipboard(it.id);
+          return;
+        }
         primaryAction(it.id);
       }
       else if (k === 'attach') { closeSheet(); openAttachModal(it.id); }
@@ -5433,6 +5557,8 @@ function itemSheet(id) {
       // v3.14.9: Handler Salin URL Gambar (untuk AI sites yang tidak support paste gambar)
       else if (k === 'copy-url') { closeSheet(); copyImageUrlToClipboard(it.id); }
       // v3.20.35-dev: Handler untuk type='file' — kopi isi, kopi URL, download
+      // v3.22.0 (Fase 2): + pratinjau binary
+      else if (k === 'file-preview') { closeSheet(); previewFileItem(it.id); }
       else if (k === 'copy-file-content') { closeSheet(); copyFileContentToClipboard(it.id); }
       else if (k === 'copy-file-url') { closeSheet(); copyFileUrlToClipboard(it.id); }
       else if (k === 'download-file') { closeSheet(); downloadFileItem(it.id); }
@@ -6973,7 +7099,7 @@ function addItemMenu() {
       ['📄 Screenshot seluruh halaman', () => doShot('entire')],
       ['📤 Upload gambar (manual)', () => doShot('upload')],   // v3.8.1 Issue #3
       // v3.20.42: Upload file teks pakai modal standar (sama seperti screenshot manual)
-      ['📄 Upload File teks', saveFileUploadSheet],
+      ['📄 Upload File', saveFileUploadSheet],
       ['📝 Catatan', () => { setView('notes'); newNote(); }]
     ];
     b.innerHTML = opts.map((o, i) => '<button class="act" data-i="' + i + '">' + o[0] + '</button>').join('');
@@ -6988,35 +7114,39 @@ function addItemMenu() {
         setTimeout(opt[1], 80);
       }
     }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File teks support .md/.txt/.json/.html/.csv/.yaml (maks 2MB).</div>');
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar (maks 10MB).</div>');
   });
 }
 
 // v3.20.42: Upload File Teks — modal standar (mirror saveScreenshotManualSheet)
+// v3.22.0 (Fase 2): Diperluas jadi "Upload File" — teks (2MB) + binary
+// Office/gambar (10MB) dengan preview per tipe (PDF embed, gambar thumbnail,
+// Office ikon + ukuran).
 // Punya: Judul (opsional), Tag (opsional), area upload (klik/drag&drop), Batal, Simpan
-// Format: .md/.txt/.json/.html/.csv/.yaml (max 2MB)
 function saveFileUploadSheet() {
-  openSheet('📄 Upload File Teks', 'Pilih file teks, atau drag & drop', b => {
+  openSheet('📄 Upload File', 'Pilih file teks, PDF, Office, atau gambar — drag & drop juga bisa', b => {
     b.innerHTML = '<div class="sheet-form">'
       + '<div><label>Judul <span class="field-hint">(opsional — kosongkan untuk pakai filename)</span></label>'
-      +   '<input class="f" id="docT" placeholder="mis. Catatan rapet..."></div>'
+      +   '<input class="f" id="docT" placeholder="mis. Laporan rapat..."></div>'
       + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label>'
       +   '<input class="f" id="docTag" placeholder="catatan, rapat"></div>'
       + '<div id="docDropzone" style="border:2px dashed #c0c0c0;border-radius:8px;padding:24px;text-align:center;color:#666;cursor:pointer;margin:8px 0;transition:all 0.2s">'
       +   '<div style="font-size:32px;margin-bottom:8px">📄</div>'
       +   '<div style="font-weight:600;color:#333">Klik untuk pilih file</div>'
       +   '<div style="font-size:11px;margin-top:4px">atau drag & drop</div>'
-      +   '<div style="font-size:10px;margin-top:4px;color:#999">Format: .md, .txt, .json, .html, .csv, .yaml (max 2MB)</div>'
+      +   '<div style="font-size:10px;margin-top:4px;color:#999">Teks: .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB)<br>Binary: PDF, Word, Excel, PowerPoint, gambar PNG/JPG/WebP (maks 10MB)</div>'
       + '</div>'
-      + '<input type="file" id="docFileInputSheet" accept=".md,.markdown,.txt,.json,.html,.htm,.csv,.yaml,.yml" style="display:none">'
+      + '<input type="file" id="docFileInputSheet" accept="' + FILE_ACCEPT_ATTR + '" style="display:none">'
       + '<div id="docPreview" style="display:none;margin:8px 0">'
       +   '<div style="font-size:11px;color:#666;margin-top:4px" id="docPreviewMeta"></div>'
       +   '<div id="docPreviewText" style="font-size:11px;background:var(--surface-2);padding:8px;border-radius:6px;margin-top:4px;max-height:120px;overflow-y:auto;white-space:pre-wrap;font-family:monospace"></div>'
+      +   '<div id="docPreviewMedia" style="display:none;margin-top:8px"></div>'
       + '</div>'
       + '<div class="btn-row"><button class="btn btn-g" id="docCancel">Batal</button>'
       +   '<button class="btn btn-p" id="docSave" disabled>' + ICONS.check + 'Simpan File</button></div></div>';
 
     let _fileContent = null, _fileName = '', _fileKind = null, _fileMime = 'text/plain';
+    let _fileIsBinary = false, _fileBlob = null, _fileSize = 0;
     const dropzone = b.querySelector('#docDropzone');
     const fileInput = b.querySelector('#docFileInputSheet');
     dropzone.addEventListener('click', () => fileInput.click());
@@ -7027,17 +7157,53 @@ function saveFileUploadSheet() {
 
     async function _handleFile(file) {
       const info = detectFileKind(file);
-      if (!info) { toast('⚠ Format tidak didukung: ' + file.name, false); return; }
-      if (file.size > MAX_FILE_UPLOAD_BYTES) { toast('⚠ File terlalu besar (max 2MB)', false); return; }
-      const text = await file.text();
-      if (!text || text.length === 0) { toast('⚠ File kosong', false); return; }
-      _fileContent = text; _fileName = file.name; _fileKind = info.kind; _fileMime = info.mime;
+      if (!info) {
+        const hint = rejectHintFor(file);
+        toast('⚠ Format tidak didukung: ' + file.name + (hint ? ' — ' + hint : ''), false);
+        return;
+      }
+      const maxBytes = info.binary ? MAX_BINARY_UPLOAD_BYTES : MAX_TEXT_UPLOAD_BYTES;
+      if (file.size > maxBytes) {
+        toast('⚠ File terlalu besar (maks ' + (info.binary ? '10MB' : '2MB') + ')', false);
+        return;
+      }
+      _fileName = file.name; _fileKind = info.kind; _fileMime = info.mime;
+      _fileIsBinary = !!info.binary; _fileSize = file.size;
       const previewMeta = b.querySelector('#docPreviewMeta');
       const previewText = b.querySelector('#docPreviewText');
+      const previewMedia = b.querySelector('#docPreviewMedia');
       const previewBox = b.querySelector('#docPreview');
-      const sizeKb = (file.size / 1024).toFixed(1);
-      previewMeta.textContent = '📎 ' + file.name + ' · ' + sizeKb + ' KB · ' + info.kind;
-      previewText.textContent = text.slice(0, 500) + (text.length > 500 ? '\n... (' + text.length + ' chars total)' : '');
+      const sizeStr = formatBytes(file.size);
+
+      if (_fileIsBinary) {
+        // v3.22.0 (Fase 2): baca arrayBuffer, simpan blob utuh + dataUrl untuk preview
+        const buf = await file.arrayBuffer();
+        if (!buf || buf.byteLength === 0) { toast('⚠ File kosong', false); return; }
+        _fileContent = null;
+        _fileBlob = new Blob([buf], { type: _fileMime });
+        const dataUrl = URL.createObjectURL(_fileBlob);
+        previewMeta.textContent = '📎 ' + file.name + ' · ' + sizeStr + ' · ' + info.kind + ' (binary)';
+        previewText.style.display = 'none';
+        previewMedia.style.display = '';
+        if (info.kind === 'pdf') {
+          previewMedia.innerHTML = '<embed src="' + dataUrl + '" type="application/pdf" style="width:100%;height:200px;border:none;border-radius:6px">';
+        } else if (info.mime.startsWith('image/')) {
+          previewMedia.innerHTML = '<img src="' + dataUrl + '" style="max-width:100%;max-height:200px;display:block;margin:0 auto;border-radius:6px">';
+        } else {
+          previewMedia.innerHTML = '<div style="font-size:12px;padding:10px;background:var(--surface-2);border-radius:6px">' + (kindIcon(info.kind) || '📎') + ' <b>' + file.name + '</b> · ' + sizeStr + '<div style="font-size:10px;color:#999;margin-top:2px">File Office tidak bisa dipratinjau di browser — akan disimpan apa adanya & bisa diunduh.</div></div>';
+        }
+        // bersihkan object URL setelah preview tidak terpakai (biarkan dulu — dipakai img/embed hidup)
+        setTimeout(() => URL.revokeObjectURL(dataUrl), 60000);
+      } else {
+        const text = await file.text();
+        if (!text || text.length === 0) { toast('⚠ File kosong', false); return; }
+        _fileContent = text; _fileBlob = null;
+        previewMeta.textContent = '📎 ' + file.name + ' · ' + sizeStr + ' · ' + info.kind;
+        previewText.style.display = '';
+        previewMedia.style.display = 'none';
+        previewMedia.innerHTML = '';
+        previewText.textContent = text.slice(0, 500) + (text.length > 500 ? '\n... (' + text.length + ' chars total)' : '');
+      }
       previewBox.style.display = '';
       b.querySelector('#docSave').disabled = false;
       const titleEl = b.querySelector('#docT');
@@ -7047,14 +7213,24 @@ function saveFileUploadSheet() {
 
     b.querySelector('#docCancel').addEventListener('click', closeSheet);
     b.querySelector('#docSave').addEventListener('click', async () => {
-      if (!_fileContent) { toast('Pilih file dulu', false); return; }
+      if (!_fileIsBinary && !_fileContent) { toast('Pilih file dulu', false); return; }
+      if (_fileIsBinary && !_fileBlob) { toast('Pilih file dulu', false); return; }
       const title = (b.querySelector('#docT').value || '').trim() || _fileName;
       const tags = (b.querySelector('#docTag').value || '').trim();
       const tagList = tags ? tags.split(',').map(s => s.trim()).filter(Boolean) : ['file', _fileKind];
       const btn = b.querySelector('#docSave');
       btn.textContent = '⏳ Menyimpan...'; btn.disabled = true;
       try {
-        await addItem({ type: 'file', title, body: _fileContent, tags: tagList, source: { kind: _fileKind, mime: _fileMime, fileName: _fileName, size: _fileContent.length, uploadedFrom: 'addon-upload', capturedAt: new Date().toISOString() } });
+        const payload = {
+          type: 'file', title, tags: tagList,
+          body: _fileIsBinary ? '' : _fileContent,
+          source: {
+            kind: _fileKind, mime: _fileMime, fileName: _fileName, size: _fileSize,
+            isBinary: _fileIsBinary, uploadedFrom: 'addon-upload', capturedAt: new Date().toISOString()
+          }
+        };
+        const opts = _fileIsBinary ? { fileBlob: _fileBlob } : {};
+        await addItem(payload, opts);
         let cloudOk = true;
         try {
           const errData = await browser.storage.local.get('recallfox_last_sync_error');
