@@ -1,5 +1,14 @@
 // content/sidebar-cs.js — RecallFox Popout Sidebar (iframe approach)
 //
+// v3.22.3 — fix klik floater:
+// 1. 1x klik rfBtn (🦊) = toggle popout DOM sidebar LANGSUNG (tanpa relay
+//    background). Root cause bug: single click dulu kirim RF_OPEN_REAL_SIDEBAR,
+//    chrome.sidePanel.open() sering ditolak (butuh user gesture) dan gagal-nya
+//    resolve sehingga fallback toggle() tidak pernah jalan → klik terasa mati.
+// 2. Native click listener sebagai fallback jalur pointerup (Firefox safety net)
+//    + dedupe 400ms supaya tidak eksekusi ganda.
+// 3. note/tape: 1 message primer (RF_OPEN_NOTE/TAPE) + fallback berbasis respons.
+//
 // v3.20.7 (Firefox) — rewrite berdasarkan user feedback:
 // 1. "rf" dan "sc" berdampingan sebagai pair container
 // 2. Close pakai tombol sidebarInPageBtn di header iframe (postMessage, bukan tabs.sendMessage)
@@ -244,7 +253,7 @@
     rfBtn.setAttribute('role', 'button');
     rfBtn.setAttribute('tabindex', '0');
     rfBtn.innerHTML = '🦊';
-    rfBtn.title = '1x klik: sidebar asli · 2x klik: popout sidebar';
+    rfBtn.title = '1x klik: buka/tutup popout sidebar';
     rfBtn.style.cssText = [
       'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
       'background:#6d3df5', 'color:#fff', 'cursor:pointer',
@@ -325,10 +334,52 @@
 
     // ===== Drag logic (pair container, bukan per-button) =====
     let dragState = { dragging: false, startX: 0, startY: 0, origX: 0, origY: 0, moved: false, target: null };
-    // v3.21.26: Timer untuk detect single-click vs double-click di rfBtn.
-    // Single click (250ms no second click) → buka sidebar asli browser.
-    // Double click (click kedua dalam 250ms) → toggle popout DOM sidebar.
-    let rfClickTimer = null;
+
+    // v3.22.3: Aksi klik terpusat + dedupe 400ms.
+    // ROOT CAUSE bug klik 🦊 (v3.21.26): single click me-relay RF_OPEN_REAL_SIDEBAR
+    // ke background → chrome.sidePanel.open() butuh user gesture dan sering ditolak
+    // saat dipanggil dari handler pesan; kegagalannya RESOLVE (bukan reject) sehingga
+    // .catch() fallback toggle() tidak pernah jalan → 1x klik terasa mati.
+    // FIX: 1x klik rfBtn = toggle popout DOM sidebar LANGSUNG di sini, tanpa
+    // background sama sekali. Sidebar asli browser tetap bisa dibuka via icon toolbar.
+    //
+    // Dedupe: aksi bisa datang dari 2 jalur (pointerup path + native click fallback
+    // untuk Firefox). Guard 400ms mencegah eksekusi ganda & anti-flicker double-click.
+    let lastAction = { name: null, ts: 0 };
+    function performAction(name) {
+      const now = Date.now();
+      if (lastAction.name === name && now - lastAction.ts < 400) return;
+      lastAction = { name, ts: now };
+      if (name === 'rf') toggle();
+      else if (name === 'sc') triggerScreenshot();
+      else if (name === 'note') openNote();
+      else if (name === 'tape') openTape();
+    }
+
+    // v3.22.3: Buka RecallNote — 1 message primer + fallback berbasis respons.
+    // Background RF_OPEN_NOTE sudah handle inject + retry notes-cs.js.
+    // Kalau respons tidak jelas (channel tanpa Promise di Firefox / ok:false /
+    // gagal kirim), barulah fallback RF_FORWARD_TO_ACTIVE_TAB + CustomEvent.
+    function openNote() {
+      browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).then((res) => {
+        if (res && res.ok) return;
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
+      }).catch(() => {
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
+      });
+    }
+    function openTape() {
+      browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).then((res) => {
+        if (res && res.ok) return;
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-tape')); }catch(e){}
+      }).catch(() => {
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-tape')); }catch(e){}
+      });
+    }
 
     function onDown(e) {
       if (e.button !== undefined && e.button !== 0) return;
@@ -390,50 +441,23 @@
         saveFloaterPos(clampedLeft, clampedTop, newOrient);
       } else {
         // Click — determine which button was clicked (4 buttons)
+        // v3.22.3: 1x klik rfBtn = toggle popout DOM sidebar langsung (performAction).
         if (dragState.target === rfBtn || rfBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
-          // v3.21.26: 1x click = buka sidebar asli browser (Firefox sidebarAction
-          // / Chrome sidePanel). 2x click (double click) = toggle popout DOM
-          // sidebar (sidebar-cs.js in-page sidebar).
-          // Deteksi pakai timer 250ms — kalau click kedua datang dalam window itu,
-          // cancel single-click action, jalankan double-click action.
-          if (rfClickTimer) {
-            // Click kedua datang sebelum timer fire → double click
-            clearTimeout(rfClickTimer);
-            rfClickTimer = null;
-            toggle();  // toggle popout DOM sidebar (in-page)
-          } else {
-            // Click pertama — start timer. Kalau tidak ada click kedua dalam 250ms,
-            // jalankan single-click action (buka sidebar asli browser).
-            rfClickTimer = setTimeout(() => {
-              rfClickTimer = null;
-              browser.runtime.sendMessage({ type: 'RF_OPEN_REAL_SIDEBAR' }).catch((err) => {
-                console.warn('[RecallFox] RF_OPEN_REAL_SIDEBAR failed:', err.message);
-                // Fallback: kalau background tidak bisa buka sidebar asli (mis.
-                // API tidak available), toggle popout DOM sidebar sebagai fallback.
-                toggle();
-              });
-            }, 250);
-          }
+          performAction('rf');
         } else if (dragState.target === scBtn || scBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
-          triggerScreenshot();
+          performAction('sc');
         } else if (dragState.target === noteBtn || noteBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
-          // Buka catatan mengambang di tab aktif (via background forward)
-          browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(()=>{});
-          browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
-          // Fallback: coba langsung show di tab ini (jika notes-cs sudah loaded di tab yang sama)
-          try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
+          performAction('note');
         } else if (dragState.target === tapeBtn || tapeBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
-          browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).catch(()=>{});
-          browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{});
-          try{ window.dispatchEvent(new CustomEvent('rf-open-tape')); }catch(e){}
+          performAction('tape');
         }
       }
     }
@@ -454,26 +478,28 @@
     document.addEventListener('touchmove', onMove, { passive: false });
     document.addEventListener('touchend', onUp);
 
-    // Keyboard
+    // Keyboard — v3.22.3: Enter/Space = aksi sama dengan 1x klik mouse.
     rfBtn.addEventListener('keydown', (e) => {
-      // v3.21.26: Enter/Space = single click action (buka sidebar asli browser).
-      // Keyboard user tidak bisa double-press dengan mudah, jadi default ke
-      // single-click behavior. Untuk popout DOM sidebar, user bisa pakai
-      // mouse double-click atau keyboard shortcut Alt+Shift+4.
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        browser.runtime.sendMessage({ type: 'RF_OPEN_REAL_SIDEBAR' }).catch(() => { toggle(); });
-      }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); performAction('rf'); }
     });
     scBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerScreenshot(); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); performAction('sc'); }
     });
     noteBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(()=>{}); browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{}); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); performAction('note'); }
     });
     tapeBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).catch(()=>{}); browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{}); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); performAction('tape'); }
     });
+
+    // v3.22.3: Native click fallback (Firefox safety net).
+    // Kalau jalur pointerup hilang/retarget (quirk pointer capture di Firefox),
+    // native click tetap fire di tombol → aksi tetap jalan. Dedupe 400ms di
+    // performAction mencegah eksekusi ganda saat kedua jalur fire berurutan.
+    rfBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('rf'); });
+    scBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('sc'); });
+    noteBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('note'); });
+    tapeBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('tape'); });
 
     document.documentElement.appendChild(floaterPair);
   }

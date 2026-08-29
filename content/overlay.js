@@ -105,143 +105,19 @@
   }
 
   // ===== Floating dock (FAB + hint label) =====
+  // v3.22.3: Dock FAB "sc" DIHAPUS (basmi floater berlebih).
+  // Total floating button yang benar = 4 (pill floater sidebar-cs.js):
+  //   🦊 sidebar/popout · 📸 screenshot · 📝 recallnote · 🧾 recalltape.
+  // Dock "sc" ini dulunya floating button ke-5 (duplikat fungsi screenshot,
+  // default ON) yang bikin halaman punya 5 tombol melayang. Screenshot sekarang
+  // cukup via tombol 📸 di pill floater / shortcut Alt+Shift+5/6/7.
+  // maybeInjectOverlay() tetap ada (dipanggil 4 tempat) tapi kini hanya
+  // membersihkan sisa dock lama — tidak pernah menyuntik lagi.
   async function maybeInjectOverlay() {
-    const enabled = await getSetting('overlayButtonEnabled', true);
-    if (!enabled) {
-      if (dockEl) { dockEl.remove(); dockEl = null; fabBtn = null; miniInfoEl = null; }
-      return;
-    }
-    if (dockEl) return; // already injected
-    ensureStyles();
-
-    // Build the dock container (FAB + hint label above)
-    dockEl = document.createElement('div');
-    dockEl.id = 'recallfox-dock';
-    dockEl.className = 'recallfox-dock';
-
-    // Hint label above FAB
-    const hint = document.createElement('div');
-    hint.className = 'recallfox-dock-hint';
-    hint.innerHTML = 'Screenshot <b>·</b> seret untuk pindah';
-
-    // FAB button — v3.20.5: text "sc" (bukan SVG camera icon)
-    fabBtn = document.createElement('button');
-    fabBtn.id = 'recallfox-fab';
-    fabBtn.className = 'recallfox-fab';
-    fabBtn.type = 'button';
-    fabBtn.title = 'Ambil screenshot (Alt+Shift+5)';
-    fabBtn.setAttribute('aria-label', 'Ambil screenshot');
-    fabBtn.textContent = 'sc';
-
-    dockEl.appendChild(hint);
-    dockEl.appendChild(fabBtn);
-    document.body.appendChild(dockEl);
-
-    // Restore saved position (per-device)
-    const savedPos = loadPos();
-    if (savedPos) {
-      dockEl.style.right = 'auto';
-      dockEl.style.top = savedPos.top + 'px';
-      dockEl.style.left = savedPos.left + 'px';
-    }
-
-    // === Click handler: distinguish click vs drag ===
-    // Click = open mode picker; Drag = reposition FAB.
-    fabBtn.addEventListener('click', (e) => {
-      if (dragState && dragState.moved) {
-        // Was a drag, not a click — suppress
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-      e.preventDefault();
-      e.stopPropagation();
-      triggerCapture();
-    });
-
-    // === Drag with setPointerCapture (industry-standard) ===
-    // Pointer capture ensures we keep getting pointermove events even if the
-    // cursor leaves the button. Much more reliable than window.addEventListener.
-    fabBtn.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      const rect = dockEl.getBoundingClientRect();
-      dragState = {
-        startX: e.clientX,
-        startY: e.clientY,
-        offsetX: e.clientX - rect.left,
-        offsetY: e.clientY - rect.top,
-        moved: false,
-        pointerId: e.pointerId
-      };
-      // Capture pointer so move events keep flowing to this element
-      try { fabBtn.setPointerCapture(e.pointerId); } catch (err) {}
-    });
-
-    fabBtn.addEventListener('pointermove', (e) => {
-      if (!dragState) return;
-      const dx = e.clientX - dragState.startX;
-      const dy = e.clientY - dragState.startY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 5) {
-        dragState.moved = true;
-        dockEl.classList.add('recallfox-dock-dragging');
-        dockEl.style.right = 'auto';
-        // Clamp to viewport so FAB doesn't go offscreen
-        const w = dockEl.offsetWidth;
-        const h = dockEl.offsetHeight;
-        const left = Math.max(8, Math.min(window.innerWidth - w - 8, e.clientX - dragState.offsetX));
-        const top = Math.max(8, Math.min(window.innerHeight - h - 8, e.clientY - dragState.offsetY));
-        dockEl.style.left = left + 'px';
-        dockEl.style.top = top + 'px';
-      }
-    });
-
-    fabBtn.addEventListener('pointerup', (e) => {
-      if (!dragState) return;
-      try { fabBtn.releasePointerCapture(dragState.pointerId); } catch (err) {}
-      dockEl.classList.remove('recallfox-dock-dragging');
-      if (dragState.moved) {
-        // Persist new position
-        const rect = dockEl.getBoundingClientRect();
-        savePos(rect.left, rect.top);
-        // Show confirmation toast briefly
-        showCaptureToast('Posisi tombol disimpan');
-      }
-      // Reset after a tick so click handler can see dragState.moved
-      setTimeout(() => { dragState = null; }, 10);
-    });
-
-    fabBtn.addEventListener('pointercancel', () => {
-      if (dragState) {
-        try { fabBtn.releasePointerCapture(dragState.pointerId); } catch (err) {}
-        dockEl.classList.remove('recallfox-dock-dragging');
-        dragState = null;
-      }
-    });
-
-    // === Right-click context menu ===
-    // Right-click on FAB → show mini info popup with reset option
-    fabBtn.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      showMiniInfo();
-    });
-
-    // Long-press (700ms) → show mini info popup with reset option
-    let pressTimer = null;
-    fabBtn.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      pressTimer = setTimeout(() => {
-        showMiniInfo();
-      }, 700);
-    });
-    fabBtn.addEventListener('pointerup', () => { if (pressTimer) clearTimeout(pressTimer); });
-    fabBtn.addEventListener('pointerleave', () => { if (pressTimer) clearTimeout(pressTimer); });
-    fabBtn.addEventListener('pointercancel', () => { if (pressTimer) clearTimeout(pressTimer); });
-
-    // Pulse on inject
-    fabBtn.classList.add('recallfox-fab-pulse');
-    setTimeout(() => fabBtn.classList.remove('recallfox-fab-pulse'), 1500);
+    if (dockEl) { dockEl.remove(); dockEl = null; fabBtn = null; miniInfoEl = null; }
+    const stale = document.getElementById('recallfox-dock');
+    if (stale) stale.remove();
+    return;
   }
 
   // ===== Mini info popup (shows reset button) =====

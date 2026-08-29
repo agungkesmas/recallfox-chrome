@@ -53,8 +53,9 @@ async function init() {
     setVal('rf-set-locale', s.locale || 'auto');
     setVal('rf-set-display', s.displayMode || 'popup');
     setVal('rf-set-inject', s.injectMode || 'append');
-    setChk('rf-set-floating', s.floatingButtonEnabled !== false);
-    setChk('rf-set-overlay', s.overlayButtonEnabled !== false);
+    // v3.22.3: rf-set-floating & rf-set-overlay dihapus dari UI (tombolnya sudah
+    // tidak ada — basmi floater berlebih). setChk pada id yang tidak ada melempar
+    // error dan mem-blokir sisa section, jadi barisnya dihapus, bukan cuma di-skip.
     setChk('rf-set-sync', !!s.syncEnabled);
   } catch (e) { console.warn('[RecallFox] settings: general section failed:', e); }
 
@@ -353,8 +354,7 @@ function bindEvents() {
     ['rf-set-locale', 'locale', 'value'],
     ['rf-set-display', 'displayMode', 'value'],
     ['rf-set-inject', 'injectMode', 'value'],
-    ['rf-set-floating', 'floatingButtonEnabled', 'checked'],
-    ['rf-set-overlay', 'overlayButtonEnabled', 'checked'],
+    // v3.22.3: mapping rf-set-floating / rf-set-overlay dihapus (row UI sudah tidak ada)
     ['rf-set-sync', 'syncEnabled', 'checked'],
     // Prayer
     ['rf-set-prayer-enabled', 'prayerEnabled', 'checked'],
@@ -893,17 +893,8 @@ function bindEvents() {
     });
   }
 
-  // Overlay toggle — broadcast to all tabs for live update
-  const overlayToggle = document.getElementById('rf-set-overlay');
-  if (overlayToggle) {
-    overlayToggle.addEventListener('change', async () => {
-      const enabled = overlayToggle.checked;
-      try {
-        await browser.runtime.sendMessage({ type: 'TOGGLE_OVERLAY', enabled });
-        toast(enabled ? 'Overlay diaktifkan' : 'Overlay dimatikan');
-      } catch (e) {}
-    });
-  }
+  // v3.22.3: Overlay toggle broadcast DIHAPUS — dock FAB "sc" sudah dibasmi
+  // (basmi floater berlebih), tidak ada lagi tombol overlay untuk di-toggle.
 
   // Text fields: toast on blur
   [

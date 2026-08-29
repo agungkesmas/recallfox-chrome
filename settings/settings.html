@@ -63,27 +63,13 @@
         </select>
       </div>
 
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Tombol mengambang di halaman AI</div>
-          <div class="rf-row-desc">Tombol kecil 📸 di pojok untuk snapshot percakapan AI</div>
-        </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-floating" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
-
-      <div class="rf-row">
-        <div class="rf-row-label">
-          <div class="rf-row-title">Tombol overlay screenshot di semua halaman</div>
-          <div class="rf-row-desc">Tombol bulat ungu di pojok kanan atas untuk tangkap halaman (FireShot-style)</div>
-        </div>
-        <label class="rf-switch">
-          <input type="checkbox" id="rf-set-overlay" />
-          <span class="rf-slider"></span>
-        </label>
-      </div>
+      <!-- v3.22.3: Baris setting "Tombol mengambang di halaman AI" (rf-set-floating)
+           dan "Tombol overlay screenshot di semua halaman" (rf-set-overlay) DIHAPUS.
+           Kedua tombol yang dulu dikontrolnya sudah tidak ada:
+           - Dock FAB "sc" overlay.js dihapus (basmi floater berlebih — cukup 4
+             tombol di pill floater: 🦊 📸 📝 🧾).
+           - Tombol snapshot AI lama sudah lama tidak dipasang.
+           Setting mati = tombol mati, jadi dibersihkan dari UI. -->
     </section>
 
     <!-- Prayer Times (Salah Time, Muhammadiyah method) -->

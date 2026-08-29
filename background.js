@@ -4649,17 +4649,28 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // v3.22.3: RF_FORWARD_TO_ACTIVE_TAB — SATU handler gabungan (sebelumnya dobel:
+  // versi v3.21.16 dan versi v3.20.10 terdaftar dua-duanya; listener pertama
+  // menang, kedua jadi dead code). Fitur digabung: forward extra fields
+  // (text/mode/data dari v3.20.21) + inject content script lalu retry kalau
+  // tab belum punya listener (dari v3.21.16).
   if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
     (async()=>{
       try{
         const tabs = await browser.tabs.query({active:true, currentWindow:true});
         const tab = tabs[0];
         if(tab && tab.id && msg.msgType){
-          try{ await browser.tabs.sendMessage(tab.id, {type: msg.msgType}); }
+          // v3.20.21: Build payload dengan forward extra fields
+          const payload = { type: msg.msgType };
+          if (msg.text !== undefined) payload.text = msg.text;
+          if (msg.mode !== undefined) payload.mode = msg.mode;
+          if (msg.data !== undefined) payload.data = msg.data;
+          try{ await browser.tabs.sendMessage(tab.id, payload); }
           catch(e){
+            // Content script belum loaded — inject lalu retry sekali
             const file = msg.msgType==='OPEN_NOTE'?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js':'content/sidebar-cs.js';
             await browser.scripting.executeScript({target:{tabId:tab.id}, files:[file]});
-            await browser.tabs.sendMessage(tab.id, {type: msg.msgType});
+            await browser.tabs.sendMessage(tab.id, payload);
           }
         }
         sendResponse({ok:true});
@@ -4726,40 +4737,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;  // async response
   }
 
-  // v3.20.10: RF_FORWARD_TO_ACTIVE_TAB — forward message from content script
-  // to active tab's content script. Used by sidebar-cs.js (popout) to send
-  // OPEN_TAPE to tape-cs.js. Content scripts don't have browser.tabs access.
-  // v3.20.21: Forward extra fields (text, mode, dst.) supaya bisa dipakai untuk
-  // COPY_TEXT (clipboard fallback di popout sidebar).
-  if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
-    (async () => {
-      try {
-        const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
-        // v3.20.21: Build message payload dengan forward extra fields
-        const payload = { type: msg.msgType };
-        if (msg.text !== undefined) payload.text = msg.text;
-        if (msg.mode !== undefined) payload.mode = msg.mode;
-        if (msg.data !== undefined) payload.data = msg.data;
-        try {
-          const res = await browser.tabs.sendMessage(tab.id, payload);
-          sendResponse(res || { ok: true });
-        } catch (e) {
-          // Content script not loaded — inject then retry (hanya untuk OPEN_TAPE)
-          if (msg.msgType === 'OPEN_TAPE') {
-            await browser.scripting.executeScript({ target: { tabId: tab.id }, files: ['content/tape-cs.js'] });
-            setTimeout(() => browser.tabs.sendMessage(tab.id, { type: 'OPEN_TAPE' }).catch(() => {}), 200);
-            sendResponse({ ok: true, injected: true });
-          } else {
-            sendResponse({ ok: false, error: e.message });
-          }
-        }
-      } catch (e) {
-        sendResponse({ ok: false, error: e.message });
-      }
-    })();
-    return true;
-  }
+  // v3.22.3: Handler RF_FORWARD_TO_ACTIVE_TAB duplikat (v3.20.10) DIHAPUS —
+  // sudah digabung ke handler tunggal di atas (forward fields + inject/retry).
 
   // v3.20.23: RF_OPEN_SETTINGS_VIA_BG — last resort fallback untuk buka settings.
   // Dipanggil dari popup/sidebar kalau tabs.create() DAN openOptionsPage() keduanya
