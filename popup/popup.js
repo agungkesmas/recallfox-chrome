@@ -2172,7 +2172,8 @@ function renderItemHtml(it, indent, connector) {
   let batchCheckboxHtml = '';
   if (vaultBatchMode) {
     const checked = vaultBatchSelected.has(it.id) ? ' checked' : '';
-    batchCheckboxHtml = '<input type="checkbox" class="vault-batch-check" data-id="' + it.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);flex-shrink:0;margin-right:4px">';
+    // v3.22.6: styling pindah ke CSS (kotak indigo — pembeda dari lingkaran hijau tugas selesai)
+    batchCheckboxHtml = '<input type="checkbox" class="vault-batch-check" data-id="' + it.id + '"' + checked + ' title="Pilih item (mode batch) — untuk arsip/hapus/copy massal" style="margin-right:4px">';
   }
   const docPageCount = (it.type === 'document' && Array.isArray(it.source?.pages)) ? it.source.pages.length : 0;
   const docBadge = docPageCount > 1
@@ -3969,7 +3970,7 @@ async function continueInOtherAI(itemId) {
     <div class="sheet-card">
       <div class="sheet-h">
         <h3>🔄 Lanjutkan di AI Lain</h3>
-        <button class="x" data-close>✕</button>
+        <button class="x" data-close title="Tutup">✕</button>
       </div>
       <div style="padding:8px 16px 4px;font-size:11px;color:var(--text-2);line-height:1.5">
         Snapshot akan disalin ke clipboard, lalu AI yang dipilih akan dibuka di tab baru.
@@ -7499,7 +7500,7 @@ async function renderNotes() {
         }).join('')
       + '</div>';
   }
-  const doneFilterHtml = '<div style="display:flex;gap:6px;margin-bottom:8px"><button class="addbtn' + (notesFilterDone==='all'?' on':'') + '" data-done-filter="all" style="padding:4px 8px;font-size:11px">Semua</button><button class="addbtn' + (notesFilterDone==='active'?' on':'') + '" data-done-filter="active" style="padding:4px 8px;font-size:11px">Aktif</button><button class="addbtn' + (notesFilterDone==='done'?' on':'') + '" data-done-filter="done" style="padding:4px 8px;font-size:11px">Selesai</button></div>';
+  const doneFilterHtml = '<div style="display:flex;gap:6px;margin-bottom:8px"><button class="addbtn' + (notesFilterDone==='all'?' on':'') + '" data-done-filter="all" title="Tampilkan semua catatan" style="padding:4px 8px;font-size:11px">Semua</button><button class="addbtn' + (notesFilterDone==='active'?' on':'') + '" data-done-filter="active" title="Hanya catatan aktif (belum selesai)" style="padding:4px 8px;font-size:11px">Aktif</button><button class="addbtn' + (notesFilterDone==='done'?' on':'') + '" data-done-filter="done" title="Hanya catatan yang sudah selesai" style="padding:4px 8px;font-size:11px">Selesai</button></div>';
   // P0: Todoist chip row — Hari ini / Terlambat / P1-P4 / #tag (counts from mockup)
   const baseForChips = currentNotes.filter(n=>!n.archived);
   const isToday = (d)=>{ const n=new Date(); return d.getFullYear()===n.getFullYear() && d.getMonth()===n.getMonth() && d.getDate()===n.getDate(); };
@@ -7516,7 +7517,7 @@ async function renderNotes() {
       + (todayCount? '<button class="addbtn'+(notesFilterDue==='today'?' on':'')+'" data-due-filter="today" style="padding:4px 8px;font-size:11px;'+(notesFilterDue==='today'?'':'')+'">Hari ini '+todayCount+'</button>' : '')
       + (overdueCount? '<button class="addbtn'+(notesFilterDue==='overdue'?' on':'')+'" data-due-filter="overdue" style="padding:4px 8px;font-size:11px;background:'+(notesFilterDue==='overdue'?'#F87171;color:#fff;border-color:#F87171':'')+'">Terlambat '+overdueCount+'</button>' : '')
       + (recurringCount? '<button class="addbtn'+(notesFilterRecurring==='recurring'?' on':'')+'" data-recurring-filter="recurring" style="padding:4px 8px;font-size:11px;'+(notesFilterRecurring==='recurring'?'background:#10B981;color:#fff;border-color:#10B981':'')+'">🔁 '+recurringCount+'</button>' : '')
-      + prioCounts.map((c,pIdx)=>{ if(!c) return ''; const p=pIdx+1; const col={1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[p]; const on=notesFilterPriority===String(p); return '<button class="addbtn'+(on?' on':'')+'" data-prio-filter="'+p+'" style="padding:4px 8px;font-size:11px;border-left:3px solid '+col+';'+(on?'background:'+col+';color:#fff':'' )+'">P'+p+' '+c+'</button>'; }).join('')
+      + prioCounts.map((c,pIdx)=>{ if(!c) return ''; const p=pIdx+1; const col={1:'#F87171',2:'#FBBF24',3:'#60A5FA',4:'#475569'}[p]; const on=notesFilterPriority===String(p); return '<button class="addbtn'+(on?' on':'')+'" data-prio-filter="'+p+'" title="Filter catatan prioritas P'+p+'" style="padding:4px 8px;font-size:11px;border-left:3px solid '+col+';'+(on?'background:'+col+';color:#fff':'' )+'">P'+p+' '+c+'</button>'; }).join('')
       + topLabels.map(([lab,cnt])=>{ const on=notesFilterLabel===lab; return '<button class="addbtn'+(on?' on':'')+'" data-label-filter="'+esc(lab)+'" style="padding:4px 8px;font-size:11px;'+(on?'background:var(--primary);color:#fff':'' )+'">#'+esc(lab)+' '+cnt+'</button>'; }).join('')
       + ((notesFilterDue!=='all' || notesFilterPriority!=='all' || notesFilterLabel || notesFilterRecurring!=='all') ? '<button class="addbtn" data-clear-todo-filter style="padding:4px 8px;font-size:11px">✕ Clear</button>' : '')
       + '</div>';
@@ -7573,7 +7574,8 @@ async function renderNotes() {
     let batchHtml = '';
     if (notesBatchMode) {
       const checked = notesBatchSelected.has(n.id) ? ' checked' : '';
-      batchHtml = '<div class="note-batch-wrap" style="flex-shrink:0;display:flex;align-items:center;padding-right:4px"><input type="checkbox" class="note-batch-check" data-nid="' + n.id + '"' + checked + ' style="width:16px;height:16px;cursor:pointer"></div>';
+      // v3.22.6: kotak indigo (CSS) — pembeda dari lingkaran hijau "tugas selesai"
+      batchHtml = '<div class="note-batch-wrap" style="flex-shrink:0;display:flex;align-items:center;padding-right:4px"><input type="checkbox" class="note-batch-check" data-nid="' + n.id + '"' + checked + ' title="Pilih catatan (mode batch) — untuk arsip/hapus massal"></div>';
     }
     // v1.8.1: Voice note player DIHAPUS — user bilang "batasan mb, tidak terpakai".
     // v3.19.1: GPS location display di note card (jika note punya source.location).
@@ -7597,7 +7599,7 @@ async function renderNotes() {
     const recurringHtml = n.recurring ? '<button data-recurring-click="recurring" title="Filter berulang" style="background:transparent;border:none;color:#10B981;cursor:pointer;padding:0;font-size:11px">'+esc(formatRecurring(n.recurring))+'</button>' : '';
     return '<div class="note-card nc-' + (n.color || 'default') + doneCls + '" data-nid="' + n.id + '"' + (notesBatchSelected.has(n.id) ? ' style="background:var(--primary-soft);border-color:var(--primary);position:relative;border-left:4px solid '+prioColor+'"' : ' style="position:relative;border-left:4px solid '+prioColor+';' + (n.done?' opacity:0.55;background:var(--surface-2)':'') + '"') + '>'
       + '<div style="display:flex;align-items:flex-start;gap:6px">'
-      + '<input type="checkbox" class="note-done-check" data-done="' + n.id + '" ' + (n.done?'checked':'') + ' title="' + (n.done?'Tandai belum selesai':'Tandai selesai') + '" style="width:16px;height:16px;cursor:pointer;accent-color:var(--primary);margin-top:2px;flex:none">'
+      + '<input type="checkbox" class="note-done-check" data-done="' + n.id + '" ' + (n.done?'checked':'') + ' title="' + (n.done?'Tandai belum selesai':'Tandai selesai') + '" style="margin-top:2px">'
       + batchHtml
       + '</div>'
       + '<button class="note-float-btn" data-float="' + n.id + '" title="Buka mengambang — nyambung autosave" style="position:absolute;top:6px;right:6px;padding:3px 6px;font-size:11px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--primary);cursor:pointer;z-index:2">⧉</button>'
@@ -7842,10 +7844,10 @@ function openNoteEditor(noteId) {
     + '</div>'
     + '<div class="card"><h3>Prioritas & Tanggal</h3>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">'
-    + '<button class="btn ' + (n.priority===1?'btn-p':'btn-g') + '" data-prio="1" style="padding:4px 8px;font-size:11px">🔴 P1</button>'
-    + '<button class="btn ' + (n.priority===2?'btn-p':'btn-g') + '" data-prio="2" style="padding:4px 8px;font-size:11px">🟠 P2</button>'
-    + '<button class="btn ' + (n.priority===3?'btn-p':'btn-g') + '" data-prio="3" style="padding:4px 8px;font-size:11px">🔵 P3</button>'
-    + '<button class="btn ' + ((n.priority===4||!n.priority)?'btn-p':'btn-g') + '" data-prio="4" style="padding:4px 8px;font-size:11px">⚪ P4</button>'
+    + '<button class="btn ' + (n.priority===1?'btn-p':'btn-g') + '" data-prio="1" title="P1 — Darurat & penting: kerjakan hari ini (merah)" style="padding:4px 8px;font-size:11px">🔴 P1</button>'
+    + '<button class="btn ' + (n.priority===2?'btn-p':'btn-g') + '" data-prio="2" title="P2 — Penting, belum darurat: jadwalkan (oranye)" style="padding:4px 8px;font-size:11px">🟠 P2</button>'
+    + '<button class="btn ' + (n.priority===3?'btn-p':'btn-g') + '" data-prio="3" title="P3 — Mendesak tapi kurang penting: kerjakan cepat (biru)" style="padding:4px 8px;font-size:11px">🔵 P3</button>'
+    + '<button class="btn ' + ((n.priority===4||!n.priority)?'btn-p':'btn-g') + '" data-prio="4" title="P4 — Prioritas biasa: kapan saja (abu-abu). Default tanpa prioritas" style="padding:4px 8px;font-size:11px">⚪ P4</button>'
     + '</div>'
     + '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
     + '<input class="f" id="nDueAt" type="datetime-local" value="' + (n.dueAt ? new Date(n.dueAt).toISOString().slice(0,16) : '') + '" style="flex:1;min-width:140px">'
@@ -7891,9 +7893,9 @@ function openNoteEditor(noteId) {
       return;
     }
     list.innerHTML = editorSubtasks.map(s=> '<div style="display:flex;gap:6px;align-items:center">'
-      + '<input type="checkbox" data-subid="'+s.id+'" '+(s.done?'checked':'')+' style="width:16px;height:16px;accent-color:var(--primary)">'
+      + '<input type="checkbox" class="note-done-check" data-subid="'+s.id+'" '+(s.done?'checked':'')+' title="Tandai subtask selesai">'
       + '<input class="f" data-subinput="'+s.id+'" value="'+esc(s.text)+'" style="flex:1;padding:4px 6px;font-size:12px;'+(s.done?'text-decoration:line-through;opacity:0.6':'')+'">'
-      + '<button class="btn btn-d" data-subdel="'+s.id+'" style="padding:4px 6px;font-size:11px">✕</button>'
+      + '<button class="btn btn-d" data-subdel="'+s.id+'" title="Hapus subtask" style="padding:4px 6px;font-size:11px">✕</button>'
       + '</div>').join('');
     list.querySelectorAll('[data-subid]').forEach(cb=>{
       cb.addEventListener('change', async ()=>{
@@ -10084,7 +10086,7 @@ async function _renderSyncProfileListInline(B) {
       + '</div>'
       + '<div style="display:flex;gap:4px">'
       +   (isActive ? '' : '<button class="btn btn-g" data-act="activate" data-id="' + p.id + '" style="padding:4px 8px;font-size:10px">Aktifkan</button>')
-      +   '<button class="btn btn-g" data-act="delete" data-id="' + p.id + '" style="padding:4px 8px;font-size:10px;background:#fee2e2;color:#991b1b">🗑</button>'
+      +   '<button class="btn btn-g" data-act="delete" data-id="' + p.id + '" title="Hapus prompt cepat" style="padding:4px 8px;font-size:10px;background:#fee2e2;color:#991b1b">🗑</button>'
       + '</div></div>';
   }).join('');
   listEl.querySelectorAll('button[data-act]').forEach(btn => {

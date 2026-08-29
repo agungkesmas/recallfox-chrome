@@ -192,9 +192,9 @@
     <!-- v3.11.14: Tambah flex-wrap supaya tombol tidak ketutupan di sidebar sempit -->
     <div id="notesBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
       <span id="notesBatchCount">0 dipilih</span>
-      <button class="btn btn-g" id="notesBatchArchive" style="padding:4px 8px;font-size:11px">📦 Arsipkan</button>
-      <button class="btn btn-d" id="notesBatchDelete" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
-      <button class="btn btn-g" id="notesBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
+      <button class="btn btn-g" id="notesBatchArchive" title="Arsipkan semua catatan terpilih (bisa di-restore dari chip Arsip)" style="padding:4px 8px;font-size:11px">📦 Arsipkan</button>
+      <button class="btn btn-d" id="notesBatchDelete" title="Hapus permanen semua catatan terpilih" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      <button class="btn btn-g" id="notesBatchCancel" title="Matikan mode pilih (batch)" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
     </div>
     <div class="notes-list" id="notesList"></div>
   </div>
