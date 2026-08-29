@@ -58,6 +58,8 @@ import {
 import { DEFAULT_ELEMENT_BLOCKER_RULES } from './lib/elementblocker.js';
 // v3.8.1: GDrive Sync (Apps Script bridge) — Issue #1, #2, #6
 import { initGDriveSync, flushNow as gdriveFlushNow, sendFullBackup as gdriveSendFullBackup, uploadScreenshot as gdriveUploadScreenshot, testConnection as gdriveTestConnection, getSyncMeta as gdriveGetMeta, getQueueLength as gdriveGetQueueLength, clearQueue as gdriveClearQueue } from './lib/gdrive-sync.js';
+// Chrome MV3: Cross-browser sidebar abstraction (Firefox sidebarAction vs Chrome sidePanel)
+import { openSidebar, closeSidebar, isSidebarOpen, toggleSidebar, setupSidebarBehavior } from './lib/sidebar-compat.js';
 
 // ===== Setup context menu on install =====
 
@@ -190,7 +192,7 @@ browser.runtime.onStartup.addListener(async () => {
   if (settings.sidebarAutoOpen) {
     try {
       setTimeout(async () => {
-        try { await browser.sidebarAction.open(); console.log('[RecallFox] Sidebar auto-opened on startup'); }
+        try { await openSidebar(); console.log('[RecallFox] Sidebar auto-opened on startup'); }
         catch (e) { console.warn('[RecallFox] Sidebar auto-open failed:', e.message); }
       }, 2000);
     } catch (e) {
@@ -1247,7 +1249,7 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
 
   let sidebarAlreadyOpen = false;
   try {
-    sidebarAlreadyOpen = await browser.sidebarAction.isOpen({});
+    sidebarAlreadyOpen = await isSidebarOpen();
   } catch (e) {
     // isOpen() not available in older Firefox — assume closed.
   }
@@ -1260,8 +1262,8 @@ async function routeAiQuery(text, { sourceUrl = '', sourceTitle = '' } = {}) {
     // or in case the sidebar's init has already run and missed the storage
     // pending. The sidebar's runtime handler clears the storage pending
     // key immediately, so a duplicate fire is prevented.
-    try { await browser.sidebarAction.open(); } catch (e) {
-      console.warn('[RecallFox] sidebarAction.open failed:', e);
+    try { await openSidebar(); } catch (e) {
+      console.warn('[RecallFox] openSidebar failed:', e);
     }
   }
 
@@ -1362,24 +1364,14 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'OPEN_SIDEBAR') {
     // Toggle sidebar: open if closed, close if open
     try {
-      // Check if sidebar is open (Firefox 124+)
-      let isOpen = false;
-      try {
-        isOpen = await browser.sidebarAction.isOpen({});
-      } catch (e) {
-        // isOpen() not available in older Firefox — assume closed
-        console.log('[RecallFox] sidebarAction.isOpen not available, trying open()');
-      }
-      
-      if (isOpen) {
-        await browser.sidebarAction.close();
-        console.log('[RecallFox] Sidebar closed');
-        sendResponse({ ok: true, action: 'closed' }); return;
+      const result = await toggleSidebar();
+      if (result.ok) {
+        console.log('[RecallFox] Sidebar toggled:', result);
+        sendResponse({ ok: true, action: 'toggled' });
       } else {
-        await browser.sidebarAction.open();
-        console.log('[RecallFox] Sidebar opened');
-        sendResponse({ ok: true, action: 'opened' }); return;
+        sendResponse({ ok: false, error: result.error || 'toggle_failed' });
       }
+      return;
     } catch (e) {
       console.error('[RecallFox] Sidebar toggle failed:', e);
       sendResponse({ ok: false, error: e.message }); return;
