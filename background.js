@@ -4639,6 +4639,24 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // v3.21.26: RF_OPEN_REAL_SIDEBAR — buka sidebar asli browser (bukan popout DOM).
+  // Dipicu oleh single-click rfBtn di floater. Double-click rfBtn = popout DOM
+  // (handle langsung di sidebar-cs.js, tidak lewat background).
+  // Firefox: browser.sidebarAction.open() — native sidebar panel.
+  // Chrome:  chrome.sidePanel.open({tabId}) — Side Panel API (Chrome 114+).
+  if (msg.type === 'RF_OPEN_REAL_SIDEBAR') {
+    (async () => {
+      try {
+        const mod = await import('./lib/sidebar-compat.js');
+        const result = await mod.openSidebar();
+        sendResponse(result);
+      } catch (e) {
+        console.warn('[RecallFox] RF_OPEN_REAL_SIDEBAR failed:', e.message);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
   if (msg.type === 'RF_FORWARD_TO_ACTIVE_TAB') {
     (async()=>{
       try{

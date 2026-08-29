@@ -244,7 +244,7 @@
     rfBtn.setAttribute('role', 'button');
     rfBtn.setAttribute('tabindex', '0');
     rfBtn.innerHTML = '🦊';
-    rfBtn.title = 'Buka/Tutup RecallFox sidebar';
+    rfBtn.title = '1x klik: sidebar asli · 2x klik: popout sidebar';
     rfBtn.style.cssText = [
       'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
       'background:#6d3df5', 'color:#fff', 'cursor:pointer',
@@ -325,6 +325,10 @@
 
     // ===== Drag logic (pair container, bukan per-button) =====
     let dragState = { dragging: false, startX: 0, startY: 0, origX: 0, origY: 0, moved: false, target: null };
+    // v3.21.26: Timer untuk detect single-click vs double-click di rfBtn.
+    // Single click (250ms no second click) → buka sidebar asli browser.
+    // Double click (click kedua dalam 250ms) → toggle popout DOM sidebar.
+    let rfClickTimer = null;
 
     function onDown(e) {
       if (e.button !== undefined && e.button !== 0) return;
@@ -389,7 +393,29 @@
         if (dragState.target === rfBtn || rfBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
-          toggle();
+          // v3.21.26: 1x click = buka sidebar asli browser (Firefox sidebarAction
+          // / Chrome sidePanel). 2x click (double click) = toggle popout DOM
+          // sidebar (sidebar-cs.js in-page sidebar).
+          // Deteksi pakai timer 250ms — kalau click kedua datang dalam window itu,
+          // cancel single-click action, jalankan double-click action.
+          if (rfClickTimer) {
+            // Click kedua datang sebelum timer fire → double click
+            clearTimeout(rfClickTimer);
+            rfClickTimer = null;
+            toggle();  // toggle popout DOM sidebar (in-page)
+          } else {
+            // Click pertama — start timer. Kalau tidak ada click kedua dalam 250ms,
+            // jalankan single-click action (buka sidebar asli browser).
+            rfClickTimer = setTimeout(() => {
+              rfClickTimer = null;
+              browser.runtime.sendMessage({ type: 'RF_OPEN_REAL_SIDEBAR' }).catch((err) => {
+                console.warn('[RecallFox] RF_OPEN_REAL_SIDEBAR failed:', err.message);
+                // Fallback: kalau background tidak bisa buka sidebar asli (mis.
+                // API tidak available), toggle popout DOM sidebar sebagai fallback.
+                toggle();
+              });
+            }, 250);
+          }
         } else if (dragState.target === scBtn || scBtn.contains(dragState.target)) {
           e.preventDefault();
           e.stopPropagation();
@@ -430,7 +456,14 @@
 
     // Keyboard
     rfBtn.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+      // v3.21.26: Enter/Space = single click action (buka sidebar asli browser).
+      // Keyboard user tidak bisa double-press dengan mudah, jadi default ke
+      // single-click behavior. Untuk popout DOM sidebar, user bisa pakai
+      // mouse double-click atau keyboard shortcut Alt+Shift+4.
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        browser.runtime.sendMessage({ type: 'RF_OPEN_REAL_SIDEBAR' }).catch(() => { toggle(); });
+      }
     });
     scBtn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); triggerScreenshot(); }
