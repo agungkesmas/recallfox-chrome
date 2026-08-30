@@ -207,6 +207,9 @@
     const pauseBtn = shadow.querySelector('.rfp-pause');
     const resetBtn = shadow.querySelector('.rfp-reset');
     const soundBtn = shadow.querySelector('.rfp-sound');
+    const msoundBtn = shadow.querySelector('.rfp-msound');
+    const mstartBtn = shadow.querySelector('.rfp-mstart');
+    const mresetBtn = shadow.querySelector('.rfp-mreset');
     const soundToggle = shadow.querySelector('.rfp-sound-toggle');
     const soundSel = shadow.querySelector('.rfp-sound-sel');
     const testBtn = shadow.querySelector('.rfp-test');
@@ -244,6 +247,8 @@
         if (startBtn) startBtn.style.display = s.running ? 'none' : '';
         if (pauseBtn) pauseBtn.style.display = s.running ? '' : 'none';
         if (soundBtn) soundBtn.textContent = s.soundOn ? '🔊' : '🔇';
+        if (msoundBtn) msoundBtn.textContent = s.soundOn ? '🔊' : '🔇';
+        if (mstartBtn) mstartBtn.textContent = s.running ? '⏸' : '▶';
         if (soundToggle) soundToggle.textContent = s.soundOn ? 'On' : 'Off';
         if (soundSel && s.soundFile) soundSel.value = s.soundFile;
         if (pinBtn) { try { pinBtn.classList.toggle('rfp-active', !!st.pinned); } catch (e) {} }
@@ -337,7 +342,7 @@
       let d = false, dx = 0, dy = 0, moved = false;
       hd.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('button,select,input')) return; d = true; moved = false; const rect = popover.getBoundingClientRect(); dx = e.clientX - rect.left; dy = e.clientY - rect.top; popover.style.transition = 'none'; e.preventDefault(); });
       document.addEventListener('mousemove', e => { if (!d) return; moved = true; popover.style.left = (e.clientX - dx) + 'px'; popover.style.top = (e.clientY - dy) + 'px'; popover.style.right = 'auto'; });
-      document.addEventListener('mouseup', () => { if (d) { d = false; popover.style.transition = ''; } }); // v3.23.2 DOCK: x/y drag tidak dipersist
+      document.addEventListener('mouseup', () => { if (d) { d = false; popover.style.transition = ''; rfLayout(); } }); // v3.23.3 DOCK: lepas drag → kembali rapat ke deretan
     }
 
     function wireEvents() {
@@ -345,6 +350,9 @@
       try { pauseBtn.addEventListener('click', () => { doPause(); setActive(); }); } catch (e) {}
       try { resetBtn.addEventListener('click', () => { doReset(); setActive(); }); } catch (e) {}
       try { soundBtn.addEventListener('click', () => { doSoundToggle(); }); } catch (e) {}
+      try { msoundBtn.addEventListener('click', () => { doSoundToggle(); }); } catch (e) {}
+      try { mstartBtn.addEventListener('click', () => { (cache && cache.running) ? doPause() : doStart(); setActive(); }); } catch (e) {}
+      try { mresetBtn.addEventListener('click', () => { doReset(); setActive(); }); } catch (e) {}
       try { soundToggle.addEventListener('click', () => { doSoundToggle(); }); } catch (e) {}
       try { testBtn.addEventListener('click', () => { playBell(true); }); } catch (e) {}
       try { soundSel.addEventListener('change', () => { doSoundFile(soundSel.value); }); } catch (e) {}
@@ -454,8 +462,8 @@
 :host([data-theme="light"]) .rfp-hd{ background:#FEF2F2; border-bottom:1px solid rgba(239,68,68,0.25); }
 .rfp-title{ font-size:11px; font-weight:700; flex:1; display:flex; align-items:center; gap:6px; white-space:nowrap; overflow:hidden; color:#FCA5A5; }
 :host([data-theme="light"]) .rfp-title{ color:#B91C1C; }
-.rfp-mini{ display:none; font-variant-numeric:tabular-nums; font-size:11px; }
-.rfp-popover.rfp-min .rfp-mini{ display:inline; }
+.rfp-mini{ display:none; font-variant-numeric:tabular-nums; font-size:13px; font-weight:800; letter-spacing:.02em; }
+.rfp-popover.rfp-min .rfp-mini{ display:inline; }.rfp-title-text{ white-space:nowrap; }.rfp-popover.rfp-min .rfp-title-text{ display:none; }.rfp-mini-actions{ display:none; gap:2px; }.rfp-popover.rfp-min .rfp-mini-actions{ display:flex; }
 .rfp-actions{ display:flex; gap:2px; }
 .rfp-btn{ width:24px; height:24px; border-radius:5px; border:none; background:none; color:#A3B0C2; display:grid; place-items:center; cursor:pointer; }
 :host([data-theme="light"]) .rfp-btn{ color:#64748B; }
@@ -502,7 +510,8 @@
 </style>
 <div class="rfp-popover" role="dialog" aria-label="RecallPomodoro">
   <div class="rfp-hd">
-    <div class="rfp-title">🍅 RecallPomodoro <span class="rfp-mini">🍅 25:00</span></div>
+    <div class="rfp-title"><span class="rfp-title-text">🍅 RecallPomodoro</span> <span class="rfp-mini">🍅 25:00</span></div>
+    <div class="rfp-actions rfp-mini-actions"><button class="rfp-btn rfp-mctl rfp-mstart" title="Mulai / Pause">▶</button><button class="rfp-btn rfp-mctl rfp-mreset" title="Reset">↺</button><button class="rfp-btn rfp-mctl rfp-msound" title="Suara bell on/off">🔊</button></div>
     <div class="rfp-actions">
       <button class="rfp-btn rfp-collapse" title="Gulung / buka lagi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg></button>
       <button class="rfp-btn rfp-pin rfp-active" title="Pin (default terpin — klik untuk lepas)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 17v5"/><path d="M9 10.5V4h6v6.5l2 3.5H7l2-3.5z"/></svg></button>
