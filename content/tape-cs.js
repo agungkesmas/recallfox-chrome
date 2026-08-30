@@ -703,6 +703,10 @@
     } catch (e) {}
   }
     wireEvents();
+    // v3.23.4: visual pin sinkron sejak build — default TERPIN tampil tebal
+    // (paritas pomodoro). Sebelumnya class rft-active baru dipasang setelah
+    // klik pertama, sehingga tombol terlihat "tidak terpin" padahal terpin.
+    try { pinBtn.classList.toggle('rft-active', st.pinned); } catch (e) {}
     // v3.23.2 DOCK: daftarkan floater ke dock global — satu deretan rapi
     // kanan-atas bersama RecallNote & RecallPomodoro (content/float-dock.js).
     try { if (window.__RFDock) window.__RFDock.register({ key: 'tape:' + data.id, kind: 'tape', t: data.createdAt || 0, visible: () => st.isVisible, width: () => data.collapsed ? 320 : Math.max(280, (typeof data.w === 'number' && data.w) || 320), height: () => data.collapsed ? 44 : Math.max(260, (typeof data.h === 'number' && data.h) || 320), place: (x, y) => setPos(x, y) }); } catch (e) {}
@@ -927,7 +931,7 @@
       <button class="rft-btn rft-color" title="Warna lembar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 4-4 4h-2.2a1.8 1.8 0 0 0-1.3 3.1c.3.3.5.7.5 1.1 0 .9-.7 1.8-1.8 1.8z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15" cy="8" r="1" fill="currentColor"/></svg>
       </button>
-      <button class="rft-btn rft-pin" title="Pin (kunci agar tetap terbuka)">
+      <button class="rft-btn rft-pin rft-active" title="Pin (terpin — klik untuk lepas)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.5V4h6v6.5l2 3.5H7l2-3.5z"/></svg>
       </button>
       <button class="rft-btn rft-new" title="Lembar baru (RecallTape baru)">

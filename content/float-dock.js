@@ -23,6 +23,9 @@
 //     visible:()=>bool, width:()=>px, height:()=>px, place:(x,y)=>{} });
 //   RFDock.unregister('note:<id>');  RFDock.layout();
 //
+// v3.23.4: SIDEBAR AWARE — RFDock.setSidebar(lebar) menggeser SELURUH
+//   deretan ke kiri saat popout sidebar RecallFox terbuka (dipanggil
+//   sidebar-cs.js), dan mengembalikannya mepet kanan saat sidebar tutup.
 // File ini idempoten: dipasang sebagai content script pertama di tiap entry
 // (manifest) — semua content script RecallFox berbagi isolated world yang
 // sama, jadi window.__RFDock satu instance untuk semua.
@@ -39,6 +42,7 @@
   var KIND_ORDER = { pomo: 0, note: 1, tape: 2 };
   var reg = new Map(); // key → handle
   var seq = 0;
+  var sidebarW = 0;    // v3.23.4: offset geser-kiri saat sidebar buka (0 = tutup)
 
   function num(fn, d) {
     try { var v = fn(); return (typeof v === 'number' && v > 0) ? v : d; } catch (e) { return d; }
@@ -69,13 +73,22 @@
         // wrap ke kolom baru hanya kalau kolom ini sudah berisi (y > TOP)
         // — floater setinggi layar tetap mendapat tempat di kolom pertama.
         if (y > TOP && y + hh > vh - FLOOR) { col += 1; y = TOP; colMaxW = 0; }
-        var xRight = vw - RIGHT - col * COLSTEP;
+        var xRight = vw - RIGHT - sidebarW - col * COLSTEP;
         var x = Math.max(MINX, xRight - w); // rapat kanan per kolom
         if (w > colMaxW) colMaxW = w;
         try { if (typeof h.place === 'function') h.place(x, y); } catch (e) {}
         y += hh + GAP;
       }
     } catch (e) {}
+  }
+
+  // v3.23.4: geser deretan saat sidebar buka. w = lebar sidebar (+ jeda);
+  // w <= 0 / bukan angka berarti sidebar tertutup → kembali mepet kanan.
+  function setSidebar(w) {
+    var v = (typeof w === 'number' && isFinite(w) && w > 0) ? Math.min(w, 4000) : 0;
+    if (v === sidebarW) return;
+    sidebarW = v;
+    layout();
   }
 
   var dock = {
@@ -88,6 +101,8 @@
     },
     unregister: function (key) { if (reg.delete(key)) layout(); },
     layout: layout,
+    setSidebar: setSidebar,
+    sidebarW: function () { return sidebarW; },
     has: function (key) { return reg.has(key); },
   };
   try { if (typeof window.addEventListener === 'function') window.addEventListener('resize', function () { layout(); }); } catch (e) {}

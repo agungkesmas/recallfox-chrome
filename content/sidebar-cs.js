@@ -590,6 +590,18 @@
     });
   }
 
+  // ===== v3.23.4: deretan floater (pomodoro/note/tape) mengikuti sidebar =====
+  // Sidebar buka → float-dock menggeser deretan ke kiri (minggir sebanyak
+  // lebar sidebar + jeda); sidebar tutup → deretan kembali mepet kanan.
+  const SIDEBAR_DOCK_GAP = 12;
+  function notifyDock() {
+    try {
+      if (window.__RFDock && typeof window.__RFDock.setSidebar === 'function') {
+        window.__RFDock.setSidebar(isVisible ? (currentWidth + SIDEBAR_DOCK_GAP) : 0);
+      }
+    } catch (e) {}
+  }
+
   // ===== Show / Hide / Toggle =====
   function show() {
     mount();
@@ -601,6 +613,7 @@
     host.style.width = currentWidth + 'px';
     host.style.display = 'block';
     isVisible = true;
+    notifyDock(); // v3.23.4: deretan floater minggir mengikuti sidebar
     resetIdleTimer();
     saveState({ visible: true, width: currentWidth, pinned: isPinned, userResized });
   }
@@ -608,6 +621,7 @@
     if (!host) return;
     host.style.display = 'none';
     isVisible = false;
+    notifyDock(); // v3.23.4: deretan floater kembali mepet kanan
     if (idleTimer) clearTimeout(idleTimer);
     saveState({ visible: false, width: currentWidth, pinned: isPinned, userResized });
   }
@@ -648,6 +662,7 @@
         const delta = startX - ev.clientX;
         currentWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
         host.style.width = currentWidth + 'px';
+        notifyDock(); // v3.23.4: deretan floater ikut selama resize sidebar
       };
 
       const onEnd = () => {
@@ -787,6 +802,7 @@
       setWidth(w) {
         currentWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, w));
         if (host) host.style.width = currentWidth + 'px';
+        notifyDock(); // v3.23.4: deretan floater ikut bila lebar diubah API
         saveState({ visible: isVisible, width: currentWidth, pinned: isPinned, userResized });
       },
       version: '3.20.7-iframe'
