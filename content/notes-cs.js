@@ -21,10 +21,14 @@
     // default nempel: pinned true, pinBtn active
     pinned = true; if(pinBtn) pinBtn.classList.add('rfn-active'); try{ await savePinState(true); }catch(e){}
     // load: jika vaultNoteId ada, sudah diisi via message; else load session
-    if(!vaultNoteId){
-      const s=await loadSession(); if(s.text) textarea.value=s.text;
+    // v3.22.8 FIX: konten floating note = GLOBAL. Fallback ke session meski
+    // vaultNoteId terisi — note vault yang di-pin ke floater tetap tampil sama
+    // di tab lain (notesSession di-mirror oleh OPEN_NOTE_VAULT & scheduleSave).
+    {
+      const s=await loadSession();
+      if(!textarea.value && s.text) textarea.value=s.text;
       // respect stored pinned if any, but default tetap nempel
-      if(s.pinned===false){ pinned=false; if(pinBtn) pinBtn.classList.remove('rfn-active'); }
+      if(!vaultNoteId && s.pinned===false){ pinned=false; if(pinBtn) pinBtn.classList.remove('rfn-active'); }
     }
     // awal transparan (hover-only) — akan opaque saat hover/focus
     try{ popover.classList.add('rfn-idle'); }catch(e){}
@@ -41,6 +45,9 @@
     try{
       if(vaultNoteId){
         await browser.runtime.sendMessage({type:'UPDATE_VAULT_NOTE', noteId: vaultNoteId, text: textarea.value});
+        // v3.22.8: mirror ke session global — tab lain (yang tidak punya
+        // vaultNoteId) tetap melihat isi yang sama saat show()/live-sync.
+        await saveSession(textarea.value);
       } else {
         await saveSession(textarea.value);
       }
@@ -79,24 +86,47 @@
     if(msg.type==='OPEN_NOTE_VAULT'){
       vaultNoteId = msg.noteId || null;
       __ack();
+      // v3.22.8 FIX: mirror konten vault note ke session GLOBAL sebelum show().
+      // Tanpa ini tab lain membuka floating note KOSONG (bug "floating note
+      // baru" — konten vault hanya dikirim via message ke tab pembuka).
+      if(typeof msg.text==='string'){ try{ saveSession(msg.text).catch(()=>{}); }catch(e){} }
       show().then(()=>{ if(typeof msg.text==='string') textarea.value = msg.text; updateStatus(); });
     } else if(msg.type==='OPEN_NOTE'){ vaultNoteId=null; __ack(); show(); }
     else if(msg.type==='ADD_TO_NOTE'){ vaultNoteId=null; __ack(); show(); textarea.value+=(textarea.value?'\n':'')+(msg.text||''); updateStatus(); scheduleSave();}
-    else if(msg.type==='SHOW_NOTE'){ __ack(); if (Date.now() - userHiddenAt < 5000) return; show(); }
+    else if(msg.type==='SHOW_NOTE'){ __ack(); if (Date.now() - userHiddenAt < 5000) return;
+      // v3.22.8: pulihkan link vault note dari float state sebelum show() agar
+      // note vault yang di-pin tetap nyambung di SEMUA tab.
+      (async()=>{ try{ const st=await (floatSync&&floatSync.loadFloatState?floatSync.loadFloatState('note'):null); if(st&&st.vaultNoteId&&!vaultNoteId) vaultNoteId=st.vaultNoteId; }catch(e){} show(); })(); }
     else if(msg.type==='HIDE_NOTE'){ __ack(); hide(); }
     else if(msg.type==='RF_HIDE_FOR_CAPTURE'){ if(host) host.style.display='none'; __ack(); }
     else if(msg.type==='RF_RESTORE_AFTER_CAPTURE'){ if(host) host.style.display=''; if(isVisible && popover) popover.classList.add('rfn-show'); __ack(); }
     else { __ack(); }
   });
   loadSession().then(s=>{ if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
+  // v3.22.8: LIVE SYNC isi floating note antar tab — notesSession sumber
+  // kebenaran global. Tab lain yang note-nya terbuka ikut berubah real-time.
+  // Guard: jangan timpa saat user sedang mengetik di tab ini (apply saat blur).
+  try{
+    let rfnPendingExternal=null;
+    browser.storage.onChanged.addListener((changes, area)=>{
+      if(area!=='local' || !changes || !changes.notesSession || !textarea) return;
+      const v=changes.notesSession.newValue;
+      if(typeof v!=='string' || v===textarea.value) return;
+      let focused=false; try{ focused=(document.activeElement===textarea)||(shadow.activeElement===textarea); }catch(e){}
+      if(focused){ rfnPendingExternal=v; return; }
+      textarea.value=v; updateStatus();
+    });
+    try{ textarea.addEventListener('blur',()=>{ if(rfnPendingExternal!==null && rfnPendingExternal!==textarea.value){ textarea.value=rfnPendingExternal; updateStatus(); } rfnPendingExternal=null; }); }catch(e){}
+  }catch(e){}
   // cross-tab auto-show if was open in other tab
   try{
     if(floatSync) floatSync.loadFloatState('note').then(st=>{
       if(st && st.isOpen){
-        vaultNoteId = st.vaultNoteId || null;
+        // v3.22.8: show() memuat session global dulu (sumber kebenaran); float
+        // state hanya fallback bila textarea masih kosong + pulihkan vault link.
         show().then(()=>{
-          if(typeof st.text==='string' && st.text) { textarea.value = st.text; updateStatus(); }
-          if(st.vaultNoteId) vaultNoteId = st.vaultNoteId;
+          if(st.vaultNoteId && !vaultNoteId) vaultNoteId = st.vaultNoteId;
+          if(typeof st.text==='string' && st.text && !textarea.value) { textarea.value = st.text; updateStatus(); }
         });
       }
     });

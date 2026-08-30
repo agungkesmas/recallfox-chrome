@@ -769,10 +769,26 @@
   });
 
   loadSession().then((s) => { if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
+  // v3.22.8: LIVE SYNC isi RecallTape antar tab — tapeSession sumber kebenaran
+  // global. Tab lain yang tape-nya terbuka ikut berubah real-time.
+  // Guard: jangan timpa saat user sedang mengetik di tab ini (apply saat blur).
+  try{
+    let rftPendingExternal=null;
+    browser.storage.onChanged.addListener((changes, area)=>{
+      if(area!=='local' || !changes || !changes.tapeSession || !textarea) return;
+      const v=changes.tapeSession.newValue;
+      if(typeof v!=='string' || v===textarea.value) return;
+      let focused=false; try{ focused=(document.activeElement===textarea)||(shadow.activeElement===textarea); }catch(e){}
+      if(focused){ rftPendingExternal=v; return; }
+      textarea.value=v; updateStatus();
+    });
+    try{ textarea.addEventListener('blur',()=>{ if(rftPendingExternal!==null && rftPendingExternal!==textarea.value){ textarea.value=rftPendingExternal; updateStatus(); } rftPendingExternal=null; }); }catch(e){}
+  }catch(e){}
   try{
     if(floatSync) floatSync.loadFloatState('tape').then(st=>{
       if(st && st.isOpen){
-        show().then(()=>{ if(typeof st.text==='string' && st.text) { textarea.value=st.text; updateStatus(); } });
+        // v3.22.8: session global (dimuat show()) menang; float state fallback.
+        show().then(()=>{ if(typeof st.text==='string' && st.text && !textarea.value) { textarea.value=st.text; updateStatus(); } });
       }
     });
   }catch(e){}
