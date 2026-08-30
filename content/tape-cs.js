@@ -50,6 +50,9 @@
   let host = null, shadow = null, popover = null, textarea = null;
   let statusAutosave = null;
   let pinBtn = null, isVisible = false, pinned = true;
+  // v3.22.7: guard SHOW_* basi — broadcast lintas-tab terlambat tidak boleh
+  // membangkitkan tape yang baru saja ditutup user.
+  let userHiddenAt = 0;
   let saveTimer = null, idleTimer = null;
 
   // ===== Theme =====
@@ -85,6 +88,7 @@
   function scheduleIdle(){ try{ if(!isVisible) return; setIdle(); }catch(e){} }
   // ===== Show / Hide =====
   async function show() {
+    userHiddenAt = 0;
     mount();
     const theme = await loadTheme();
     shadow.host.setAttribute('data-theme', theme);
@@ -101,6 +105,8 @@
     try{ if(floatSync) await floatSync.saveFloatState('tape', {isOpen:true, text: textarea.value}); }catch(e){}
   }
   function hide() { if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } isVisible=false;
+    // v3.22.7: catat waktu hide oleh user -> SHOW_TAPE broadcast basi (<5s) diabaikan
+    userHiddenAt = Date.now();
     try{ if(floatSync) floatSync.saveFloatState('tape', {isOpen:false}); }catch(e){} }
   async function toggle() { if (isVisible) hide(); else await show(); }
 
@@ -743,18 +749,23 @@
   // v3.20.3: OPEN_TAPE sekarang selalu show() (sebelumnya toggle() — bisa menyebabkan
   //   tape "hilang" kalau user klik tombol 2x cepat atau message terkirim 2x). Untuk
   //   hide, gunakan HIDE_TAPE atau klik outside / Esc.
-  browser.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'OPEN_TAPE') show();
+  // v3.22.7 FIX BUG-3 (port dari Firefox): wajib membalas pesan yang di-await
+  // background agar retry/inject tidak salah mengira content script absen.
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    const __ack = () => { if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} } };
+    if (msg.type === 'OPEN_TAPE'){ __ack(); show(); }
     else if (msg.type === 'ADD_TO_TAPE') {
+      __ack();
       show();
       textarea.value += (textarea.value ? '\n' : '') + msg.text;
       updateStatus();
       scheduleSave();
     }
-    else if (msg.type === 'SHOW_TAPE') show();
-    else if (msg.type === 'HIDE_TAPE') hide();
-    else if (msg.type === 'RF_HIDE_FOR_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display='none'; }catch(e){} }
-    else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display=''; }catch(e){} }
+    else if (msg.type === 'SHOW_TAPE'){ __ack(); if (Date.now() - userHiddenAt < 5000) return; show(); }
+    else if (msg.type === 'HIDE_TAPE'){ __ack(); hide(); }
+    else if (msg.type === 'RF_HIDE_FOR_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display='none'; }catch(e){} __ack(); }
+    else if (msg.type === 'RF_RESTORE_AFTER_CAPTURE'){ try{ const h=document.getElementById('recallfox-tape-host'); if(h) h.style.display=''; }catch(e){} __ack(); }
+    else { __ack(); }
   });
 
   loadSession().then((s) => { if(s && typeof s.pinned==='boolean') pinned=s.pinned; });

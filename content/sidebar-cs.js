@@ -361,8 +361,12 @@
     // Kalau respons tidak jelas (channel tanpa Promise di Firefox / ok:false /
     // gagal kirim), barulah fallback RF_FORWARD_TO_ACTIVE_TAB + CustomEvent.
     function openNote() {
+      // v3.22.7 FIX: fallback HANYA pada kegagalan EKSPLISIT (ok:false).
+      // res undefined (channel putus saat SW idle-kill / polyfill resolve
+      // "message port closed") dianggap SUKSES — RF_OPEN_NOTE di background
+      // sudah handle inject+retry sendiri; fallback dobel = modal terbuka 2x.
       browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).then((res) => {
-        if (res && res.ok) return;
+        if (!res || res.ok !== false) return;
         browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
         try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
       }).catch(() => {
@@ -372,7 +376,7 @@
     }
     function openTape() {
       browser.runtime.sendMessage({ type: 'RF_OPEN_TAPE' }).then((res) => {
-        if (res && res.ok) return;
+        if (!res || res.ok !== false) return;
         browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(()=>{});
         try{ window.dispatchEvent(new CustomEvent('rf-open-tape')); }catch(e){}
       }).catch(() => {
@@ -619,10 +623,13 @@
   }
 
   // ===== Message listener (from background + from iframe via postMessage) =====
-  browser.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'OPEN_SIDEBAR_IN_PAGE') show();
-    else if (msg.type === 'CLOSE_SIDEBAR_IN_PAGE') hide();
-    else if (msg.type === 'TOGGLE_SIDEBAR_IN_PAGE') toggle();
+  // v3.22.7 FIX BUG-3 (port dari Firefox): wajib membalas TOGGLE_SIDEBAR_IN_PAGE
+  // dsb. agar background inject+retry tidak salah putus content script absen.
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    const __ack = () => { if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} } };
+    if (msg.type === 'OPEN_SIDEBAR_IN_PAGE'){ show(); __ack(); }
+    else if (msg.type === 'CLOSE_SIDEBAR_IN_PAGE'){ hide(); __ack(); }
+    else if (msg.type === 'TOGGLE_SIDEBAR_IN_PAGE'){ toggle(); __ack(); }
     else if (msg.type === 'RF_HIDE_FOR_CAPTURE') {
       // v3.20.12: Background broadcasts this before captureVisibleTab
       if (host) host.style.display = 'none';

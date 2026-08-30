@@ -8,13 +8,16 @@
   let floatSync=null;
   try{ floatSync = await import(browser.runtime.getURL('lib/float-sync.js')); }catch(e){}
   let host=null,shadow=null,popover=null,textarea=null,statusAutosave=null,pinBtn=null,isVisible=false,pinned=true,saveTimer=null,idleTimer=null,vaultNoteId=null;
+  // v3.22.7: guard SHOW_* basi — broadcast lintas-tab yang datang terlambat
+  // SETELAH user menutup note tidak boleh membangkitkannya kembali.
+  let userHiddenAt = 0;
   async function loadTheme(){ try{ const r=await browser.storage.local.get(['settings']); let s=r.settings||{}; let t=s.theme||'auto'; if(t==='auto') t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'; return t;}catch(e){return 'dark';}}
   function mount(){ if(host) return; host=document.createElement('div'); host.id='recallfox-notes-host'; host.style.cssText='all:initial;position:fixed;top:0;right:0;width:0;height:0;z-index:2147483647;pointer-events:none;'; document.documentElement.appendChild(host); shadow=host.attachShadow({mode:'open'}); shadow.innerHTML=TEMPLATE; popover=shadow.querySelector('.rfn-popover'); textarea=shadow.querySelector('.rfn-editor'); statusAutosave=shadow.querySelector('.rfn-autosave'); pinBtn=shadow.querySelector('.rfn-pin'); wireEvents(); }
   function setActive(){ try{ if(popover) popover.classList.remove('rfn-idle'); }catch(e){} }
   function setIdle(){ try{ if(!isVisible) return; // hover-only: pinned tetap bisa transparan, hanya hover yang bedakan
     if(popover) popover.classList.add('rfn-idle'); }catch(e){} }
   function scheduleIdle(){ try{ if(!isVisible) return; setIdle(); }catch(e){} }
-  async function show(){ mount(); const theme=await loadTheme(); shadow.host.setAttribute('data-theme', theme); popover.classList.add('rfn-show'); isVisible=true;
+  async function show(){ userHiddenAt = 0; mount(); const theme=await loadTheme(); shadow.host.setAttribute('data-theme', theme); popover.classList.add('rfn-show'); isVisible=true;
     // default nempel: pinned true, pinBtn active
     pinned = true; if(pinBtn) pinBtn.classList.add('rfn-active'); try{ await savePinState(true); }catch(e){}
     // load: jika vaultNoteId ada, sudah diisi via message; else load session
@@ -30,6 +33,8 @@
     try{ if(floatSync) await floatSync.saveFloatState('note', {isOpen:true, text: textarea.value, vaultNoteId}); }catch(e){}
   }
   function hide(){ if(popover) { popover.classList.remove('rfn-show'); popover.classList.remove('rfn-idle'); } isVisible=false; if(idleTimer) clearTimeout(idleTimer);
+    // v3.22.7: catat waktu hide oleh user -> SHOW_NOTE broadcast basi (<5s) diabaikan
+    userHiddenAt = Date.now();
     try{ if(floatSync) floatSync.saveFloatState('note', {isOpen:false}); }catch(e){} }
   function updateStatus(){ if(statusAutosave){ const len=textarea.value.length; const words=textarea.value.trim()?textarea.value.trim().split(/\s+/).length:0; statusAutosave.textContent=len?`✓ Tersimpan otomatis · ${words} kata`:'✓ Tersimpan otomatis';}}
   function scheduleSave(){ if(saveTimer) clearTimeout(saveTimer); if(statusAutosave){statusAutosave.textContent='⏳ Menyimpan…'; statusAutosave.style.color='#F0B64A';} saveTimer=setTimeout(async()=>{
@@ -66,16 +71,22 @@
     try { browser.runtime.onMessage.addListener(msg=>{if(msg.type==='THEME_CHANGED'&&shadow) shadow.host.setAttribute('data-theme',msg.theme);}); } catch(e){}
     try { makeDraggable(); } catch(e){}
   }
-  browser.runtime.onMessage.addListener(msg=>{
+  // v3.22.7 FIX BUG-3 (port dari Firefox): listener WAJIB membalas pesan yang
+  // di-await background (OPEN_NOTE dsb.) — kalau tidak, retry/inject di background
+  // salah mengira content script absen dan modal bisa terkirim dobel.
+  browser.runtime.onMessage.addListener((msg, sender, sendResponse)=>{
+    const __ack = () => { if (typeof sendResponse === 'function') { try { sendResponse({ ok: true }); } catch (e) {} } };
     if(msg.type==='OPEN_NOTE_VAULT'){
       vaultNoteId = msg.noteId || null;
+      __ack();
       show().then(()=>{ if(typeof msg.text==='string') textarea.value = msg.text; updateStatus(); });
-    } else if(msg.type==='OPEN_NOTE'){ vaultNoteId=null; show(); }
-    else if(msg.type==='ADD_TO_NOTE'){ vaultNoteId=null; show(); textarea.value+=(textarea.value?'\n':'')+(msg.text||''); updateStatus(); scheduleSave();}
-    else if(msg.type==='SHOW_NOTE') show();
-    else if(msg.type==='HIDE_NOTE') hide();
-    else if(msg.type==='RF_HIDE_FOR_CAPTURE'){ if(host) host.style.display='none'; }
-    else if(msg.type==='RF_RESTORE_AFTER_CAPTURE'){ if(host) host.style.display=''; if(isVisible && popover) popover.classList.add('rfn-show'); }
+    } else if(msg.type==='OPEN_NOTE'){ vaultNoteId=null; __ack(); show(); }
+    else if(msg.type==='ADD_TO_NOTE'){ vaultNoteId=null; __ack(); show(); textarea.value+=(textarea.value?'\n':'')+(msg.text||''); updateStatus(); scheduleSave();}
+    else if(msg.type==='SHOW_NOTE'){ __ack(); if (Date.now() - userHiddenAt < 5000) return; show(); }
+    else if(msg.type==='HIDE_NOTE'){ __ack(); hide(); }
+    else if(msg.type==='RF_HIDE_FOR_CAPTURE'){ if(host) host.style.display='none'; __ack(); }
+    else if(msg.type==='RF_RESTORE_AFTER_CAPTURE'){ if(host) host.style.display=''; if(isVisible && popover) popover.classList.add('rfn-show'); __ack(); }
+    else { __ack(); }
   });
   loadSession().then(s=>{ if(s && typeof s.pinned==='boolean') pinned=s.pinned; });
   // cross-tab auto-show if was open in other tab

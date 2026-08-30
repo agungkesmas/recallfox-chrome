@@ -4567,6 +4567,44 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   // v3.14.3: SAVE_TAPE_TO_VAULT — simpan tape calculation ke vault sebagai note
+  // v3.22.7 FIX AUDIT (parity Firefox v3.22.4): SAVE_NOTE_TO_VAULT dikirim
+  // notes-cs.js (doSave) sejak v3.x tetapi tidak pernah punya handler di Chrome
+  // -> tombol "Simpan ke Catatan" selalu gagal ('Gagal simpan').
+  if (msg.type === 'SAVE_NOTE_TO_VAULT') {
+    (async () => {
+      try {
+        const { text, markdown } = msg;
+        const note = await addNote(markdown || text, {
+          title: '📝 RecallNote — ' + new Date().toLocaleString('id-ID'),
+          group: 'RecallNote'
+        });
+        sendResponse({ ok: true, noteId: note.id });
+      } catch (e) {
+        console.error('[RecallFox] SAVE_NOTE_TO_VAULT failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+  // v3.22.7 FIX AUDIT (parity Firefox v3.22.4): SAVE_NOTE_TO_VAULT dikirim
+  // notes-cs.js (doSave) sejak v3.x tetapi tidak pernah punya handler di Chrome
+  // -> tombol "Simpan ke Catatan" selalu gagal ('Gagal simpan').
+  if (msg.type === 'SAVE_NOTE_TO_VAULT') {
+    (async () => {
+      try {
+        const { text, markdown } = msg;
+        const note = await addNote(markdown || text, {
+          title: '📝 RecallNote — ' + new Date().toLocaleString('id-ID'),
+          group: 'RecallNote'
+        });
+        sendResponse({ ok: true, noteId: note.id });
+      } catch (e) {
+        console.error('[RecallFox] SAVE_NOTE_TO_VAULT failed:', e);
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
+    return true;
+  }
   if (msg.type === 'SAVE_TAPE_TO_VAULT') {
     (async () => {
       try {
@@ -5013,7 +5051,14 @@ try {
     for (const key of ['floatNoteState','floatTapeState']) {
       if (changes[key]) {
         const float = changes[key].newValue;
-        if (float && float.isOpen) {
+        // v3.22.7 FIX RESURRECTION: Chrome fire storage.onChanged pada SETIAP set()
+        // (termasuk nilai identik), dan show() menulis ulang float state di akhir
+        // show() -> broadcast SHOW_* -> show() lagi = ECHO LOOP TAK BERUJUNG.
+        // Broadcast in-flight yang mendarat setelah user menutup modal membuat
+        // modal "bangkit kembali beberapa detik kemudian". FIX: broadcast HANYA
+        // pada transisi tertutup -> terbuka.
+        const __rfPrev = changes[key].oldValue;
+        if (float && float.isOpen && !(__rfPrev && __rfPrev.isOpen)) {
           browser.tabs.query({}).then(tabs=>{
             tabs.forEach(t=>{
               if (t.id && t.url && /^(https?:|file):/i.test(t.url)) {
