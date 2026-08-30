@@ -104,7 +104,24 @@
       // v3.21.24: persist orient supaya reload tetap orient terakhir.
       // orient opsional — kalau undefined, baca dari current state floaterPair.
       const o = orient || (floaterPair && floaterPair.dataset.orient) || 'horizontal';
-      localStorage.setItem(FLOATER_POS_KEY, JSON.stringify({ x, y, orient: o }));
+      // v3.22.9 FIX-4: tandai format v2 — posisi yang disimpan setelah rilis ini
+      // adalah posisi pilihan user sendiri (hasil drag), dihormati apa adanya.
+      localStorage.setItem(FLOATER_POS_KEY, JSON.stringify({ x, y, orient: o, v: 2 }));
+    } catch (e) {}
+  }
+  // v3.22.9 FIX-4: posisi default pill mengambang = KIRI TENGAH (perilaku yang
+  // diharapkan user sejak awal install) — bukan kanan-bawah.
+  function placeFloaterLeftCenter() {
+    try {
+      const isV = (floaterPair && floaterPair.dataset.orient === 'vertical');
+      const pw = isV ? 44 : 170;  // 36px tombol + 8px padding
+      const ph = isV ? 170 : 44;
+      const x = 14;
+      const y = Math.max(0, Math.round((window.innerHeight - ph) / 2));
+      floaterPair.style.bottom = 'auto';
+      floaterPair.style.right = 'auto';
+      floaterPair.style.left = x + 'px';
+      floaterPair.style.top = y + 'px';
     } catch (e) {}
   }
 
@@ -314,8 +331,12 @@
     floaterPair.appendChild(tapeBtn);
 
     // Restore position — 4 buttons need ~170px width (horizontal) / 170px height (vertical)
+    // v3.22.9 FIX-4: hanya posisi format v2 (hasil drag user setelah rilis ini)
+    // yang dipulihkan. Posisi format lama (tanpa v) = default kanan-bawah lama /
+    // sisa drag lama → dimigrasi ke KIRI TENGAH sesuai permintaan user. Setelah
+    // ini user bebas drag ulang — posisi barunya tersimpan dengan v:2.
     const savedPos = loadFloaterPos();
-    if (savedPos) {
+    if (savedPos && savedPos.v === 2) {
       // v3.21.24: Apply orient yang di-save dulu sebelum set posisi,
       // supaya getBoundingClientRect() di onUp baca ukuran yang benar.
       const initialOrient = savedPos.orient === 'vertical' ? 'vertical' : 'horizontal';
@@ -324,12 +345,13 @@
       const isV = initialOrient === 'vertical';
       const pw = isV ? 44 : 170;  // 36 + 8 padding
       const ph = isV ? 170 : 44;
+      floaterPair.style.bottom = 'auto';
+      floaterPair.style.right = 'auto';
       floaterPair.style.left = Math.max(0, Math.min(window.innerWidth - pw, savedPos.x)) + 'px';
       floaterPair.style.top  = Math.max(0, Math.min(window.innerHeight - ph, savedPos.y)) + 'px';
     } else {
-      floaterPair.style.bottom = '24px';
-      floaterPair.style.right = '24px';
-      applyOrientation('horizontal');  // default
+      applyOrientation(savedPos && savedPos.orient === 'vertical' ? 'vertical' : 'horizontal');
+      placeFloaterLeftCenter();  // default v3.22.9: kiri tengah
     }
 
     // ===== Drag logic (pair container, bukan per-button) =====
@@ -671,6 +693,29 @@
       // v3.20.10 FIX: Content scripts don't have browser.tabs access in Firefox.
       // Send message to background.js to forward OPEN_TAPE to active tab.
       browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_TAPE' }).catch(() => {});
+    }
+    else if (e.data?.type === 'RF_OPEN_NOTE') {
+      // v3.22.9 FIX-1: popup.js openNotesPopover mengirim RF_OPEN_NOTE via
+      // postMessage saat berjalan di dalam iframe popout (window!==window.top).
+      // Sebelumnya tidak ada handler → tombol 📝 header mati di popout.
+      // Pola sama dengan openNote() floater: 1 pesan primer + fallback respons.
+      browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).then((res) => {
+        if (!res || res.ok !== false) return;
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
+      }).catch(() => {
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-note')); }catch(e){}
+      });
+    }
+    else if (e.data?.type === 'RF_OPEN_NOTE_VAULT') {
+      // v3.22.9 FIX-1: fallback terakhir tombol ⧉ di popup.js — forward ke
+      // background supaya note vault terbuka mengambang di tab aktif
+      // (background otomatis inject notes-cs.js bila belum ada).
+      browser.runtime.sendMessage({
+        type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE_VAULT',
+        noteId: e.data.noteId, text: e.data.text
+      }).catch(() => {});
     }
   });
 

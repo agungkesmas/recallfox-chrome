@@ -265,6 +265,47 @@ function stripHtmlForPreview(html) {
   let txt = (tmp.textContent || '').replace(/\u00a0/g, ' ');
   return txt;
 }
+// v3.22.9 FIX-3: konversi body catatan (plain text ATAU HTML hasil editor
+// contenteditable) ke plain text dengan baris terjaga. Dipakai semua konsumen
+// raw-text — utamanya floating note (textarea plain): sebelumnya body HTML
+// mentah ("div soup" dari contenteditable) tampil sebagai tulisan <div> literal.
+// Block-aware: div/p/li/h1-6/tr/blockquote/pre/hr → newline; br → newline.
+function noteBodyToPlain(html) {
+  if (html == null) return '';
+  const s = String(html);
+  if (!/<[a-z][\s\S]*>/i.test(s)) return s;
+  try {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = s;
+    const BLOCK = { DIV:1,P:1,LI:1,UL:1,OL:1,TABLE:1,THEAD:1,TBODY:1,TFOOT:1,TR:1,H1:1,H2:1,H3:1,H4:1,H5:1,H6:1,BLOCKQUOTE:1,PRE:1,HR:1 };
+    let out = '';
+    (function walk(node) {
+      for (let ch = node.firstChild; ch; ch = ch.nextSibling) {
+        if (ch.nodeType === 3) { out += ch.nodeValue; }
+        else if (ch.nodeType === 1) {
+          const tag = ch.tagName;
+          if (tag === 'BR') { out += '\n'; }
+          else { walk(ch); if (BLOCK[tag]) out += '\n'; }
+        }
+      }
+    })(tmp);
+    return out.replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  } catch (e) { return stripHtmlForPreview(s); }
+}
+// v3.22.9 FIX-3: normalisasi isi editor contenteditable sebelum disimpan.
+// Browser selalu membungkus tiap baris ketikan dalam <div> ("div soup") —
+// body lalu bocor sebagai tulisan "<div>" literal di floating note/salinan.
+// - Hanya wrapper <div>/<br> (ketikan biasa) → simpan PLAIN TEXT dengan \n.
+// - Ada formatting nyata (paste tabel/bold/heading dll) → biarkan HTML apa adanya
+//   (konsumen raw-text sudah lewat noteBodyToPlain, jadi tetap bersih).
+function normalizeEditorHtml(html) {
+  if (!html) return '';
+  const s = String(html);
+  if (!/<[a-z][\s\S]*>/i.test(s)) return s;
+  // Tag formatting nyata = tag apa pun selain div/br (span dgn style termasuk formatting)
+  if (/<(?!\/?(?:div|br)[\s/>])[a-z][^>]*>/i.test(s)) return s;
+  return noteBodyToPlain(s);
+}
 function timeAgo(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -7630,30 +7671,44 @@ async function renderNotes() {
     openNoteEditor(c.dataset.nid);
   }));
   // v3.21.15: Tombol ⧉ Mengambang — buka floating nyambung autosave vault
+  // v3.22.9 FIX-1 (Firefox: tombol ⧉ mati): jalur primer = RF_FORWARD_TO_ACTIVE_TAB
+  // via browser.runtime — API ini SELALU tersedia di semua konteks extension page
+  // (popup window, sidePanel Chrome, sidebar native Firefox, iframe popout).
+  // Sebelumnya fallback hanya window.parent.postMessage(RF_OPEN_NOTE_VAULT) yang
+  // TIDAK PERNAH ditangani siapa pun → di sidebar Firefox tombol terasa mati.
+  // v3.22.9 FIX-3: kirim plain text (noteBodyToPlain) — floating note adalah
+  // textarea plain; body HTML mentah tampil sebagai "<div>" literal.
   list.querySelectorAll('[data-float]').forEach(btn => btn.addEventListener('click', async (e) => {
     e.stopPropagation(); e.preventDefault();
     const nid = btn.dataset.float;
     const note = currentNotes.find(n=>n.id===nid);
     if (!note) return;
+    const floatText = noteBodyToPlain(note.body||'');
     try {
+      // Jalur primer: forward via background (runtime API ada di semua konteks)
+      try {
+        const res = await browser.runtime.sendMessage({ type:'RF_FORWARD_TO_ACTIVE_TAB', msgType:'OPEN_NOTE_VAULT', noteId: nid, text: floatText });
+        if (res && res.ok) {
+          toast('📝 Mengambang nyambung vault');
+          if(!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},300);
+          return;
+        }
+      } catch(eFwd){}
       // Cek tab aktif — support http/https/file + PDF viewer
       let tabs = [];
-      try { tabs = await browser.tabs.query({active:true, currentWindow:true}); } catch(e){
-        // Fallback untuk sidebar iframe di Firefox (browser.tabs undefined)
-        try{ window.parent.postMessage({type:'RF_OPEN_NOTE_VAULT', noteId: nid, text: note.body||''}, '*'); toast('📝 Mengambang nyambung'); return; }catch(ee){}
-      }
+      try { tabs = await browser.tabs.query({active:true, currentWindow:true}); } catch(e){}
       const tab = tabs && tabs[0];
       const isWebOrFile = tab && tab.id && (/^(https?|file):/i.test(tab.url||'') || /\.pdf(\?|#|$)/i.test(tab.url||''));
       if (isWebOrFile) {
         try {
-          await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
+          await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: floatText});
           toast('📝 Mengambang nyambung vault');
           if(!document.body.classList.contains('rf-sidebar-body')) setTimeout(()=>{ try{window.close()}catch(e){}},300);
           return;
         } catch(err){
           try{
             await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/notes-cs.js']});
-            await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: note.body||''});
+            await browser.tabs.sendMessage(tab.id, {type:'OPEN_NOTE_VAULT', noteId: nid, text: floatText});
             toast('📝 Mengambang nyambung');
             return;
           }catch(e2){
@@ -7670,8 +7725,9 @@ async function renderNotes() {
           }
         }
       }
-      // Fallback: coba via parent postMessage (untuk sidebar iframe)
-      try{ window.parent.postMessage({type:'RF_OPEN_NOTE_VAULT', noteId: nid, text: note.body||''}, '*'); toast('📝 Mengambang'); return; }catch(e){}
+      // Fallback terakhir: postMessage ke parent (sidebar iframe) — v3.22.9:
+      // sidebar-cs.js sekarang PUNYA handler RF_OPEN_NOTE_VAULT.
+      try{ window.parent.postMessage({type:'RF_OPEN_NOTE_VAULT', noteId: nid, text: floatText}, '*'); toast('📝 Mengambang'); return; }catch(e){}
       toast('Buka halaman web dulu untuk mengambang', false);
     } catch(e){ console.warn('float failed',e); }
   }));
@@ -7975,7 +8031,10 @@ function openNoteEditor(noteId) {
     clearTimeout(noteSaveTimer);
     noteSaveTimer = setTimeout(async () => {
       let titleVal = titleInput.value.trim();
-      let bodyHtml = ta.innerHTML;
+      // v3.22.9 FIX-3: normalisasi div-soup contenteditable → plain text
+      // (kecuali ada formatting nyata hasil paste). Tanpa ini catatan menyimpan
+      // "<div>..." literal yang muncul di floating note & salinan raw.
+      let bodyHtml = normalizeEditorHtml(ta.innerHTML);
       let bodyText = stripHtmlForPreview(bodyHtml);
       // Parse natural language dari title + body preview
       let parsed = null;
@@ -8636,7 +8695,20 @@ async function openTapePopover() {
 }
 // RecallNote — floating note trigger (safe, sama pattern openTapePopover)
 async function openNotesPopover() {
-  if (window !== window.top) { window.parent.postMessage({ type: 'RF_OPEN_NOTE' }, '*'); try { toast('📝 Catatan mengambang dibuka'); } catch (e) {} return; }
+  if (window !== window.top) {
+    // v3.22.9 FIX-1: di iframe popout, browser.runtime SELALU ada — pakai jalur
+    // background dulu. Sebelumnya hanya postMessage RF_OPEN_NOTE ke parent yang
+    // (sebelum v3.22.9) tidak ditangani siapa pun → tombol 📝 header mati.
+    try {
+      const res = await browser.runtime.sendMessage({ type: 'RF_OPEN_NOTE' }).catch(() => null);
+      if (res && res.ok) { try { toast('📝 Catatan mengambang dibuka'); } catch (e) {} return; }
+      await browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_NOTE' }).catch(() => {});
+      try { toast('📝 Catatan mengambang dibuka'); } catch (e) {}
+    } catch (e) {
+      try { window.parent.postMessage({ type: 'RF_OPEN_NOTE' }, '*'); toast('📝 Catatan mengambang dibuka'); } catch (ee) {}
+    }
+    return;
+  }
   try {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     if (tabs && tabs[0]) {
@@ -11439,6 +11511,17 @@ async function init() {
     setW();
     window.addEventListener('resize', setW);
   }
+
+  // v3.22.9 FIX-1: dukung popup.html?floatNote=<id> — fallback note vault di
+  // viewer PDF (resource://pdf.js tidak bisa diinjeksi content script). Sebelumnya
+  // jendela popup terbuka tapi param tidak pernah ditangani → tampi kosong.
+  try {
+    const fp = new URLSearchParams(location.search).get('floatNote');
+    if (fp) {
+      try { history.replaceState(null, '', location.pathname); } catch (e) {}
+      setTimeout(() => { try { openNoteEditor(fp); } catch (e) { console.warn('floatNote open failed', e); } }, 250);
+    }
+  } catch (e) {}
 
   // v3.11.1: Focus search — di-skip karena search bar sudah dihapus.
   // Quick-actions bar tidak perlu auto-focus (user pilih tombol yang mau).

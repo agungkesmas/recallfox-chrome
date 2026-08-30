@@ -4706,10 +4706,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (msg.text !== undefined) payload.text = msg.text;
           if (msg.mode !== undefined) payload.mode = msg.mode;
           if (msg.data !== undefined) payload.data = msg.data;
+          // v3.22.9 FIX-1: OPEN_NOTE_VAULT butuh noteId (link autosave vault)
+          if (msg.noteId !== undefined) payload.noteId = msg.noteId;
           try{ await browser.tabs.sendMessage(tab.id, payload); }
           catch(e){
             // Content script belum loaded — inject lalu retry sekali
-            const file = msg.msgType==='OPEN_NOTE'?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js':'content/sidebar-cs.js';
+            // v3.22.9 FIX-1: OPEN_NOTE_VAULT juga di-handle notes-cs.js
+            const file = (msg.msgType==='OPEN_NOTE'||msg.msgType==='OPEN_NOTE_VAULT')?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js':'content/sidebar-cs.js';
             await browser.scripting.executeScript({target:{tabId:tab.id}, files:[file]});
             await browser.tabs.sendMessage(tab.id, payload);
           }
