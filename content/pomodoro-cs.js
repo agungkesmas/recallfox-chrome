@@ -1,4 +1,4 @@
-// content/pomodoro-cs.js — RecallPomodoro floating timer (v3.23.1)
+// content/pomodoro-cs.js — RecallPomodoro floating timer (v3.23.1; dock v3.23.2)
 //
 // Permintaan user (v3.23.1): tombol floating untuk Pomodoro dengan perilaku
 // TRANSparan seperti RecallNote/RecallTape (idle = transparan, hover = penuh,
@@ -78,7 +78,9 @@
   function createInitial(preset, customWork, customBreak) {
     const p = getPreset(preset, customWork, customBreak);
     return {
-      open: false, collapsed: false, pinned: true, x: null, y: null,
+      // v3.23.2: default TERTUTUP (collapsed) + TERPIN — bar ramping di dock;
+      // dv:2 penanda default baru sudah diterapkan (pilihan user dihormati).
+      open: false, collapsed: true, pinned: true, x: null, y: null, dv: 2,
       preset: (preset === 'custom' || PRESETS[preset]) ? preset : '25/5',
       customWork: parseInt(customWork) || 25,
       customBreak: parseInt(customBreak) || 5,
@@ -103,6 +105,13 @@
   let cache = null;
   async function load() {
     try { const r = await browser.storage.local.get([KEY]); cache = r[KEY] || null; } catch (e) { /* keep cache */ }
+    // v3.23.2 migrasi sekali: default baru "tertutup & terpin di dock". State
+    // lama v3.23.1 dilipat sekali saat upgrade; dv:2 menandai migrasi selesai
+    // sehingga pilihan user sesudahnya dihormati.
+    if (cache && cache.dv !== 2) {
+      cache.dv = 2; cache.collapsed = true;
+      try { await browser.storage.local.set({ [KEY]: cache }); } catch (e) {}
+    }
     return cache;
   }
   async function save(s) {
@@ -174,6 +183,11 @@
     } catch (e) {}
   }
 
+  // ===== Dock (v3.23.2) =====
+  // Pemicu layout dock global (content/float-dock.js) — pomodoro kini bagian
+  // dari deretan yang sama dengan RecallNote/Tape (satu deretan, kanan-atas).
+  function rfLayout() { try { if (window.__RFDock) window.__RFDock.layout(); } catch (e) {} }
+
   // ===== Controller (single instance) =====
   let ctrl = null;
   function buildCtrl(st) {
@@ -209,7 +223,7 @@
 
     function applyGeometry() {
       try {
-        if (typeof st.x === 'number' && typeof st.y === 'number') { popover.style.left = st.x + 'px'; popover.style.top = st.y + 'px'; popover.style.right = 'auto'; }
+        // v3.23.2 DOCK: posisi dari dock global (bukan st.x/st.y)
         popover.classList.toggle('rfp-min', !!st.collapsed);
       } catch (e) {}
     }
@@ -241,9 +255,9 @@
         if (customBox) customBox.style.display = s.preset === 'custom' ? 'flex' : 'none';
         if (wInput) wInput.value = parseInt(s.customWork) || 25;
         if (bInput) bInput.value = parseInt(s.customBreak) || 5;
-        // posisi follow state bila berubah dari tab lain
-        if (typeof s.x === 'number' && typeof s.y === 'number' && (s.x !== st.x || s.y !== st.y)) { st.x = s.x; st.y = s.y; }
         applyGeometry();
+        // v3.23.2 DOCK: gulung/buka dari tab lain → restack deretan di tab ini
+        if (stv.lastCollapsed !== st.collapsed) { stv.lastCollapsed = st.collapsed; rfLayout(); }
       } catch (e) {}
     }
     async function show() {
@@ -256,7 +270,7 @@
       render(cache || st);
     }
     function hideDom() { try { popover.classList.remove('rfp-show'); popover.classList.remove('rfp-idle'); } catch (e) {} stv.isVisible = false; }
-    function destroy() { try { host.remove(); } catch (e) {} }
+    function destroy() { try { if (window.__RFDock) window.__RFDock.unregister('pomo:main'); } catch (e) {} try { host.remove(); } catch (e) {} }
     async function close() {
       hideDom(); destroy(); ctrl = null;
       const s = await load();
@@ -291,14 +305,14 @@
     async function doPreset(preset) {
       const s = await load(); if (!s) return;
       // paritas strip sidebar: ganti preset = reset penuh (siklus kembali 0)
-      const keep = { pinned: s.pinned, x: s.x, y: s.y, open: s.open, collapsed: s.collapsed, soundOn: s.soundOn, soundFile: s.soundFile };
+      const keep = { pinned: s.pinned, open: s.open, collapsed: s.collapsed, soundOn: s.soundOn, soundFile: s.soundFile }; // v3.23.2: x/y tidak lagi bagian state
       const ns = createInitial(preset, s.customWork, s.customBreak);
       Object.assign(ns, keep, { updatedAt: Date.now() });
       await save(ns); render(ns);
     }
     async function doCustom() {
       const s = await load(); if (!s) return;
-      const keep = { pinned: s.pinned, x: s.x, y: s.y, open: s.open, collapsed: s.collapsed, soundOn: s.soundOn, soundFile: s.soundFile };
+      const keep = { pinned: s.pinned, open: s.open, collapsed: s.collapsed, soundOn: s.soundOn, soundFile: s.soundFile }; // v3.23.2: x/y tidak lagi bagian state
       const ns = createInitial('custom', wInput && wInput.value, bInput && bInput.value);
       Object.assign(ns, keep, { updatedAt: Date.now() });
       await save(ns); render(ns);
@@ -323,7 +337,7 @@
       let d = false, dx = 0, dy = 0, moved = false;
       hd.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('button,select,input')) return; d = true; moved = false; const rect = popover.getBoundingClientRect(); dx = e.clientX - rect.left; dy = e.clientY - rect.top; popover.style.transition = 'none'; e.preventDefault(); });
       document.addEventListener('mousemove', e => { if (!d) return; moved = true; popover.style.left = (e.clientX - dx) + 'px'; popover.style.top = (e.clientY - dy) + 'px'; popover.style.right = 'auto'; });
-      document.addEventListener('mouseup', () => { if (d) { d = false; popover.style.transition = ''; if (moved) { try { st.x = parseInt(popover.style.left, 10) || 0; st.y = parseInt(popover.style.top, 10) || 0; (async () => { const s = await load(); if (s) { s.x = st.x; s.y = st.y; await save(s); } })(); } catch (e) {} } } });
+      document.addEventListener('mouseup', () => { if (d) { d = false; popover.style.transition = ''; } }); // v3.23.2 DOCK: x/y drag tidak dipersist
     }
 
     function wireEvents() {
@@ -354,6 +368,9 @@
       try { makeDraggable(); } catch (e) {}
     }
     wireEvents();
+    // v3.23.2 DOCK: daftarkan pomodoro ke dock global — satu deretan dengan
+    // RecallNote/Tape; lebar 320 (senada tape), tergulung = bar 44px.
+    try { if (window.__RFDock) window.__RFDock.register({ key: 'pomo:main', kind: 'pomo', t: st.createdAt || 0, visible: () => stv.isVisible, width: () => 320, height: () => st.collapsed ? 44 : 300, place: (x, y) => setPos(x, y) }); } catch (e) {}
 
     return { show, hideDom, destroy, close, setTheme, render, setPos, get isVisible() { return stv.isVisible; } };
   }
@@ -362,27 +379,21 @@
   async function ensureOpen() {
     let s = await load();
     if (!s) s = await initState();
-    if (!s.open || typeof s.x !== 'number' || typeof s.y !== 'number') {
-      s.open = true;
-      if (typeof s.x !== 'number' || typeof s.y !== 'number') {
-        // default: kiri, sedikit di bawah pill mengambang (kiri tengah)
-        const x = 14;
-        let y = Math.round(window.innerHeight / 2) + 56;
-        y = Math.max(8, Math.min(window.innerHeight - 280, y));
-        s.x = x; s.y = y;
-      }
-      await save(s);
-    }
+    // v3.23.2: default TERTUTUP (collapsed) + TERPIN — tampil sebagai bar
+    // ramping di deretan dock (kanan-atas) bersama RecallNote/Tape; klik ▾
+    // untuk membuka panel penuh. Posisi diatur dock global (float-dock.js).
+    if (!s.open) { s.open = true; await save(s); }
     if (!ctrl) ctrl = buildCtrl(s);
     cache = s;
     await ctrl.show();
     renderCtrl();
+    rfLayout();
   }
   function renderCtrl() { try { if (ctrl && cache) ctrl.render(cache); } catch (e) {} }
   async function reconcileFromStorage() {
     const s = await load();
     if (!s || !s.open) { if (ctrl) { ctrl.hideDom(); ctrl.destroy(); ctrl = null; } return; }
-    if (!ctrl) { ctrl = buildCtrl(s); await ctrl.show(); }
+    if (!ctrl) { ctrl = buildCtrl(s); await ctrl.show(); rfLayout(); }
     else renderCtrl();
   }
 
@@ -417,14 +428,14 @@
   try { setInterval(() => { try { tickAttempt(); } catch (e) {} }, 500); } catch (e) {}
 
   // Boot: pulihkan bila state open:true (incl. file://).
-  (async function boot() { try { const s = await load(); if (s && s.open) { if (!ctrl) ctrl = buildCtrl(s); await ctrl.show(); } } catch (e) {} })();
+  (async function boot() { try { const s = await load(); if (s && s.open) { if (!ctrl) ctrl = buildCtrl(s); await ctrl.show(); rfLayout(); } } catch (e) {} })();
 
   // ===== Template (HTML + CSS inlined in Shadow DOM) =====
   const TEMPLATE = `<style>
 :host{all:initial}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 .rfp-popover{
-  position:fixed; top:60px; left:14px; width:264px;
+  position:fixed; top:60px; left:14px; width:320px;
   background:#0E182A; color:#E8EEF7;
   border:1px solid rgba(239,68,68,0.3); border-radius:12px;
   box-shadow:0 18px 50px rgba(0,0,0,.55);

@@ -131,7 +131,7 @@
       try{
         if (typeof data.w === 'number' && data.w > 0) popover.style.width = data.w + 'px';
         if (!data.collapsed && typeof data.h === 'number' && data.h > 0) popover.style.height = data.h + 'px';
-        if (typeof data.x === 'number' && typeof data.y === 'number') { popover.style.left = data.x + 'px'; popover.style.top = data.y + 'px'; popover.style.right = 'auto'; }
+        // v3.23.2 DOCK: posisi tidak lagi dari data.x/y — dock global yang menata.
         popover.classList.toggle('rft-min', !!data.collapsed);
         if (data.collapsed) { if (!st.prevH) st.prevH = popover.style.height || ''; popover.style.height = 'auto'; }
         else if (st.prevH) { popover.style.height = st.prevH; st.prevH = ''; }
@@ -150,8 +150,7 @@
         if (typeof d.collapsed === 'boolean') data.collapsed = d.collapsed;
         if (typeof d.w === 'number') data.w = d.w;
         if (typeof d.h === 'number') data.h = d.h;
-        if (typeof d.x === 'number') data.x = d.x;
-        if (typeof d.y === 'number') data.y = d.y;
+        // v3.23.2 DOCK: x/y tidak lagi direkonsiliasi (dock yang menata posisi)
         if (typeof d.color === 'string' && d.color !== data.color) { const nc = normColor(d.color); if (nc) { data.color = nc; applyColor(); } }
         if (colChanged) applyGeometry();
       }catch(e){}
@@ -170,7 +169,7 @@
       setTimeout(() => { try{ textarea.focus(); }catch(e){} }, 50);
     }
     function hideDom(){ if (popover) { popover.classList.remove('rft-show'); popover.classList.remove('rft-idle'); } st.isVisible = false; }
-    function destroy(){ try{ host.remove(); }catch(e){} }
+    function destroy(){ try{ if (window.__RFDock) window.__RFDock.unregister('tape:' + data.id); }catch(e){} try{ host.remove(); }catch(e){} }
     async function closeLocal(markClosed){
       hideDom();
       if (markClosed === false) { destroy(); return; }
@@ -623,13 +622,7 @@
     document.addEventListener('mouseup', () => {
       if (dragging) {
         dragging = false; popover.style.transition = '';
-        if (moved) {
-          try {
-            data.x = parseInt(popover.style.left, 10) || 0;
-            data.y = parseInt(popover.style.top, 10) || 0;
-            patchLocal(data.id, { x: data.x, y: data.y });
-          } catch (e) {}
-        }
+        // v3.23.2 DOCK: x/y drag tidak dipersist (dock yang menata posisi)
       }
     });
   }
@@ -709,31 +702,20 @@
     } catch (e) {}
   }
     wireEvents();
+    // v3.23.2 DOCK: daftarkan floater ke dock global — satu deretan rapi
+    // kanan-atas bersama RecallNote & RecallPomodoro (content/float-dock.js).
+    try { if (window.__RFDock) window.__RFDock.register({ key: 'tape:' + data.id, kind: 'tape', t: data.createdAt || 0, visible: () => st.isVisible, width: () => Math.max(280, (typeof data.w === 'number' && data.w) || 320), height: () => data.collapsed ? 44 : Math.max(260, (typeof data.h === 'number' && data.h) || 320), place: (x, y) => setPos(x, y) }); } catch (e) {}
 
     const ctrl = { id: data.id, show, hideDom, closeLocal, destroy, setCollapsed, setPos, setTheme, append, applyFrom, applyTextForce, focusSoon, get isVisible(){ return st.isVisible; } };
     return ctrl;
   }
 
-  // ===== Auto-arrange (auto merapihkan diri) =====
-  // Tape menumpuk rapi dari tepi KIRI (notes menumpuk di kanan — tidak tabrakan).
-  // Instance tanpa posisi pilihan user (x/y null) yang ditata; yang pernah
-  // digeser user tidak diganggu.
-  function tidy(){
-    try{
-      getList().then(list=>{
-        let x = 14, y = 60;
-        for (const d of list){
-          if (!d.open) continue;
-          const c = ctrls.get(d.id); if (!c) continue;
-          const W = Math.max(280, (typeof d.w==='number'&&d.w) || 320);
-          const H = d.collapsed ? 44 : Math.max(120, (typeof d.h==='number'&&d.h) || 320);
-          if (y + H > window.innerHeight - 8) { x = x + W + 12; y = 60; }
-          if (typeof d.x !== 'number' || typeof d.y !== 'number') c.setPos(x, y);
-          y += H + 10;
-        }
-      });
-    }catch(e){}
-  }
+  // ===== Dock (v3.23.2): auto merapihkan diri via float-dock.js =====
+  // Tape kini ikut SATU deretan rapi yang sama dengan RecallNote & Pomodoro
+  // di tepi kanan-atas (tidak lagi kolom kiri terpisah). Setiap gulung (\u25be) /
+  // buka (>) / buka-tutup lembar memicu restack penuh — tidak misah-misah.
+  // Algoritma lengkap: content/float-dock.js.
+  function tidy(){ try{ if (window.__RFDock) window.__RFDock.layout(); }catch(e){} }
 
   // ===== Reconcile dari storage (cross-tab real-time + boot) — TIDAK menulis =====
   function reconcile(list){

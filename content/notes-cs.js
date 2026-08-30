@@ -1,4 +1,4 @@
-// content/notes-cs.js — RecallNote floating note (MULTI-INSTANCE, v3.23.0)
+// content/notes-cs.js — RecallNote floating note (MULTI-INSTANCE, v3.23.0; dock v3.23.2)
 //
 // v3.23.0 (permintaan user): tombol 📝 (pill 4 tombol / header) berarti LEMBAR
 // BARU — bisa membuka 2-3+ RecallNote sekaligus. Setiap floater punya:
@@ -107,7 +107,7 @@
       try{
         if (typeof data.w === 'number' && data.w > 0) popover.style.width = data.w + 'px';
         if (!data.collapsed && typeof data.h === 'number' && data.h > 0) popover.style.height = data.h + 'px';
-        if (typeof data.x === 'number' && typeof data.y === 'number') { popover.style.left = data.x + 'px'; popover.style.top = data.y + 'px'; popover.style.right = 'auto'; }
+        // v3.23.2 DOCK: posisi tidak lagi dari data.x/y — dock global yang menata.
         popover.classList.toggle('rfn-min', !!data.collapsed);
         if (data.collapsed) { if (!st.prevH) st.prevH = popover.style.height || ''; popover.style.height = 'auto'; }
         else if (st.prevH) { popover.style.height = st.prevH; st.prevH = ''; }
@@ -127,8 +127,7 @@
         if (typeof d.color === 'string' && d.color !== data.color) { const nc = normColor(d.color); if (nc) { data.color = nc; applyColor(); } }
         if (typeof d.w === 'number') data.w = d.w;
         if (typeof d.h === 'number') data.h = d.h;
-        if (typeof d.x === 'number') data.x = d.x;
-        if (typeof d.y === 'number') data.y = d.y;
+        // v3.23.2 DOCK: x/y tidak lagi direkonsiliasi (dock yang menata posisi)
         const colChanged = (!!d.collapsed !== !!data.collapsed);
         if (typeof d.collapsed === 'boolean') data.collapsed = d.collapsed;
         if (colChanged) applyGeometry();
@@ -149,7 +148,7 @@
       setTimeout(()=>{ try{ textarea.focus(); }catch(e){} }, 50);
     }
     function hideDom(){ if(popover) { popover.classList.remove('rfn-show'); popover.classList.remove('rfn-idle'); } st.isVisible = false; }
-    function destroy(){ try{ host.remove(); }catch(e){} }
+    function destroy(){ try{ if (window.__RFDock) window.__RFDock.unregister('note:' + data.id); }catch(e){} try{ host.remove(); }catch(e){} }
     async function closeLocal(markClosed){
       hideDom();
       if (markClosed === false) { destroy(); return; }
@@ -202,7 +201,7 @@
       let d=false,dx=0,dy=0,moved=false;
       hd.addEventListener('mousedown',e=>{ if(e.target.closest('button'))return; d=true;moved=false; const rect=popover.getBoundingClientRect(); dx=e.clientX-rect.left; dy=e.clientY-rect.top; popover.style.transition='none'; e.preventDefault();});
       document.addEventListener('mousemove',e=>{ if(!d)return; moved=true; popover.style.left=(e.clientX-dx)+'px'; popover.style.top=(e.clientY-dy)+'px'; popover.style.right='auto';});
-      document.addEventListener('mouseup',()=>{ if(d){ d=false; popover.style.transition=''; if(moved){ try{ data.x=parseInt(popover.style.left,10)||0; data.y=parseInt(popover.style.top,10)||0; patchLocal(data.id,{x:data.x,y:data.y}); }catch(e){} } }});
+      document.addEventListener('mouseup',()=>{ if(d){ d=false; popover.style.transition=''; } }); // v3.23.2 DOCK: x/y drag tidak dipersist (dock yang menata)
     }
 
     function wireEvents(){
@@ -238,32 +237,20 @@
       } catch(e){}
     }
     wireEvents();
+    // v3.23.2 DOCK: daftarkan floater ke dock global — satu deretan rapi
+    // kanan-atas bersama RecallTape & RecallPomodoro (content/float-dock.js).
+    try { if (window.__RFDock) window.__RFDock.register({ key: 'note:' + data.id, kind: 'note', t: data.createdAt || 0, visible: () => st.isVisible, width: () => Math.max(280, (typeof data.w === 'number' && data.w) || 300), height: () => data.collapsed ? 44 : Math.max(220, (typeof data.h === 'number' && data.h) || 300), place: (x, y) => setPos(x, y) }); } catch (e) {}
 
     const ctrl = { id: data.id, show, hideDom, closeLocal, destroy, setCollapsed, setPos, setTheme, append, applyFrom, applyTextForce, focusSoon, get isVisible(){ return st.isVisible; } };
     return ctrl;
   }
 
-  // ===== Auto-arrange (auto merapihkan diri) =====
-  // Instance TANPA posisi pilihan user (x/y null) ditata bertumpuk rapi dari
-  // tepi kanan; kalau melebihi tinggi layar, wrap ke kolom baru. Instance yang
-  // pernah digeser user (x/y tersimpan) tidak diganggu gugat.
-  function tidy(){
-    try{
-      getList().then(list=>{
-        let x=null, y=60;
-        for (const d of list){
-          if (!d.open) continue;
-          const c = ctrls.get(d.id); if (!c) continue;
-          const W = Math.max(260, (typeof d.w==='number'&&d.w) || 300);
-          const H = d.collapsed ? 44 : Math.max(120, (typeof d.h==='number'&&d.h) || 300);
-          if (x === null) x = window.innerWidth - W - 14;
-          if (y + H > window.innerHeight - 8) { x = x - (W + 12); y = 60; if (x < 8) x = 8; }
-          if (typeof d.x !== 'number' || typeof d.y !== 'number') c.setPos(x, y);
-          y += H + 10;
-        }
-      });
-    }catch(e){}
-  }
+  // ===== Dock (v3.23.2): auto merapihkan diri via float-dock.js =====
+  // Semua floater terbuka (note + tape + pomodoro) disusun SATU deretan rapi
+  // di tepi kanan-atas. Setiap gulung (\u25be) / buka (>) / buka-tutup lembar
+  // memicu restack penuh sehingga tampilan tidak pernah misah-misah lagi.
+  // Algoritma lengkap: content/float-dock.js.
+  function tidy(){ try{ if (window.__RFDock) window.__RFDock.layout(); }catch(e){} }
 
   // ===== Reconcile dari storage (cross-tab real-time + boot) — TIDAK menulis =====
   function reconcile(list){

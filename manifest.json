@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.23.1",
+  "version": "3.23.2",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
@@ -170,6 +170,7 @@
       ],
       "js": [
         "lib/browser-polyfill.min.js",
+        "content/float-dock.js",
         "content/tape-cs.js"
       ],
       "run_at": "document_idle",
@@ -183,6 +184,7 @@
       ],
       "js": [
         "lib/browser-polyfill.min.js",
+        "content/float-dock.js",
         "content/notes-cs.js"
       ],
       "run_at": "document_idle",
@@ -196,6 +198,7 @@
       ],
       "js": [
         "lib/browser-polyfill.min.js",
+        "content/float-dock.js",
         "content/pomodoro-cs.js"
       ],
       "run_at": "document_idle",
