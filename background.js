@@ -5036,41 +5036,47 @@ async function generateResumeContextSync(body, title) {
 try {
   browser.tabs.onActivated.addListener(async (info) => {
     try {
-      const r = await browser.storage.local.get(['floatNoteState','floatTapeState']);
-      for (const key of ['floatNoteState','floatTapeState']) {
-        const float = r[key];
-        if (float && float.isOpen) {
-          const tab = await browser.tabs.get(info.tabId);
-          if (tab && tab.url && /^(https?|file):/i.test(tab.url)) {
-            const type = key==='floatNoteState' ? 'SHOW_NOTE' : 'SHOW_TAPE';
-            browser.tabs.sendMessage(info.tabId, {type}).catch(()=>{});
-          }
-        }
+      // v3.23.0: sumber kebenaran = noteInstances/tapeInstances (multi-instance);
+      // float state lama tetap dicek demi aman selama masa transisi.
+      const r = await browser.storage.local.get(['floatNoteState','floatTapeState','noteInstances','tapeInstances']);
+      const anyOpen = (legacyKey, instKey) =>
+        (Array.isArray(r[instKey]) && r[instKey].some(i => i && i.open)) ||
+        !!(r[legacyKey] && r[legacyKey].isOpen);
+      const tab = await browser.tabs.get(info.tabId);
+      if (tab && tab.url && /^(https?|file):/i.test(tab.url)) {
+        if (anyOpen('floatNoteState','noteInstances')) browser.tabs.sendMessage(info.tabId, {type:'SHOW_NOTE'}).catch(()=>{});
+        if (anyOpen('floatTapeState','tapeInstances')) browser.tabs.sendMessage(info.tabId, {type:'SHOW_TAPE'}).catch(()=>{});
       }
     } catch(e){}
   });
   browser.storage.onChanged.addListener((changes, area)=>{
     if (area!=='local') return;
-    for (const key of ['floatNoteState','floatTapeState']) {
-      if (changes[key]) {
-        const float = changes[key].newValue;
-        // v3.22.7 FIX RESURRECTION: Chrome fire storage.onChanged pada SETIAP set()
-        // (termasuk nilai identik), dan show() menulis ulang float state di akhir
-        // show() -> broadcast SHOW_* -> show() lagi = ECHO LOOP TAK BERUJUNG.
-        // Broadcast in-flight yang mendarat setelah user menutup modal membuat
-        // modal "bangkit kembali beberapa detik kemudian". FIX: broadcast HANYA
-        // pada transisi tertutup -> terbuka.
-        const __rfPrev = changes[key].oldValue;
-        if (float && float.isOpen && !(__rfPrev && __rfPrev.isOpen)) {
-          browser.tabs.query({}).then(tabs=>{
-            tabs.forEach(t=>{
-              if (t.id && t.url && /^(https?:|file):/i.test(t.url)) {
-                const type = key==='floatNoteState' ? 'SHOW_NOTE' : 'SHOW_TAPE';
-                browser.tabs.sendMessage(t.id, {type}).catch(()=>{});
-              }
-            });
+    // v3.23.0: broadcast HANYA pada transisi tertutup -> terbuka (anti echo loop
+    // v3.22.7 tetap berlaku). Sumber: noteInstances/tapeInstances (instance baru
+    // muncul open) + legacy float state selama masa transisi.
+    for (const [legacyKey, instKey, type] of [
+      ['floatNoteState','noteInstances','SHOW_NOTE'],
+      ['floatTapeState','tapeInstances','SHOW_TAPE'],
+    ]) {
+      let trigger = false;
+      if (changes[instKey]) {
+        const prev = Array.isArray(changes[instKey].oldValue) ? changes[instKey].oldValue : [];
+        const next = Array.isArray(changes[instKey].newValue) ? changes[instKey].newValue : [];
+        const prevOpen = new Set(prev.filter(i=>i&&i.open).map(i=>i.id));
+        trigger = next.some(i=>i&&i.open&&!prevOpen.has(i.id));
+      } else if (changes[legacyKey]) {
+        const float = changes[legacyKey].newValue;
+        const __rfPrev = changes[legacyKey].oldValue;
+        trigger = !!(float && float.isOpen && !(__rfPrev && __rfPrev.isOpen));
+      }
+      if (trigger) {
+        browser.tabs.query({}).then(tabs=>{
+          tabs.forEach(t=>{
+            if (t.id && t.url && /^(https?:|file):/i.test(t.url)) {
+              browser.tabs.sendMessage(t.id, {type}).catch(()=>{});
+            }
           });
-        }
+        });
       }
     }
   });
