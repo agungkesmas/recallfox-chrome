@@ -4672,6 +4672,31 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  // v3.23.1: RF_OPEN_POMODORO — tombol 🍅 pill → floater pomodoro-cs.js
+  // (inject bila belum ada, retry sekali — pola RF_OPEN_NOTE/TAPE).
+  if (msg.type === 'RF_OPEN_POMODORO') {
+    (async()=>{
+      try{
+        const tabs = await browser.tabs.query({active:true, currentWindow:true});
+        const tab = tabs[0];
+        if(tab && tab.id){
+          try{ await browser.tabs.sendMessage(tab.id, {type:'OPEN_POMODORO'}); }
+          catch(e){ await browser.scripting.executeScript({target:{tabId:tab.id}, files:['content/pomodoro-cs.js']}); await browser.tabs.sendMessage(tab.id, {type:'OPEN_POMODORO'}); }
+        }
+        sendResponse({ok:true});
+      }catch(e){ sendResponse({ok:false, error:e.message}); }
+    })();
+    return true;
+  }
+  // v3.23.1: POMODORO_NOTIFY — content script tidak punya browser.notifications;
+  // bell/selesai fokus pomodoro floater dinotifikasi lewat sini.
+  if (msg.type === 'POMODORO_NOTIFY') {
+    try{
+      browser.notifications.create({ type: 'basic', iconUrl: browser.runtime.getURL('icons/icon-48.png'), title: String(msg.title || 'Pomodoro'), message: String(msg.message || '') });
+    }catch(e){}
+    sendResponse({ok:true});
+    return true;
+  }
   // v3.21.26: RF_OPEN_REAL_SIDEBAR — buka sidebar asli browser (bukan popout DOM).
   // Dipicu oleh single-click rfBtn di floater. Double-click rfBtn = popout DOM
   // (handle langsung di sidebar-cs.js, tidak lewat background).
@@ -4712,7 +4737,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           catch(e){
             // Content script belum loaded — inject lalu retry sekali
             // v3.22.9 FIX-1: OPEN_NOTE_VAULT juga di-handle notes-cs.js
-            const file = (msg.msgType==='OPEN_NOTE'||msg.msgType==='OPEN_NOTE_VAULT')?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js':'content/sidebar-cs.js';
+            const file = (msg.msgType==='OPEN_NOTE'||msg.msgType==='OPEN_NOTE_VAULT')?'content/notes-cs.js': msg.msgType==='OPEN_TAPE'?'content/tape-cs.js': msg.msgType==='OPEN_POMODORO'?'content/pomodoro-cs.js':'content/sidebar-cs.js';
             await browser.scripting.executeScript({target:{tabId:tab.id}, files:[file]});
             await browser.tabs.sendMessage(tab.id, payload);
           }

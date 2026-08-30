@@ -40,6 +40,7 @@
   let scBtn = null;
   let noteBtn = null;
   let tapeBtn = null;
+  let pomoBtn = null;  // v3.23.1: tombol 🍅 Pomodoro mengambang
   let pinBtn = null;
   let isVisible = false;
   let currentWidth = DEFAULT_WIDTH;
@@ -114,8 +115,8 @@
   function placeFloaterLeftCenter() {
     try {
       const isV = (floaterPair && floaterPair.dataset.orient === 'vertical');
-      const pw = isV ? 44 : 170;  // 36px tombol + 8px padding
-      const ph = isV ? 170 : 44;
+      const pw = isV ? 44 : 212;  // 36px tombol + 8px padding (5 tombol, v3.23.1)
+      const ph = isV ? 212 : 44;
       const x = 14;
       const y = Math.max(0, Math.round((window.innerHeight - ph) / 2));
       floaterPair.style.bottom = 'auto';
@@ -157,8 +158,8 @@
   }
 
   // v3.21.24: applyOrientation — set flex-direction + adjust ukuran container.
-  // Horizontal: row, lebar 4*36+gap = ~170px, tinggi 36px.
-  // Vertical:   column, lebar 36px, tinggi 4*36+gap = ~170px.
+  // Horizontal: row, lebar 5*36+gap = ~212px, tinggi 36px.
+  // Vertical:   column, lebar 36px, tinggi 5*36+gap = ~212px.
   function applyOrientation(orient) {
     if (!floaterPair) return;
     const o = (orient === 'vertical') ? 'vertical' : 'horizontal';
@@ -248,7 +249,7 @@
   function mountFloater() {
     if (floaterPair) return;
 
-    // Container untuk 4 tombol: rf + sc + note + tape (pill transparan hover)
+    // Container untuk 5 tombol: rf + sc + note + tape + pomo (pill transparan hover)
     floaterPair = document.createElement('div');
     floaterPair.id = FLOATER_ID;
     floaterPair.style.cssText = [
@@ -325,12 +326,28 @@
       'transition:transform .1s ease', 'user-select:none'
     ].join(';');
 
+    // "pomo" button — buka Pomodoro mengambang (v3.23.1)
+    pomoBtn = document.createElement('div');
+    pomoBtn.setAttribute('role', 'button');
+    pomoBtn.setAttribute('tabindex', '0');
+    pomoBtn.innerHTML = '🍅';
+    pomoBtn.title = 'Buka Pomodoro Mengambang';
+    pomoBtn.style.cssText = [
+      'all:initial', 'width:36px', 'height:36px', 'border-radius:8px',
+      'background:#3B0D0D', 'color:#FCA5A5', 'border:1px solid rgba(248,113,113,0.28)',
+      'cursor:pointer', 'display:grid', 'place-items:center',
+      'font-size:16px', 'line-height:1',
+      'box-shadow:0 2px 8px rgba(239,68,68,.2)',
+      'transition:transform .1s ease', 'user-select:none'
+    ].join(';');
+
     floaterPair.appendChild(rfBtn);
     floaterPair.appendChild(scBtn);
     floaterPair.appendChild(noteBtn);
     floaterPair.appendChild(tapeBtn);
+    floaterPair.appendChild(pomoBtn);
 
-    // Restore position — 4 buttons need ~170px width (horizontal) / 170px height (vertical)
+    // Restore position — 5 buttons need ~212px width (horizontal) / 212px height (vertical)
     // v3.22.9 FIX-4: hanya posisi format v2 (hasil drag user setelah rilis ini)
     // yang dipulihkan. Posisi format lama (tanpa v) = default kanan-bawah lama /
     // sisa drag lama → dimigrasi ke KIRI TENGAH sesuai permintaan user. Setelah
@@ -343,8 +360,8 @@
       applyOrientation(initialOrient);
       // Clamp posisi supaya tidak keluar viewport — pakai ukuran sesuai orient
       const isV = initialOrient === 'vertical';
-      const pw = isV ? 44 : 170;  // 36 + 8 padding
-      const ph = isV ? 170 : 44;
+      const pw = isV ? 44 : 212;  // 36px tombol + 8px padding (5 tombol, v3.23.1)
+      const ph = isV ? 212 : 44;
       floaterPair.style.bottom = 'auto';
       floaterPair.style.right = 'auto';
       floaterPair.style.left = Math.max(0, Math.min(window.innerWidth - pw, savedPos.x)) + 'px';
@@ -376,6 +393,7 @@
       else if (name === 'sc') triggerScreenshot();
       else if (name === 'note') openNote();
       else if (name === 'tape') openTape();
+      else if (name === 'pomo') openPomodoro();
     }
 
     // v3.22.3: Buka RecallNote — 1 message primer + fallback berbasis respons.
@@ -407,6 +425,19 @@
       });
     }
 
+    // v3.23.1: Buka Pomodoro mengambang — pola openNote (fallback HANYA pada
+    // kegagalan eksplisit ok:false; res undefined dianggap sukses).
+    function openPomodoro() {
+      browser.runtime.sendMessage({ type: 'RF_OPEN_POMODORO' }).then((res) => {
+        if (!res || res.ok !== false) return;
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_POMODORO' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-pomodoro')); }catch(e){}
+      }).catch(() => {
+        browser.runtime.sendMessage({ type: 'RF_FORWARD_TO_ACTIVE_TAB', msgType: 'OPEN_POMODORO' }).catch(()=>{});
+        try{ window.dispatchEvent(new CustomEvent('rf-open-pomodoro')); }catch(e){}
+      });
+    }
+
     function onDown(e) {
       if (e.button !== undefined && e.button !== 0) return;
       // Hanya drag kalau mulai dari container (bukan dari button)
@@ -435,7 +466,7 @@
       const dy = cy - dragState.startY;
       if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragState.moved = true;
       if (!dragState.moved) return;
-      let newX = Math.max(0, Math.min(window.innerWidth - 170, dragState.origX + dx));
+      let newX = Math.max(0, Math.min(window.innerWidth - 212, dragState.origX + dx));
       let newY = Math.max(0, Math.min(window.innerHeight - 36, dragState.origY + dy));
       floaterPair.style.left = newX + 'px';
       floaterPair.style.top = newY + 'px';
@@ -484,6 +515,10 @@
           e.preventDefault();
           e.stopPropagation();
           performAction('tape');
+        } else if (dragState.target === pomoBtn || pomoBtn.contains(dragState.target)) {
+          e.preventDefault();
+          e.stopPropagation();
+          performAction('pomo');
         }
       }
     }
@@ -517,6 +552,9 @@
     tapeBtn.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); performAction('tape'); }
     });
+    pomoBtn.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); performAction('pomo'); }
+    });
 
     // v3.22.3: Native click fallback (Firefox safety net).
     // Kalau jalur pointerup hilang/retarget (quirk pointer capture di Firefox),
@@ -526,6 +564,7 @@
     scBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('sc'); });
     noteBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('note'); });
     tapeBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('tape'); });
+    pomoBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('pomo'); });
 
     document.documentElement.appendChild(floaterPair);
   }

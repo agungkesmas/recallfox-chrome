@@ -51,12 +51,29 @@
     } catch (e) { return 'dark'; }
   }
 
+  // ===== v3.23.1 WARNA — palet warna lembar (pilih sendiri via 🎨 + otomatis) =====
+  const RF_PALETTE = ['green', 'blue', 'amber', 'rose', 'violet', 'cyan', 'orange', 'lime'];
+  const RF_DEF_COLOR = 'amber';
+  const RF_SWATCH = { green:'#10B981', blue:'#3B82F6', amber:'#F59E0B', rose:'#F43F5E', violet:'#8B5CF6', cyan:'#06B6D4', orange:'#F97316', lime:'#84CC16' };
+  function normColor(c){ return (typeof c === 'string' && RF_SWATCH[c]) ? c : null; }
+  // Warna otomatis: lembar baru dapat warna yang paling jarang dipakai lembar
+  // terbuka lain — buka 2-3 tape = warna selalu berbeda (urutan mulai dari
+  // warna default agar tape pertama tetap tampilan klasik amber).
+  function pickAutoColor(list){
+    const used = {};
+    for (const it of (Array.isArray(list) ? list : [])) { if (!it || !it.open) continue; const c = normColor(it.color) || RF_DEF_COLOR; used[c] = (used[c] || 0) + 1; }
+    const order = [RF_DEF_COLOR].concat(RF_PALETTE.filter(c => c !== RF_DEF_COLOR));
+    let best = RF_DEF_COLOR, bestN = Infinity;
+    for (const c of order) { const n = used[c] || 0; if (n < bestN) { bestN = n; best = c; } }
+    return best;
+  }
+
   function newData(extra) {
     return Object.assign({
       id: 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       text: '', open: true, collapsed: false,
       x: null, y: null, w: null, h: null,
-      createdAt: Date.now()
+      color: null, createdAt: Date.now()
     }, extra || {});
   }
   async function getList(){ try{ const l = await RFT_LOAD_INSTANCES(); return Array.isArray(l) ? l : []; }catch(e){ return []; } }
@@ -93,6 +110,22 @@
 
     function setActive(){ try{ if(popover) popover.classList.remove('rft-idle'); }catch(e){} }
     function setIdle(){ try{ if(!st.isVisible) return; if(popover) popover.classList.add('rft-idle'); }catch(e){} }
+    // v3.23.1: warna lembar — data-color di popover + tandai swatch aktif
+    function applyColor(){
+      const c = normColor(data.color) || RF_DEF_COLOR;
+      try{ popover.dataset.color = c; }catch(e){}
+      try{ popover.setAttribute('data-color', c); }catch(e){}
+      try{
+        const pal = shadow.querySelector('.rft-palette');
+        const sw = pal ? pal.querySelectorAll('.rft-swatch') : [];
+        for (const b of sw) { try { b.classList.toggle('on', !!(b.dataset && b.dataset.c === c)); } catch(e){} }
+      }catch(e){}
+    }
+    async function setColor(c){
+      if (!normColor(c)) return;
+      data.color = c; applyColor();
+      await patchLocal(data.id, { color: c });
+    }
 
     function applyGeometry(){
       try{
@@ -119,12 +152,14 @@
         if (typeof d.h === 'number') data.h = d.h;
         if (typeof d.x === 'number') data.x = d.x;
         if (typeof d.y === 'number') data.y = d.y;
+        if (typeof d.color === 'string' && d.color !== data.color) { const nc = normColor(d.color); if (nc) { data.color = nc; applyColor(); } }
         if (colChanged) applyGeometry();
       }catch(e){}
     }
     async function show(){
       try{ const theme = await loadTheme(); shadow.host.setAttribute('data-theme', theme); }catch(e){}
       try{ host.style.display = ''; }catch(e){}
+      applyColor();
       applyGeometry();
       // v3.23.0: muat teks awal instance (reconcile / ADD_TO_TAPE baru)
       if (typeof data.text === 'string' && data.text && !textarea.value) { textarea.value = data.text; updateStatus(); }
@@ -641,6 +676,9 @@
       }catch(e){ console.error('[RecallFox/Tape] pin failed:', e); }
     });
     try{ shadow.querySelector('.rft-collapse').addEventListener('click', ()=>setCollapsed(!data.collapsed)); }catch(e){}
+    try{ shadow.querySelector('.rft-color').addEventListener('click', ()=>{ try{ popover.classList.toggle('rft-pal-open'); }catch(e){} }); }catch(e){}
+    try{ const pal=shadow.querySelector('.rft-palette'); if(pal) pal.addEventListener('click', (e)=>{ try{ const b=e && e.target && e.target.closest && e.target.closest('.rft-swatch'); if(!b || !b.dataset) return; setColor(b.dataset.c); try{ popover.classList.remove('rft-pal-open'); }catch(ee){} }catch(e){} }); }catch(e){}
+    try{ document.addEventListener('mousedown', (e)=>{ try{ if(!popover || !popover.classList.contains('rft-pal-open')) return; const p=e.composedPath?e.composedPath():[e.target]; if(p.includes(host)||p.includes(popover)) return; popover.classList.remove('rft-pal-open'); }catch(e){} }, true); }catch(e){}
     try{ shadow.querySelector('.rft-new').addEventListener('click', ()=>{ createTapeInstance({}); }); }catch(e){}
     try{ shadow.querySelector('.rft-close').addEventListener('click', ()=>closeLocal()); }catch(e){}
     shadow.querySelector('.rft-print').addEventListener('click', doPrint);
@@ -719,6 +757,10 @@
 
   // ===== Aksi =====
   async function createTapeInstance(extra){
+    // v3.23.1 WARNA: lembar baru otomatis dapat warna belum terpakai
+    // (buka 2-3 tape = warna berbeda); extra.color pilihan user menang.
+    const preList = await getList();
+    if (!extra || !normColor(extra.color)) { extra = extra || {}; extra.color = pickAutoColor(preList); }
     const d = newData(extra);
     // PENTING: daftarkan ctrl SEBELUM putList (anti host dobel — lihat notes).
     const c = buildCtrl(d);
@@ -791,14 +833,14 @@
   // Header: [▾ gulung][📌 pin][＋ lembar baru][🖨 cetak][⧉ salin][💾 simpan][🗑 kosongkan][✕ tutup]
   const TEMPLATE = `
 <style>
-:host{all:initial}
+:host{all:initial}.rft-popover{--p-bd:rgba(245,158,11,.25);--p-idle:rgba(120,53,15,.55);--p-idle-bd:rgba(251,191,36,.35);--p-idle-l:rgba(254,243,199,.85);--p-idle-bd-l:rgba(245,158,11,.3);--p-hd:#3A1F00;--p-hd-bd:rgba(245,158,11,.2);--p-hd-l:#FFFBEB;--p-tt:#FCD34D;--p-tt-l:#92400E;--p-act:#78350F;--p-act-c:#FCD34D;--p-act-bd:rgba(251,191,36,.3);--p-flash:#F59E0B}.rft-popover[data-color="green"]{--p-bd:rgba(16,185,129,.25);--p-idle:rgba(19,78,74,.55);--p-idle-bd:rgba(110,231,183,.35);--p-idle-l:rgba(204,251,241,.85);--p-idle-bd-l:rgba(16,185,129,.3);--p-hd:#0F2E2A;--p-hd-bd:rgba(16,185,129,.2);--p-hd-l:#ECFDF5;--p-tt:#6EE7B7;--p-tt-l:#047857;--p-act:#134E4A;--p-act-c:#6EE7B7;--p-act-bd:rgba(110,231,183,.3);--p-flash:#10B981}.rft-popover[data-color="blue"]{--p-bd:rgba(59,130,246,.25);--p-idle:rgba(30,58,138,.5);--p-idle-bd:rgba(147,197,253,.35);--p-idle-l:rgba(219,234,254,.85);--p-idle-bd-l:rgba(59,130,246,.3);--p-hd:#0F2440;--p-hd-bd:rgba(59,130,246,.2);--p-hd-l:#EFF6FF;--p-tt:#93C5FD;--p-tt-l:#1D4ED8;--p-act:#1E3A8A;--p-act-c:#93C5FD;--p-act-bd:rgba(147,197,253,.3);--p-flash:#3B82F6}.rft-popover[data-color="rose"]{--p-bd:rgba(244,63,94,.25);--p-idle:rgba(159,18,57,.45);--p-idle-bd:rgba(253,164,175,.35);--p-idle-l:rgba(255,228,230,.85);--p-idle-bd-l:rgba(244,63,94,.3);--p-hd:#3F0A17;--p-hd-bd:rgba(244,63,94,.2);--p-hd-l:#FFF1F2;--p-tt:#FDA4AF;--p-tt-l:#BE123C;--p-act:#881337;--p-act-c:#FDA4AF;--p-act-bd:rgba(253,164,175,.3);--p-flash:#F43F5E}.rft-popover[data-color="violet"]{--p-bd:rgba(139,92,246,.25);--p-idle:rgba(76,29,149,.5);--p-idle-bd:rgba(196,181,253,.35);--p-idle-l:rgba(237,233,254,.85);--p-idle-bd-l:rgba(139,92,246,.3);--p-hd:#221040;--p-hd-bd:rgba(139,92,246,.2);--p-hd-l:#F5F3FF;--p-tt:#C4B5FD;--p-tt-l:#6D28D9;--p-act:#4C1D95;--p-act-c:#C4B5FD;--p-act-bd:rgba(196,181,253,.3);--p-flash:#8B5CF6}.rft-popover[data-color="cyan"]{--p-bd:rgba(6,182,212,.25);--p-idle:rgba(21,94,117,.5);--p-idle-bd:rgba(103,232,249,.35);--p-idle-l:rgba(207,250,254,.85);--p-idle-bd-l:rgba(6,182,212,.3);--p-hd:#083344;--p-hd-bd:rgba(6,182,212,.2);--p-hd-l:#ECFEFF;--p-tt:#67E8F9;--p-tt-l:#0E7490;--p-act:#164E63;--p-act-c:#67E8F9;--p-act-bd:rgba(103,232,249,.3);--p-flash:#06B6D4}.rft-popover[data-color="orange"]{--p-bd:rgba(249,115,22,.25);--p-idle:rgba(154,52,18,.5);--p-idle-bd:rgba(253,186,116,.35);--p-idle-l:rgba(255,237,213,.85);--p-idle-bd-l:rgba(249,115,22,.3);--p-hd:#3B1400;--p-hd-bd:rgba(249,115,22,.2);--p-hd-l:#FFF7ED;--p-tt:#FDBA74;--p-tt-l:#C2410C;--p-act:#7C2D12;--p-act-c:#FDBA74;--p-act-bd:rgba(253,186,116,.3);--p-flash:#F97316}.rft-popover[data-color="lime"]{--p-bd:rgba(132,204,22,.25);--p-idle:rgba(63,98,18,.5);--p-idle-bd:rgba(190,242,100,.35);--p-idle-l:rgba(236,252,203,.85);--p-idle-bd-l:rgba(132,204,22,.3);--p-hd:#1A2E05;--p-hd-bd:rgba(132,204,22,.2);--p-hd-l:#F7FEE7;--p-tt:#BEF264;--p-tt-l:#4D7C0F;--p-act:#365314;--p-act-c:#BEF264;--p-act-bd:rgba(190,242,100,.3);--p-flash:#84CC16}.rft-palette{position:absolute;top:40px;left:10px;z-index:6;display:none;flex-wrap:wrap;gap:7px;max-width:210px;background:#0E182A;border:1px solid #22375A;border-radius:10px;padding:9px;box-shadow:0 12px 34px rgba(0,0,0,.5)}:host([data-theme="light"]) .rft-palette{background:#FFF;border-color:#E2E8F0}..rft-popover.rft-pal-open .rft-palette{display:flex}.rft-swatch{width:19px;height:19px;border-radius:50%;border:2px solid rgba(255,255,255,.25);cursor:pointer;padding:0;transition:transform .12s}.rft-swatch:hover{transform:scale(1.18)}.rft-swatch.on{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.35)}:host([data-theme="light"]) .rft-swatch{border-color:rgba(0,0,0,.2)}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
 .rft-popover{
   position:fixed; top:60px; left:14px;
   width:320px; max-height:520px;
   background:#0E182A; color:#E8EEF7;
-  border:1px solid rgba(245,158,11,0.25); border-radius:12px;
+  border:1px solid var(--p-bd); border-radius:12px;
   box-shadow:0 18px 50px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4);
   display:flex; flex-direction:column; overflow:hidden;
   font-family:Menlo,Consolas,"Courier New",monospace; font-size:13px;
@@ -807,8 +849,8 @@
   resize:both; min-width:280px; min-height:260px;
 }
 .rft-popover.rft-show{ opacity:1; transform:translateY(0) scale(1); pointer-events:auto }
-.rft-popover.rft-idle{ opacity:0.35; background:rgba(120,53,15,0.55); backdrop-filter:blur(2px); border-color:rgba(251,191,36,0.35); }
-:host([data-theme="light"]) .rft-popover.rft-idle{ background:rgba(254,243,199,0.85); border-color:rgba(245,158,11,0.3); }
+.rft-popover.rft-idle{ opacity:0.35; background:var(--p-idle); backdrop-filter:blur(2px); border-color:var(--p-idle-bd); }
+:host([data-theme="light"]) .rft-popover.rft-idle{ background:var(--p-idle-l); border-color:var(--p-idle-bd-l); }
 
 :host([data-theme="light"]) .rft-popover{
   background:#F8FAFC; color:#1E293B; border-color:#E2E8F0;
@@ -822,17 +864,17 @@
 .rft-hd{
   display:flex; align-items:center; gap:6px;
   padding:7px 10px; flex:none; cursor:move;
-  background:#3A1F00; border-bottom:1px solid rgba(245,158,11,0.2);
+  background:var(--p-hd); border-bottom:1px solid var(--p-hd-bd);
 }
-:host([data-theme="light"]) .rft-hd{ background:#FFFBEB; border-bottom:1px solid rgba(245,158,11,0.25); }
+:host([data-theme="light"]) .rft-hd{ background:var(--p-hd-l); border-bottom:1px solid var(--p-hd-bd); }
 
 .rft-title{
   font-size:11px; font-weight:700; letter-spacing:-.01em; flex:1;
   display:flex; align-items:center; gap:5px; white-space:nowrap; overflow:hidden;
   font-family:-apple-system,system-ui,"Segoe UI",sans-serif;
-  color:#FCD34D;
+  color:var(--p-tt);
 }
-:host([data-theme="light"]) .rft-title{ color:#92400E; }
+:host([data-theme="light"]) .rft-title{ color:var(--p-tt-l); }
 .rft-actions{ display:flex; gap:2px; }
 
 .rft-btn{
@@ -844,7 +886,7 @@
 .rft-btn:hover{ background:rgba(255,255,255,.08); color:#E8EEF7; }
 :host([data-theme="light"]) .rft-btn:hover{ background:rgba(0,0,0,.06); color:#1E293B; }
 .rft-btn:active{ transform:scale(.92) }
-.rft-btn.rft-active{ background:#78350F; color:#FCD34D; border:1px solid rgba(251,191,36,0.3); }
+.rft-btn.rft-active{ background:var(--p-act); color:var(--p-act-c); border:1px solid var(--p-act-bd); }
 .rft-btn.rft-flash{ background:#42C6A0; color:#fff; }
 .rft-btn svg{ width:13px; height:13px }
 .rft-collapse svg{ transition:transform .15s; }
@@ -889,6 +931,7 @@
 .rft-toast.rft-show{ opacity:1; transform:translateX(-50%) translateY(0) }
 </style>
 <div class="rft-popover" role="dialog" aria-label="RecallTape calculator">
+  <div class="rft-palette" role="menu"><button class="rft-swatch" data-c="green" title="Hijau" style="background:#10B981"></button><button class="rft-swatch" data-c="blue" title="Biru" style="background:#3B82F6"></button><button class="rft-swatch" data-c="amber" title="Kuning" style="background:#F59E0B"></button><button class="rft-swatch" data-c="rose" title="Merah Muda" style="background:#F43F5E"></button><button class="rft-swatch" data-c="violet" title="Ungu" style="background:#8B5CF6"></button><button class="rft-swatch" data-c="cyan" title="Cyan" style="background:#06B6D4"></button><button class="rft-swatch" data-c="orange" title="Oranye" style="background:#F97316"></button><button class="rft-swatch" data-c="lime" title="Hijau Limau" style="background:#84CC16"></button></div>
   <div class="rft-hd">
     <div class="rft-title">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v6"/><path d="M3 11h18"/><path d="M3 11v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8"/><path d="M7 15h4"/></svg>
@@ -897,6 +940,9 @@
     <div class="rft-actions">
       <button class="rft-btn rft-collapse" title="Gulung / buka lagi">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <button class="rft-btn rft-color" title="Warna lembar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 4-4 4h-2.2a1.8 1.8 0 0 0-1.3 3.1c.3.3.5.7.5 1.1 0 .9-.7 1.8-1.8 1.8z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15" cy="8" r="1" fill="currentColor"/></svg>
       </button>
       <button class="rft-btn rft-pin" title="Pin (kunci agar tetap terbuka)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.5V4h6v6.5l2 3.5H7l2-3.5z"/></svg>
