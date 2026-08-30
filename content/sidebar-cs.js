@@ -183,6 +183,8 @@
       'opacity:0.35', 'transition:opacity .2s ease'
     ].join(';');
     document.documentElement.appendChild(host);
+    // v3.23.5: anti bocor keyboard dari panel sidebar (tombol terfokus).
+    try { if (window.__RFDock && window.__RFDock.isolateKeys) window.__RFDock.isolateKeys(host); } catch (e) {}
     // Hover transparan — default 0.35, hover 1.0 (pin tetap, tidak auto-hide)
     host.addEventListener('mouseenter', ()=>{ host.style.opacity='1'; });
     host.addEventListener('mouseleave', ()=>{ host.style.opacity='0.35'; });
@@ -567,6 +569,8 @@
     pomoBtn.addEventListener('click', (e) => { e.stopPropagation(); performAction('pomo'); });
 
     document.documentElement.appendChild(floaterPair);
+    // v3.23.5: anti bocor keyboard dari pill tombol (tabindex=0 bisa fokus).
+    try { if (window.__RFDock && window.__RFDock.isolateKeys) window.__RFDock.isolateKeys(floaterPair); } catch (e) {}
   }
 
   // ===== Trigger screenshot — kirim message ke background =====

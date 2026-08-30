@@ -195,6 +195,9 @@
     host.id = HOST_ID;
     host.style.cssText = 'all:initial;position:fixed;top:0;right:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
     document.documentElement.appendChild(host);
+    // v3.23.5: anti bocor keyboard — shortcut situs tidak ikut terpicu
+    // saat mengetik/mencet tombol di dalam floater ini.
+    try { if (window.__RFDock && window.__RFDock.isolateKeys) window.__RFDock.isolateKeys(host); } catch (e) {}
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = TEMPLATE;
     const popover = shadow.querySelector('.rfp-popover');

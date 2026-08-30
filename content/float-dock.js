@@ -91,6 +91,29 @@
     layout();
   }
 
+  // v3.23.5: ISOLASI KEYBOARD — potong propagasi keyboard/input yang
+  // berasal dari DI DALAM sebuah floater supaya tidak "bocor" ke handler
+  // document/window milik halaman (spasi pause video, '/' buka pencarian
+  // situs, dsb). Listener dipasang di HOST fase bubble: semua handler
+  // internal RecallFox (di dalam shadow root, di bawah host) tetap jalan,
+  // aksi bawaan browser tidak tersentuh (TIDAK ada preventDefault) — hanya
+  // propagasi ke ATAS host yang dipotong. Idempoten per elemen.
+  function isolateKeys(el) {
+    if (!el || el.__rfKeyIso) return;
+    el.__rfKeyIso = true;
+    var isoTypes = ['keydown', 'keyup', 'keypress', 'input', 'beforeinput',
+      'compositionstart', 'compositionupdate', 'compositionend'];
+    for (var ii = 0; ii < isoTypes.length; ii++) {
+      (function (type) {
+        try {
+          el.addEventListener(type, function (ev) {
+            try { ev.stopPropagation(); } catch (e) {}
+          }, false);
+        } catch (e) {}
+      })(isoTypes[ii]);
+    }
+  }
+
   var dock = {
     GAP: GAP, TOP: TOP, RIGHT: RIGHT, COLSTEP: COLSTEP,
     register: function (h) {
@@ -102,6 +125,7 @@
     unregister: function (key) { if (reg.delete(key)) layout(); },
     layout: layout,
     setSidebar: setSidebar,
+    isolateKeys: isolateKeys,
     sidebarW: function () { return sidebarW; },
     has: function (key) { return reg.has(key); },
   };
