@@ -189,8 +189,30 @@
           if (it) { it.text = textarea.value; if (data.vaultNoteId) it.vaultNoteId = data.vaultNoteId; }
           else list.push(JSON.parse(JSON.stringify(data)));
           await putList(list);
+          // v3.24.4 AUTO-SAVE KE CATATAN (Supabase): lembar tanpa link yang
+          // sudah berisi teks otomatis membuat vault note SEKALI (lazy-link)
+          // — tanpa tombol tambahan (tombol header sudah terlalu banyak).
+          // Setelah tertaut, autosave berikutnya tersink real-time via
+          // UPDATE_VAULT_NOTE -> updateNote -> directUpsertNote (Supabase).
+          let justLinked = false;
+          if (!data.vaultNoteId && textarea.value.trim()) {
+            try {
+              const res = await browser.runtime.sendMessage({ type:'SAVE_NOTE_TO_VAULT', text: textarea.value, markdown: textarea.value });
+              if (res && res.ok && res.noteId) {
+                data.vaultNoteId = res.noteId; justLinked = true;
+                try {
+                  const list2 = await getList();
+                  const it2 = list2.find(i => i.id === data.id);
+                  if (it2) it2.vaultNoteId = res.noteId;
+                  else list2.push(JSON.parse(JSON.stringify(data)));
+                  await putList(list2);
+                } catch(e2){}
+              }
+            } catch(e){}
+          }
           // autosave ke vault note bila instance terhubung (paritas v3.22.8)
-          if (data.vaultNoteId) { try{ await browser.runtime.sendMessage({ type:'UPDATE_VAULT_NOTE', noteId: data.vaultNoteId, text: textarea.value }); }catch(e){} }
+          // (skip tepat setelah link dibuat — teks sudah terkirim saat pembuatan)
+          if (data.vaultNoteId && !justLinked) { try{ await browser.runtime.sendMessage({ type:'UPDATE_VAULT_NOTE', noteId: data.vaultNoteId, text: textarea.value }); }catch(e){} }
           // mirror instance pertama → notesSession (kompat pembaca lama)
           if (list.length && list[0].id === data.id) { try{ await RFN_SAVE_SESSION(textarea.value); }catch(e){} }
         }catch(e){}
@@ -199,7 +221,7 @@
     }
     async function doCopy(){ const t=textarea.value; if(!t.trim()){toast('Catatan kosong');return;} try{await navigator.clipboard.writeText(t); flashBtn('.rfn-copy'); toast('📋 Tersalin');}catch(e){ const ta=document.createElement('textarea'); ta.value=t; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy'); flashBtn('.rfn-copy'); toast('📋 Tersalin');}catch(e2){} ta.remove();}}
     function doPrint(){ const t=textarea.value; if(!t.trim()){toast('Catatan kosong');return;} const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); const html='<!DOCTYPE html><html><head><meta charset="utf-8"><title>RecallNote</title><style>@page{size:80mm auto;margin:2mm}*{box-sizing:border-box;margin:0;padding:0}html,body{background:#fff;color:#000;font-family:Menlo,monospace;font-size:10px;line-height:1.6}body{padding:4mm;max-width:72mm;margin:0 auto;white-space:pre-wrap}</style></head><body><div style="text-align:center;border-bottom:1px dashed #000;padding-bottom:3mm;margin-bottom:3mm"><h1>📝 RecallNote</h1><div style="font-size:9px;color:#666">'+new Date().toLocaleString('id-ID')+'</div></div><div>'+esc(t)+'</div></body></html>'; const iframe=document.createElement('iframe'); iframe.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;opacity:0'; document.body.appendChild(iframe); try{ const doc=iframe.contentWindow.document; doc.open(); doc.write(html); doc.close();}catch(e){toast('Gagal cetak'); iframe.remove(); return;} setTimeout(()=>{try{iframe.contentWindow.focus(); iframe.contentWindow.print();}catch(e){} setTimeout(()=>{try{iframe.remove()}catch(e){}},2000);},300); flashBtn('.rfn-print');}
-    async function doSave(){ const t=textarea.value; if(!t.trim()){toast('Catatan kosong');return;} try{ await browser.runtime.sendMessage({type:'SAVE_NOTE_TO_VAULT', text:t, markdown:t}); toast('✓ Tersimpan ke Catatan'); flashBtn('.rfn-save');}catch(e){ if(shadow.querySelector('.rfn-save')) flashBtn('.rfn-save'); toast('Gagal simpan: '+(e.message||e)); }}
+    async function doSave(){ const t=textarea.value; if(!t.trim()){toast('Catatan kosong');return;} try{ const r=await browser.runtime.sendMessage({type:'SAVE_NOTE_TO_VAULT', text:t, markdown:t}); if(r&&r.ok&&r.noteId&&!data.vaultNoteId){ data.vaultNoteId=r.noteId; try{ const l=await getList(); const q=l.find(i=>i.id===data.id); if(q) q.vaultNoteId=r.noteId; await putList(l); }catch(e){} } toast('✓ Tersimpan ke Catatan'); flashBtn('.rfn-save');}catch(e){ if(shadow.querySelector('.rfn-save')) flashBtn('.rfn-save'); toast('Gagal simpan: '+(e.message||e)); }}
     function doClear(){ if(!textarea.value.trim()) return; if(!confirm('Kosongkan catatan?')) return; textarea.value=''; updateStatus(); scheduleSave(); textarea.focus(); flashBtn('.rfn-clear');}
     function flashBtn(s){ const b=shadow.querySelector(s); if(!b) return; b.classList.add('rfn-flash'); setTimeout(()=>b.classList.remove('rfn-flash'),600);}
     function toast(m){ const t=shadow.querySelector('.rfn-toast'); if(!t) return; t.textContent=m; t.classList.add('rfn-show'); setTimeout(()=>t.classList.remove('rfn-show'),2000);}

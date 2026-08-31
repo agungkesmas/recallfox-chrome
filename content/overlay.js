@@ -332,6 +332,26 @@
       `;
       document.body.appendChild(modalEl);
 
+    // v3.24.4: KLIK GAMBAR PREVIEW = BUKA ANOTASI (cara kedua selain tombol
+    // "Anotasi" — permintaan user). Route lewat tombol annotate yang sama
+    // supaya satu jalur kode (spinner/disable/status otomatis ikut).
+    {
+      const prevWrap = modalEl.querySelector('.rf-capture-modal-preview');
+      const prevImg = prevWrap ? prevWrap.querySelector('img') : null;
+      if (prevWrap && prevImg) {
+        prevImg.title = 'Klik gambar untuk anotasi';
+        prevImg.style.cursor = 'pointer';
+        prevImg.addEventListener('click', () => {
+          const annBtn = modalEl.querySelector('[data-action="annotate"]');
+          if (annBtn && !annBtn.disabled) annBtn.click();
+        });
+        const hint = document.createElement('div');
+        hint.className = 'rf-capture-preview-hint';
+        hint.textContent = '✏️ Klik gambar untuk anotasi';
+        prevWrap.appendChild(hint);
+      }
+    }
+
       const close = (result) => {
         if (modalEl) { modalEl.remove(); modalEl = null; }
         document.removeEventListener('keydown', escHandler, true);

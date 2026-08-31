@@ -269,25 +269,40 @@
     };
   }
 
-  // ===== Entire page (scroll-stitch, ported from FireShot + hard caps) =====
+  // ===== Entire page (scroll-stitch, REWRITE v3.24.4) =====
   //
-  // Standards (after studying FireShot + GoFullPage + browser built-in):
+  // Standar baru (laporan user: "capture patah-patah mengulang-ulang halaman
+  // pertama"). Tiga akar bug versi lama yang dibunuh di sini:
   //
-  //   1. Hard cap: MAX_FRAMES = 30 (FireShot default)
-  //   2. Dynamic page detection: kalau scrollHeight berubah > 3x berturut-turut
-  //      setelah scroll → abort, suruh user pakai Seleksi Area/Visible
-  //   3. Step: viewportH - 40px (FireShot sticky-header protection)
-  //   4. Direct property assignment: scroller.scrollTop = N (bukan scrollTo)
-  //   5. Force scroll-behavior: unset di <html> (disable smooth scroll)
-  //   6. Hide body overflow (bukan scroller) — supaya scrollbar tidak muncul
-  //   7. Per-frame wait 300ms (lazy image), post-capture wait 150ms (rate limit)
-  //   8. Verify scroll berhasil — kalau stuck 2x → fallback window.scrollTo
-  //      kalau masih stuck → abort
+  //   AKAR #1 — DUPLIKASI 40px DI TIAP SAMBUNGAN: scroll sengaja tumpang-
+  //      tindih 40px (STICKY_PROTECTION ala FireShot), tapi stitch lama
+  //      MENUMPUK frame PENUH tanpa membuang 40px pengulangan di puncak
+  //      frame berikutnya → hasil "patah-patah" + potongan halaman berulang
+  //      di tiap sambungan. Sekarang: tiap frame menggambar HANYA baris
+  //      konten yang BELUM tercakup frame sebelumnya (bookkeeping `covered`).
+  //
+  //   AKAR #2 — SMOOTH SCROLL: penugasan `scroller.scrollTop = N` TETAP
+  //      dianimasikan kalau halaman memasang CSS scroll-behavior:smooth,
+  //      dan style lama hanya di-unset di <html> (bukan di nested scroller)
+  //      → frame tercapture di posisi lama = "mengulang halaman pertama".
+  //      Sekarang: scroll-behavior:'auto' dipasang di <html> DAN scroller,
+  //      plus scrollToY() menunggu scroll BENAR-BENAR tuntas (polling)
+  //      sebelum frame diambil.
+  //
+  //   AKAR #3 — overflow:hidden pada <body> + metrik keliru utk nested
+  //      scroller: body overflow bisa mematikan scroll dokumen (propagasi
+  //      overflow viewport), dan bottom-check pakai window.innerHeight +
+  //      tinggi dokumen walau yang digulung elemen dalam → loop menumpuk
+  //      frame identik di posisi maxScroll. Sekarang: scrollbar disembunyi-
+  //      kan via <style> (tanpa menyentuh overflow), visH/pageH dihitung
+  //      sesuai jenis scroller, dan frame yang tidak membawa konten baru
+  //      dibuang + loop berhenti mulus.
+  //
+  // Bonus kecepatan: check stabilitas 600ms+300ms per frame dihapus — pace
+  // per frame kini ~120-350ms sehingga proses capture terasa mulus.
 
   const MAX_FRAMES = 30;
   const STICKY_PROTECTION = 40;
-  const STABILITY_RETRIES = 3;  // kalau scrollHeight berubah 3x berturut-turut → abort
-  const STABILITY_WAIT = 600;   // ms untuk nunggu stabilitas
 
   // Deteksi halaman dinamis (chat / SPA dengan virtual scroll)
   function detectDynamicPage() {
@@ -382,146 +397,158 @@
       throw new Error('No scrolling element found');
     }
 
-    // === Step 2: read initial total dimensions ===
-    let totalHeight = Math.max(
-      scroller.scrollHeight,
-      document.documentElement.scrollHeight,
-      document.body ? document.body.scrollHeight : 0
-    );
-    if (totalHeight > maxHeight) totalHeight = maxHeight;
+    // === Metrik sesuai jenis scroller (AKAR #3) ===
+    // Doc scroller: area terlihat = window.innerHeight, tinggi halaman =
+    // max(scrollHeight semua kandidat). Nested scroller: area terlihat =
+    // clientHeight elemen, tinggi halaman = scrollHeight elemen itu sendiri
+    // (JANGAN campur dengan tinggi dokumen — dulu bikin loop menumpuk frame
+    // identik di dasar nested scroller).
+    const isDocScroller = (scroller === document.scrollingElement) ||
+                          scroller === document.documentElement ||
+                          scroller === document.body;
+    const visH = () => isDocScroller
+      ? window.innerHeight
+      : Math.max(120, (scroller.clientHeight || window.innerHeight));
+    const pageH = () => {
+      let h = scroller.scrollHeight;
+      if (isDocScroller) {
+        h = Math.max(h,
+          document.documentElement.scrollHeight,
+          document.body ? document.body.scrollHeight : 0);
+      }
+      return Math.min(h, maxHeight);
+    };
 
-    const totalWidth = scroller.scrollWidth || document.documentElement.scrollWidth || window.innerWidth;
-    const viewportH = window.innerHeight;
-    const viewportW = window.innerWidth;
+    const viewportW = window.innerWidth || 1024;
 
-    console.log('[RecallFox] captureEntire START', {
-      scroller: scroller.tagName + (scroller.id ? '#' + scroller.id : ''),
-      total: totalWidth + 'x' + totalHeight,
-      viewport: viewportW + 'x' + viewportH,
-      maxFrames: MAX_FRAMES,
-      url: location.href.slice(0, 80)
-    });
-
-    // === Step 3: save original state ===
+    // === Step 2: save original state ===
     const origScrollTop = scroller.scrollTop;
     const origScrollLeft = scroller.scrollLeft;
-    const origBodyOverflowX = document.body ? document.body.style.overflowX : '';
-    const origBodyOverflowY = document.body ? document.body.style.overflowY : '';
     const origHtmlScrollBehavior = document.documentElement.style.scrollBehavior;
+    let origScrollerScrollBehavior = null;
+    try { origScrollerScrollBehavior = scroller.style.scrollBehavior; } catch (e) {}
 
-    // === Step 4: prep (FireShot-style) ===
-    if (document.body) {
-      document.body.style.overflowX = 'hidden';
-      document.body.style.overflowY = 'hidden';
+    // === Step 3: prep (v3.24.4) ===
+    // AKAR #2: matikan smooth-scroll di <html> DAN di scroller — penugasan
+    // scrollTop pun ikut animasi bila CSS scroll-behavior:smooth aktif.
+    document.documentElement.style.scrollBehavior = 'auto';
+    try { scroller.style.scrollBehavior = 'auto'; } catch (e) {}
+    // AKAR #3: scrollbar disembunyikan via <style>, TANPA overflow:hidden di
+    // body (propagasi overflow ke viewport bisa mematikan scroll dokumen).
+    let barStyle = document.getElementById('recallfox-capture-noscrollbar');
+    if (!barStyle) {
+      barStyle = document.createElement('style');
+      barStyle.id = 'recallfox-capture-noscrollbar';
+      barStyle.textContent =
+        '*{scrollbar-width:none!important}' +
+        '*::-webkit-scrollbar{display:none!important;width:0!important;height:0!important}';
+      document.head.appendChild(barStyle);
     }
-    document.documentElement.style.scrollBehavior = 'unset';
+
+    // Tunggu scroll benar-benar sampai target (anti smooth-scroll & anti
+    // scroll-jack): poll sampai posisi stabil di target / sampai berhenti
+    // sendiri (mentok maxScroll) / timeout lunas. Selalu balikkan POSISI
+    // AKTUAL — frame dihitung dari posisi nyata, bukan yang diminta.
+    async function scrollToY(target) {
+      try { scroller.scrollTop = target; } catch (e) {}
+      const t0 = Date.now();
+      let prev = -1, same = 0;
+      while (Date.now() - t0 < 900) {
+        await sleep(60);
+        const cur = scroller.scrollTop;
+        if (Math.abs(cur - target) <= 1) return cur;      // sampai & stabil
+        if (cur === prev) { same++; if (same >= 3) return cur; } // mentok
+        else same = 0;
+        prev = cur;
+      }
+      return scroller.scrollTop;
+    }
 
     const chunks = [];
     try {
-      // === Step 5: jump to top ===
-      scroller.scrollTop = 0;
-      scroller.scrollLeft = 0;
-      await sleep(400);
+      // === Step 4: jump to top + beri waktu layout/lazy-image settle ===
+      await scrollToY(0);
+      await sleep(350);
 
-      // === Step 6: capture loop ===
-      const stepH = Math.max(100, viewportH - STICKY_PROTECTION);
+      // === Step 5: capture loop ===
+      // `covered` = baris konten (css px) yang sudah tergambar di kanvas:
+      // kanvas memegang [0, covered). Tiap frame menggambar HANYA baris
+      // baru — dulu semua frame ditumpuk penuh → duplikat 40px per sambungan
+      // (AKAR #1).
+      let covered = 0;
       let frameIdx = 0;
-      let noProgressCount = 0;
-      let instabilityCount = 0;
-      let lastTotalHeight = totalHeight;
+      let targetY = 0;
 
-      while (true) {
-        // === Hard cap: MAX_FRAMES ===
-        if (frameIdx >= MAX_FRAMES) {
-          console.warn('[RecallFox] Reached MAX_FRAMES (' + MAX_FRAMES + '), stopping.');
-          banner.textContent = `Cap ${MAX_FRAMES} frame tercapai — menyimpan…`;
-          break;
-        }
+      while (frameIdx < MAX_FRAMES) {
+        const actualY = (frameIdx === 0) ? scroller.scrollTop : await scrollToY(targetY);
+        const pH = pageH();
+        const vH = visH();
 
-        const pct = Math.round((scroller.scrollTop / totalHeight) * 100);
+        // Halaman sudah tuntas sebelum frame ini? selesai.
+        if (covered >= pH - 2) break;
+
+        if (frameIdx === 0) await sleep(300);   // lazy-image settle frame pertama
+        else await sleep(90);                   // settle paint antar frame
+
+        const pct = Math.round((covered / Math.max(1, pH)) * 100);
         banner.textContent = `Menangkap frame ${frameIdx + 1}/${MAX_FRAMES}… (${Math.min(100, pct)}%)`;
 
-        // === Stability check: cek apakah scrollHeight berubah ===
-        // (deteksi lazy-render / virtual scroll / chat apps)
-        const beforeStabCheck = scroller.scrollHeight;
-        await sleep(STABILITY_WAIT);
-        const afterStabCheck = scroller.scrollHeight;
-        if (Math.abs(afterStabCheck - beforeStabCheck) > 100) {
-          instabilityCount++;
-          console.warn('[RecallFox] scrollHeight unstable: ' + beforeStabCheck +
-                       ' → ' + afterStabCheck + ' (instability=' + instabilityCount + ')');
-          if (instabilityCount >= STABILITY_RETRIES) {
-            console.warn('[RecallFox] Page is too dynamic, aborting full-page capture');
-            hideBanner();
-            return {
-              dataUrl: null,
-              cancelled: false,
-              error: 'dynamic_page',
-              dynamicReason: 'unstable_scrollHeight',
-              dynamicMessage: 'Halaman ini terlalu dinamis (konten dimuat saat scroll — kemungkinan aplikasi chat atau infinite scroll). Full-page capture tidak bisa diandalkan. Coba pakai mode Seleksi Area atau Bagian Terlihat.'
-            };
-          }
-          // Update totalHeight kalau naik (jangan turunkan — mungkin ada collapse)
-          if (afterStabCheck > totalHeight && afterStabCheck <= maxHeight) {
-            totalHeight = afterStabCheck;
-            console.log('[RecallFox] Updated totalHeight → ' + totalHeight);
-          }
-          // Wait again
-          await sleep(300);
-        } else {
-          instabilityCount = 0;
-        }
-
-        // Wait for layout/paint to settle
-        await sleep(300);
-
-        // === Capture current viewport via background ===
+        // === Capture posisi AKTUAL via background ===
         const dataUrl = await grabVisible(format, quality);
-        await sleep(150);  // Firefox rate-limit safety
+        await sleep(120);  // Firefox rate-limit safety
 
         const { img, width, height } = await loadImage(dataUrl);
-        chunks.push({
-          img,
-          width,
-          height,
-          scrollY: scroller.scrollTop
-        });
 
-        console.log('[RecallFox] Frame ' + frameIdx +
-                    ': scrollTop=' + scroller.scrollTop +
-                    ' imgSize=' + width + 'x' + height +
-                    ' totalHeight=' + totalHeight);
-
-        frameIdx++;
-
-        // === Check if we've reached the bottom ===
-        if (scroller.scrollTop + viewportH >= totalHeight - 5) {
-          console.log('[RecallFox] Reached bottom (scrollTop=' + scroller.scrollTop +
-                      ', total=' + totalHeight + ')');
+        // === Hitung kontribusi BARIS BARU frame ini (AKAR #1) ===
+        // skip = bagian puncak frame yang sudah tercakup frame sebelumnya
+        // (termasuk pita 40px anti-sticky). scroll kurung (smooth belum
+        // selesai) → skip membesar sendiri, tetap tanpa gap & tanpa duplikat.
+        const skipCss = frameIdx === 0 ? 0 : Math.max(0, covered - actualY);
+        let newHCss = Math.max(0, vH - skipCss);
+        if (actualY + skipCss + newHCss > pH) {
+          newHCss = Math.max(0, pH - (actualY + skipCss));
+        }
+        if (newHCss <= 0) {
+          // Tidak membawa konten baru (scroll mentok / halaman lebih pendek
+          // dari perkiraan) — buang frame, selesai tanpa duplikat.
+          console.log('[RecallFox] Frame ' + frameIdx + ' tanpa konten baru — berhenti mulus');
           break;
         }
 
-        // === Try to scroll down by stepH ===
-        const before = scroller.scrollTop;
-        scroller.scrollTop = before + stepH;
-        await sleep(50);
+        chunks.push({ img, width, height, srcYCss: skipCss, drawHCss: newHCss });
+        covered = actualY + skipCss + newHCss;
+        frameIdx++;
 
-        if (scroller.scrollTop === before) {
-          noProgressCount++;
-          console.warn('[RecallFox] Scroll stuck at ' + before +
-                       ' (noProgress=' + noProgressCount + ')');
-          if (noProgressCount >= 2) {
-            console.warn('[RecallFox] Aborting: scroll not progressing');
+        console.log('[RecallFox] Frame ' + frameIdx +
+                    ': scrollTop=' + actualY +
+                    ' skip=' + skipCss +
+                    ' newH=' + newHCss +
+                    ' covered=' + covered + '/' + pH +
+                    ' imgSize=' + width + 'x' + height);
+
+        // === Sudah sampai dasar halaman? ===
+        if (actualY + vH >= pH - 2) {
+          console.log('[RecallFox] Reached bottom (scrollTop=' + actualY + ', total=' + pH + ')');
+          break;
+        }
+
+        // === Scroll ke posisi frame berikutnya (overlap 40px anti-sticky) ===
+        targetY = actualY + Math.max(100, vH - STICKY_PROTECTION);
+        const reached = await scrollToY(targetY);
+        if (reached <= actualY + 4) {
+          // Mentok: coba fallback sesuai jenis scroller, sekali saja.
+          console.warn('[RecallFox] Scroll stuck di ' + reached + ', fallback…');
+          if (isDocScroller) {
+            try { window.scrollTo(0, targetY); } catch (e) {}
+          } else {
+            try { scroller.scrollBy(0, targetY - reached); } catch (e) {}
+          }
+          await sleep(180);
+          const r2 = await scrollToY(targetY);
+          if (r2 <= actualY + 4) {
+            console.warn('[RecallFox] Scroll tetap tidak maju — berhenti dengan frame yang sudah ada');
             break;
           }
-          window.scrollTo(0, before + stepH);
-          await sleep(200);
-          if (scroller.scrollTop === before) {
-            console.warn('[RecallFox] window.scrollTo fallback also failed');
-            break;
-          }
-        } else {
-          noProgressCount = 0;
         }
       }
 
@@ -532,17 +559,14 @@
       console.log('[RecallFox] Captured ' + chunks.length + ' frames, stitching…');
       banner.textContent = `Menjahit ${chunks.length} frame…`;
 
-      // === Step 7: stitch frames ===
+      // === Step 6: stitch — tiap frame hanya baris barunya (AKAR #1) ===
       const stitchW = chunks[0].width;
       let stitchH = 0;
-      const drawSpecs = chunks.map((c, i) => {
-        let srcY = 0;
-        let drawH = c.height;
-        if (i === chunks.length - 1) {
-          const visibleContentH = Math.max(50, totalHeight - c.scrollY);
-          const dpr = c.width / viewportW;
-          drawH = Math.min(c.height, Math.round(visibleContentH * dpr));
-        }
+      const drawSpecs = chunks.map((c) => {
+        const cdpr = viewportW > 0 ? (c.width / viewportW) : 1;
+        const srcY = Math.max(0, Math.min(c.height - 1, Math.round(c.srcYCss * cdpr)));
+        let drawH = Math.round(c.drawHCss * cdpr);
+        drawH = Math.max(1, Math.min(drawH, c.height - srcY));
         stitchH += drawH;
         return { srcY, drawH };
       });
@@ -581,13 +605,13 @@
       };
     } finally {
       try {
-        if (document.body) {
-          document.body.style.overflowX = origBodyOverflowX;
-          document.body.style.overflowY = origBodyOverflowY;
-        }
         document.documentElement.style.scrollBehavior = origHtmlScrollBehavior;
-        scroller.scrollTop = origScrollTop;
-        scroller.scrollLeft = origScrollLeft;
+        if (origScrollerScrollBehavior !== null) {
+          try { scroller.style.scrollBehavior = origScrollerScrollBehavior; } catch (e) {}
+        }
+        try { scroller.scrollTop = origScrollTop; } catch (e) {}
+        try { scroller.scrollLeft = origScrollLeft; } catch (e) {}
+        try { const bs = document.getElementById('recallfox-capture-noscrollbar'); if (bs) bs.remove(); } catch (e) {}
       } catch (e) {
         console.warn('[RecallFox] Restore failed:', e.message);
       }

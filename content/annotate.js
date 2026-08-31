@@ -35,7 +35,8 @@
   let imgHeight = 0;
   let displayScale = 1;      // displayScale = displayWidth / imgWidth
 
-  let currentTool = 'arrow';
+  // v3.24.4: default anotasi = KOTAK (permintaan user), bukan panah.
+  let currentTool = 'rect';
   let currentColor = '#ef4444';   // red-500 default (most visible)
   let currentStroke = 4;
   let currentFontSize = 18;
