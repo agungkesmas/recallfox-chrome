@@ -26,6 +26,17 @@
 // v3.23.4: SIDEBAR AWARE — RFDock.setSidebar(lebar) menggeser SELURUH
 //   deretan ke kiri saat popout sidebar RecallFox terbuka (dipanggil
 //   sidebar-cs.js), dan mengembalikannya mepet kanan saat sidebar tutup.
+//
+// v3.24.5: SLOT HASIL DRAG — laporan user: "floating note/tape pomodoro
+//   engga bisa dipindah sama sekali" (v3.23.3 melepas drag = tidy() snap
+//   balik ke deretan, jadi hasil drag selalu dibatalkan) dan "lengket ke
+//   kursor ga mau lepas" (mouseup dipasang di document — mouseup di atas
+//   iframe / di luar window tak pernah diterima → flag drag stuck).
+//   Sekarang: hasil drop DIPERTAHANKAN sebagai slot khusus per widget
+//   (RFDock.pinCustom) — widget lain tetap ditata rapi di deretan dengan
+//   MENGHINDARI kotak slot khusus (anti tumpang-tindih). Slot tersimpan di
+//   sessionStorage (per-tab, hilang saat tab ditutup) dan dipulihkan saat
+//   register ulang. Klik ganda header = kembali ke deretan (clearCustom).
 // File ini idempoten: dipasang sebagai content script pertama di tiap entry
 // (manifest) — semua content script RecallFox berbagi isolated world yang
 // sama, jadi window.__RFDock satu instance untuk semua.
@@ -43,9 +54,28 @@
   var reg = new Map(); // key → handle
   var seq = 0;
   var sidebarW = 0;    // v3.23.4: offset geser-kiri saat sidebar buka (0 = tutup)
+  var SLOT_PREFIX = '__rfDockSlot:'; // v3.24.5 sessionStorage per-tab
 
   function num(fn, d) {
     try { var v = fn(); return (typeof v === 'number' && v > 0) ? v : d; } catch (e) { return d; }
+  }
+
+  // v3.24.5: slot khusus per-tab (sessionStorage — aman dipanggil di
+  // http/https/file; gagal diam saja → slot hanya hidup selama sesi DOM).
+  function slotLoad(key) {
+    try {
+      var raw = window.sessionStorage.getItem(SLOT_PREFIX + key);
+      if (!raw) return null;
+      var o = JSON.parse(raw);
+      if (o && typeof o.x === 'number' && isFinite(o.x) && typeof o.y === 'number' && isFinite(o.y)) return o;
+    } catch (e) {}
+    return null;
+  }
+  function slotSave(key, o) {
+    try { window.sessionStorage.setItem(SLOT_PREFIX + key, JSON.stringify(o)); } catch (e) {}
+  }
+  function slotClear(key) {
+    try { window.sessionStorage.removeItem(SLOT_PREFIX + key); } catch (e) {}
   }
 
   function layout() {
@@ -65,9 +95,43 @@
       });
       var vw = (typeof window.innerWidth === 'number' && window.innerWidth) || 1024;
       var vh = (typeof window.innerHeight === 'number' && window.innerHeight) || 768;
+
+      // v3.24.5: pisahkan widget ber-slot khusus (hasil drag user) dari
+      // widget deretan. Slot khusus dipasang duluan; deretan kemudian
+      // mengalir seperti biasa tapi MENGHINDARI kotak slot (didorong ke
+      // bawah slot, wrap kolom bila meluber) — hasil akhir tetap rapi.
+      var customs = [];
+      var flow = [];
+      for (var s = 0; s < items.length; s++) {
+        var hs = items[s];
+        if (hs.custom) customs.push(hs); else flow.push(hs);
+      }
+      var cRects = [];
+      for (var c = 0; c < customs.length; c++) {
+        var hc = customs[c];
+        var wc = num(hc.width, 320), hhc = num(hc.height, 260);
+        var xc = Math.max(MINX, Math.min(vw - RIGHT - wc, hc.custom.x - sidebarW));
+        var yc = Math.max(TOP, Math.min(Math.max(TOP, vh - FLOOR - hhc), hc.custom.y));
+        try { if (typeof hc.place === 'function') hc.place(xc, yc); } catch (e) {}
+        cRects.push({ x: xc, y: yc, w: wc, h: hhc });
+      }
+      function avoid(x, y, w, hh) {
+        // dorong ke bawah selama masih menabrak slot khusus (batas loop anti infinite)
+        for (var g = 0; g < 32; g++) {
+          var hit = -1;
+          for (var r = 0; r < cRects.length; r++) {
+            var R = cRects[r];
+            if (x < R.x + R.w + GAP && x + w > R.x - GAP && y < R.y + R.h + GAP && y + hh > R.y - GAP) { hit = r; break; }
+          }
+          if (hit < 0) break;
+          y = cRects[hit].y + cRects[hit].h + GAP;
+        }
+        return y;
+      }
+
       var col = 0, y = TOP, colMaxW = 0;
-      for (var i = 0; i < items.length; i++) {
-        var h = items[i];
+      for (var i = 0; i < flow.length; i++) {
+        var h = flow[i];
         var w = num(h.width, 320);
         var hh = num(h.height, 260);
         // wrap ke kolom baru hanya kalau kolom ini sudah berisi (y > TOP)
@@ -75,6 +139,7 @@
         if (y > TOP && y + hh > vh - FLOOR) { col += 1; y = TOP; colMaxW = 0; }
         var xRight = vw - RIGHT - sidebarW - col * COLSTEP;
         var x = Math.max(MINX, xRight - w); // rapat kanan per kolom
+        if (customs.length) y = avoid(x, y, w, hh); // v3.24.5: hindari slot drag
         if (w > colMaxW) colMaxW = w;
         try { if (typeof h.place === 'function') h.place(x, y); } catch (e) {}
         y += hh + GAP;
@@ -119,10 +184,30 @@
     register: function (h) {
       if (!h || !h.key) return;
       if (h.seq == null) h.seq = ++seq;
+      var slot = slotLoad(h.key);            // v3.24.5: pulihkan slot hasil drag
+      if (slot) h.custom = slot;
       reg.set(h.key, h);
       layout();
     },
-    unregister: function (key) { if (reg.delete(key)) layout(); },
+    unregister: function (key) { if (reg.delete(key)) { slotClear(key); layout(); } },
+    // v3.24.5: simpan posisi hasil drop sebagai slot khusus widget ini.
+    // x dinormalisasi (+sidebarW) supaya hubungan dengan deretan tetap benar
+    // saat sidebar dibuka/ditutup (slot ikut bergeser seperti kolom).
+    pinCustom: function (key, x, y) {
+      var h = reg.get(key);
+      if (!h) return;
+      var px = (typeof x === 'number' && isFinite(x)) ? Math.round(x) : 0;
+      var py = (typeof y === 'number' && isFinite(y)) ? Math.round(y) : 0;
+      h.custom = { x: px + sidebarW, y: py };
+      slotSave(key, h.custom);
+      layout();
+    },
+    // v3.24.5: klik ganda header — lepas slot, kembali ke deretan.
+    clearCustom: function (key) {
+      var h = reg.get(key);
+      if (h && h.custom) { delete h.custom; slotClear(key); }
+      layout();
+    },
     layout: layout,
     setSidebar: setSidebar,
     isolateKeys: isolateKeys,

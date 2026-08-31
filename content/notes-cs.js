@@ -1279,10 +1279,57 @@
 
     function makeDraggable(){
       const hd=shadow.querySelector('.rfn-hd');
-      let d=false,dx=0,dy=0,moved=false;
-      hd.addEventListener('mousedown',e=>{ if(e.target.closest('button'))return; d=true;moved=false; const rect=popover.getBoundingClientRect(); dx=e.clientX-rect.left; dy=e.clientY-rect.top; popover.style.transition='none'; e.preventDefault();});
-      document.addEventListener('mousemove',e=>{ if(!d)return; moved=true; popover.style.left=(e.clientX-dx)+'px'; popover.style.top=(e.clientY-dy)+'px'; popover.style.right='auto';});
-      document.addEventListener('mouseup',()=>{ if(d){ d=false; popover.style.transition=''; tidy(); } }); // v3.23.3 DOCK: lepas drag → kembali rapat ke deretan
+      const DOCK_KEY='note:'+data.id;
+      // v3.24.5 REWRITE DRAG — 2 akar laporan user ("engga bisa dipindah
+      // sama sekali" + "lengket ke kursor ga mau di lepas"):
+      //  (1) mouseup lama memanggil tidy() = layout() → hasil drag SELALU
+      //      dibatalkan (snap balik ke deretan) → seakan tak bisa dipindah.
+      //  (2) mousemove/mouseup dipasang di document — mouseup yang terjadi
+      //      di atas IFRAME atau di luar window tak pernah diterima → flag
+      //      drag stuck → widget mengikuti kursor selamanya.
+      // Fix: Pointer Events + setPointerCapture pada header (semua
+      // pointermove/up tetap mengalir ke header walau kursor di atas iframe
+      // / keluar window; pointercancel & blur ikut mengakhiri drag), dan
+      // hasil drop DIPERTAHANKAN sebagai slot khusus dock (RFDock.pinCustom)
+      // — widget lain menata ulang rapi menghindarinya. Klik ganda header =
+      // kembali ke deretan (RFDock.clearCustom).
+      let d=false,dx=0,dy=0,pid=null;
+      const isCtl=t=>t&&t.closest&&t.closest('button,select,input,textarea');
+      hd.addEventListener('pointerdown',e=>{
+        if(e.button!==0||isCtl(e.target))return;
+        d=true;pid=e.pointerId;
+        const rect=popover.getBoundingClientRect();
+        dx=e.clientX-rect.left; dy=e.clientY-rect.top;
+        popover.style.transition='none';
+        try{hd.style.touchAction='none';}catch(err){}
+        try{hd.setPointerCapture(e.pointerId);}catch(err){}
+        e.preventDefault();
+      });
+      hd.addEventListener('pointermove',e=>{
+        if(!d||e.pointerId!==pid)return;
+        const vw=window.innerWidth||1024, vh=window.innerHeight||768;
+        const w=popover.offsetWidth||320, h=popover.offsetHeight||260;
+        const nx=Math.min(Math.max(0,e.clientX-dx),Math.max(0,vw-w));
+        const ny=Math.min(Math.max(0,e.clientY-dy),Math.max(0,vh-h));
+        popover.style.left=nx+'px'; popover.style.top=ny+'px'; popover.style.right='auto';
+      });
+      const endDrag=e=>{
+        if(!d)return; d=false; pid=null;
+        popover.style.transition='';
+        try{ if(e&&e.pointerId!=null&&hd.hasPointerCapture&&hd.hasPointerCapture(e.pointerId)) hd.releasePointerCapture(e.pointerId); }catch(err){}
+        // v3.24.5 DOCK SLOT: posisi drop dipertahankan (bukan snap balik)
+        try{
+          const r=popover.getBoundingClientRect();
+          if(window.__RFDock&&window.__RFDock.pinCustom) window.__RFDock.pinCustom(DOCK_KEY,r.left,r.top);
+        }catch(err){}
+      };
+      hd.addEventListener('pointerup',endDrag);
+      hd.addEventListener('pointercancel',endDrag);
+      hd.addEventListener('lostpointercapture',endDrag);
+      try{ window.addEventListener('blur',()=>{ if(d){ d=false; pid=null; popover.style.transition=''; } }); }catch(err){}
+      try{ hd.title='Seret untuk memindah · klik ganda: kembali ke deretan'; }catch(err){}
+      // klik ganda header = lepas slot khusus, kembali rapat ke deretan
+      hd.addEventListener('dblclick',e=>{ if(isCtl(e.target))return; try{ if(window.__RFDock&&window.__RFDock.clearCustom) window.__RFDock.clearCustom(DOCK_KEY); }catch(err){} });
     }
 
     function wireEvents(){

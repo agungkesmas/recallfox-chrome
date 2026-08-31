@@ -340,12 +340,51 @@
     // ===== Bell: memakai playBell level modul (test = preview manual) =====
 
     // ===== Drag (header) — pola notes-cs.js =====
+    // v3.24.5 REWRITE DRAG (paritas notes-cs.js/tape-cs.js) — mouseup lama
+    // memanggil rfLayout() sehingga hasil drag SELALU dibatalkan (snap balik
+    // ke deretan), dan mouseup di atas iframe / di luar window tak pernah
+    // diterima → widget "lengket ke kursor ga mau lepas". Kini: Pointer
+    // Events + setPointerCapture di header + hasil drop jadi slot khusus
+    // dock (pinCustom); klik ganda header = kembali ke deretan (clearCustom).
     function makeDraggable() {
       const hd = shadow.querySelector('.rfp-hd');
-      let d = false, dx = 0, dy = 0, moved = false;
-      hd.addEventListener('mousedown', e => { if (e.target.closest && e.target.closest('button,select,input')) return; d = true; moved = false; const rect = popover.getBoundingClientRect(); dx = e.clientX - rect.left; dy = e.clientY - rect.top; popover.style.transition = 'none'; e.preventDefault(); });
-      document.addEventListener('mousemove', e => { if (!d) return; moved = true; popover.style.left = (e.clientX - dx) + 'px'; popover.style.top = (e.clientY - dy) + 'px'; popover.style.right = 'auto'; });
-      document.addEventListener('mouseup', () => { if (d) { d = false; popover.style.transition = ''; rfLayout(); } }); // v3.23.3 DOCK: lepas drag → kembali rapat ke deretan
+      const DOCK_KEY = 'pomo:main';
+      let d = false, dx = 0, dy = 0, pid = null;
+      const isCtl = t => t && t.closest && t.closest('button,select,input,textarea');
+      hd.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || isCtl(e.target)) return;
+        d = true; pid = e.pointerId;
+        const rect = popover.getBoundingClientRect();
+        dx = e.clientX - rect.left; dy = e.clientY - rect.top;
+        popover.style.transition = 'none';
+        try { hd.style.touchAction = 'none'; } catch (err) {}
+        try { hd.setPointerCapture(e.pointerId); } catch (err) {}
+        e.preventDefault();
+      });
+      hd.addEventListener('pointermove', e => {
+        if (!d || e.pointerId !== pid) return;
+        const vw = window.innerWidth || 1024, vh = window.innerHeight || 768;
+        const w = popover.offsetWidth || 320, h = popover.offsetHeight || 260;
+        const nx = Math.min(Math.max(0, e.clientX - dx), Math.max(0, vw - w));
+        const ny = Math.min(Math.max(0, e.clientY - dy), Math.max(0, vh - h));
+        popover.style.left = nx + 'px'; popover.style.top = ny + 'px'; popover.style.right = 'auto';
+      });
+      const endDrag = e => {
+        if (!d) return; d = false; pid = null;
+        popover.style.transition = '';
+        try { if (e && e.pointerId != null && hd.hasPointerCapture && hd.hasPointerCapture(e.pointerId)) hd.releasePointerCapture(e.pointerId); } catch (err) {}
+        // v3.24.5 DOCK SLOT: posisi drop dipertahankan (bukan snap balik)
+        try {
+          const r = popover.getBoundingClientRect();
+          if (window.__RFDock && window.__RFDock.pinCustom) window.__RFDock.pinCustom(DOCK_KEY, r.left, r.top);
+        } catch (err) {}
+      };
+      hd.addEventListener('pointerup', endDrag);
+      hd.addEventListener('pointercancel', endDrag);
+      hd.addEventListener('lostpointercapture', endDrag);
+      try { window.addEventListener('blur', () => { if (d) { d = false; pid = null; popover.style.transition = ''; } }); } catch (err) {}
+      try { hd.title = 'Seret untuk memindah · klik ganda: kembali ke deretan'; } catch (err) {}
+      hd.addEventListener('dblclick', e => { if (isCtl(e.target)) return; try { if (window.__RFDock && window.__RFDock.clearCustom) window.__RFDock.clearCustom(DOCK_KEY); } catch (err) {} });
     }
 
     function wireEvents() {

@@ -202,14 +202,38 @@
   // browser.runtime.sendMessage to ask the background to capture the
   // current window and return the dataUrl.
 
+  // v3.24.5: THROTTLE + RETRY — Chrome membatasi captureVisibleTab maksimal
+  // 2 panggilan per detik (MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND). Pace
+  // v3.24.4 (~350-400ms/frame) melanggar batas ini di halaman panjang →
+  // capture melempar error di tengah jalan (laporan user: fullpage "eror"
+  // di halaman header+scrollable). Jaga jeda minimal antar panggilan dan
+  // coba ulang bila tetap kena rate-limit.
+  let lastGrabAt = 0;
+  const MIN_GRAB_GAP = 550;   // ms — 2 panggilan per jendela 1 detik aman
   async function grabVisible(format, quality) {
-    const res = await browser.runtime.sendMessage({
-      type: 'CAPTURE_VISIBLE_TAB',
-      format,
-      quality
-    });
-    if (!res?.ok) throw new Error(res?.error || 'capture_failed');
-    return res.dataUrl;
+    const wait = lastGrabAt + MIN_GRAB_GAP - Date.now();
+    if (wait > 0) await sleep(wait);
+    const MAX_TRY = 4;
+    for (let attempt = 1; attempt <= MAX_TRY; attempt++) {
+      lastGrabAt = Date.now();
+      let res = null, threw = null;
+      try {
+        res = await browser.runtime.sendMessage({
+          type: 'CAPTURE_VISIBLE_TAB',
+          format,
+          quality
+        });
+      } catch (e) { threw = e; }
+      const errMsg = String((threw && threw.message) || (res && res.error) || '');
+      if (!threw && res && res.ok) return res.dataUrl;
+      // Rate-limit Chrome/Firefox → tunggu jendela quota lewat, coba lagi.
+      if (/MAX_CAPTURE|PER_SECOND|quota|rate.?limit/i.test(errMsg)) {
+        if (attempt < MAX_TRY) { await sleep(700); continue; }
+        throw new Error(errMsg || 'capture_rate_limited');
+      }
+      throw new Error(errMsg || 'capture_failed');
+    }
+    throw new Error('capture_failed');
   }
 
   // Load an image from a dataUrl, return { img, width, height }
@@ -421,6 +445,34 @@
 
     const viewportW = window.innerWidth || 1024;
 
+    // === v3.24.5: deteksi PITA HEADER FIXED/STICKY (laporan user: halaman
+    // dengan header + konten scrollable — contoh intranet BPJS — menghasilkan
+    // pita header berulang / sambungan bergeser). Header fixed/sticky lebar
+    // yang menempel di puncak viewport IKUT TERCAPTURE di TIAP frame, jadi
+    // baris puncak tiap frame adalah header, bukan konten halaman.
+    function detectTopOverlayBand() {
+      try {
+        const vw2 = window.innerWidth || 1024;
+        const vh2 = window.innerHeight || 768;
+        let bottom = 0;
+        const all = document.querySelectorAll('body *');
+        for (const el of all) {
+          // jangan anggap elemen milik RecallFox sendiri sebagai header
+          const eid = el.id || '';
+          if (/^recallfox/i.test(eid)) continue;
+          const cs = getComputedStyle(el);
+          if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+          const r = el.getBoundingClientRect();
+          if (r.width < vw2 * 0.5) continue;          // header hampir selebar layar
+          if (r.top > 2 || r.bottom <= 0) continue;    // harus menempel puncak
+          if (r.bottom > vh2 * 0.6) continue;          // overlay hampir layar penuh → bukan header
+          if (r.bottom > bottom) bottom = r.bottom;
+        }
+        return bottom;
+      } catch (e) { return 0; }
+    }
+
     // === Step 2: save original state ===
     const origScrollTop = scroller.scrollTop;
     const origScrollLeft = scroller.scrollLeft;
@@ -470,6 +522,20 @@
       await scrollToY(0);
       await sleep(350);
 
+      // === v3.24.5: ukur pita header SETELAH posisi paling atas ===
+      // off = baris puncak frame di ATAS area scroller (header fixed yang
+      //   mendorong konten; 0 untuk doc scroller).
+      // ov  = baris area scroller yang TERTUTUP header fixed/sticky di tiap
+      //   frame (header menumpang di atas konten yang menggulung).
+      // band = off + ov — digambar SEKALI di puncak kanvas dari frame 0.
+      const offCss = Math.max(0, Math.round(isDocScroller ? 0 : (scroller.getBoundingClientRect().top || 0)));
+      let ovCss = Math.max(0, Math.round(detectTopOverlayBand()) - offCss);
+      if (!(ovCss > 0 && ovCss < visH() * 0.6)) ovCss = 0;   // null/overlay layar penuh → abaikan
+      const bandCss = offCss + ovCss;
+      if (bandCss > 0) {
+        console.log('[RecallFox] Header band terdeteksi: off=' + offCss + ' ov=' + ovCss);
+      }
+
       // === Step 5: capture loop ===
       // `covered` = baris konten (css px) yang sudah tergambar di kanvas:
       // kanvas memegang [0, covered). Tiap frame menggambar HANYA baris
@@ -494,16 +560,31 @@
         banner.textContent = `Menangkap frame ${frameIdx + 1}/${MAX_FRAMES}… (${Math.min(100, pct)}%)`;
 
         // === Capture posisi AKTUAL via background ===
-        const dataUrl = await grabVisible(format, quality);
+        // v3.24.5: sembunyikan banner progress sesaat — banner fixed di
+        // puncak viewport sehingga IKUT TERCAPTURE di tiap frame (pollusi
+        // pita ungu/abu di hasil). Tampil kembali di antara frame.
+        let dataUrl = null;
+        try {
+          banner.style.display = 'none';
+          await sleep(60);   // beri kesempatan compositor membuang banner
+          dataUrl = await grabVisible(format, quality);
+        } finally {
+          banner.style.display = '';
+        }
         await sleep(120);  // Firefox rate-limit safety
 
         const { img, width, height } = await loadImage(dataUrl);
 
         // === Hitung kontribusi BARIS BARU frame ini (AKAR #1) ===
-        // skip = bagian puncak frame yang sudah tercakup frame sebelumnya
-        // (termasuk pita 40px anti-sticky). scroll kurung (smooth belum
-        // selesai) → skip membesar sendiri, tetap tanpa gap & tanpa duplikat.
-        const skipCss = frameIdx === 0 ? 0 : Math.max(0, covered - actualY);
+        // skip = bagian puncak frame yang tak terpakai: baris yang sudah
+        // tercakup frame sebelumnya (termasuk pita 40px anti-sticky) DAN
+        // pita header fixed/sticky (v3.24.5 — header ikut tercapture di
+        // tiap frame). scroll kurung (smooth belum selesai) → skip membesar
+        // sendiri, tetap tanpa gap & tanpa duplikat.
+        const skipCss = Math.max(covered - actualY, ovCss);
+        // v3.24.5: offCss TIDAK mengurangi tinggi konten — off hanya offset
+        // baris frame (di mana scroller mulai di layar); jendela konten
+        // frame = visH (clientHeight nested / innerHeight doc).
         let newHCss = Math.max(0, vH - skipCss);
         if (actualY + skipCss + newHCss > pH) {
           newHCss = Math.max(0, pH - (actualY + skipCss));
@@ -515,7 +596,7 @@
           break;
         }
 
-        chunks.push({ img, width, height, srcYCss: skipCss, drawHCss: newHCss });
+        chunks.push({ img, width, height, srcYCss: offCss + skipCss, drawHCss: newHCss });
         covered = actualY + skipCss + newHCss;
         frameIdx++;
 
@@ -527,13 +608,16 @@
                     ' imgSize=' + width + 'x' + height);
 
         // === Sudah sampai dasar halaman? ===
-        if (actualY + vH >= pH - 2) {
+        if (covered >= pH - 2) {
           console.log('[RecallFox] Reached bottom (scrollTop=' + actualY + ', total=' + pH + ')');
           break;
         }
 
-        // === Scroll ke posisi frame berikutnya (overlap 40px anti-sticky) ===
-        targetY = actualY + Math.max(100, vH - STICKY_PROTECTION);
+        // === Scroll ke posisi frame berikutnya ===
+        // v3.24.5: langkah maksimum yang bebas-gap = advMax (lebar jendela
+        // konten frame); dikurangi overlap anti-sticky 40px bila cukup.
+        const advMax = Math.max(1, vH - ovCss);
+        targetY = actualY + Math.max(1, advMax > (STICKY_PROTECTION + 40) ? (advMax - STICKY_PROTECTION) : (advMax - 2));
         const reached = await scrollToY(targetY);
         if (reached <= actualY + 4) {
           // Mentok: coba fallback sesuai jenis scroller, sekali saja.
@@ -560,13 +644,24 @@
       banner.textContent = `Menjahit ${chunks.length} frame…`;
 
       // === Step 6: stitch — tiap frame hanya baris barunya (AKAR #1) ===
+      // v3.24.5: pita header (off+ov, dari frame 0) digambar SEKALI di
+      // puncak kanvas — di semua frame baris itu dilewati, jadi tanpa
+      // header berulang di tiap sambungan.
       const stitchW = chunks[0].width;
-      let stitchH = 0;
-      const drawSpecs = chunks.map((c) => {
+      const cdpr0 = viewportW > 0 ? (chunks[0].width / viewportW) : 1;
+      const bandHpx = bandCss > 0
+        ? Math.max(0, Math.min(Math.round(bandCss * cdpr0), chunks[0].height))
+        : 0;
+      let stitchH = bandHpx;
+      const drawSpecs = chunks.map((c, i) => {
         const cdpr = viewportW > 0 ? (c.width / viewportW) : 1;
-        const srcY = Math.max(0, Math.min(c.height - 1, Math.round(c.srcYCss * cdpr)));
+        let srcY = Math.max(0, Math.min(c.height - 1, Math.round(c.srcYCss * cdpr)));
         let drawH = Math.round(c.drawHCss * cdpr);
         drawH = Math.max(1, Math.min(drawH, c.height - srcY));
+        if (i === 0 && bandHpx > 0) {
+          // frame 0: sumber bergeser ke bawah pita header bila menimpa
+          srcY = Math.min(c.height - 1, srcY);
+        }
         stitchH += drawH;
         return { srcY, drawH };
       });
@@ -582,6 +677,12 @@
       ctx.fillRect(0, 0, stitchW, stitchH);
 
       let drawnY = 0;
+      if (bandHpx > 0) {
+        // pita header + celah di atas scroller — dari frame 0, sekali saja
+        ctx.drawImage(chunks[0].img, 0, 0, chunks[0].width, bandHpx,
+                      0, 0, chunks[0].width, bandHpx);
+        drawnY = bandHpx;
+      }
       for (let i = 0; i < chunks.length; i++) {
         const c = chunks[i];
         const spec = drawSpecs[i];
@@ -628,7 +729,7 @@
     // v3.20.5: Hide RecallFox floating elements during screenshot capture
     // v3.20.14: Use display:none (bukan visibility:hidden) — visibility:hidden
     //   masih tercapture di Firefox captureVisibleTab. display:none remove dari render tree.
-    const HIDE_SELECTORS = ['#recallfox-notes-host', '#recallfox-tape-host', '#recallfox-ai-popup', '#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-sidebar-floater-pair', '#recallfox-popout-pin', '#recallfox-fab', '.recallfox-dock'];
+    const HIDE_SELECTORS = ['#recallfox-notes-host', '#recallfox-tape-host', '#recallfox-pomodoro-host', '#recallfox-ai-popup', '#recallfox-sidebar-host', '#recallfox-sidebar-floater', '#recallfox-sidebar-floater-pair', '#recallfox-popout-pin', '#recallfox-fab', '.recallfox-dock'];
     const hiddenEls = [];
     for (const sel of HIDE_SELECTORS) {
       document.querySelectorAll(sel).forEach(el => {

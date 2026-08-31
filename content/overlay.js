@@ -332,26 +332,6 @@
       `;
       document.body.appendChild(modalEl);
 
-    // v3.24.4: KLIK GAMBAR PREVIEW = BUKA ANOTASI (cara kedua selain tombol
-    // "Anotasi" — permintaan user). Route lewat tombol annotate yang sama
-    // supaya satu jalur kode (spinner/disable/status otomatis ikut).
-    {
-      const prevWrap = modalEl.querySelector('.rf-capture-modal-preview');
-      const prevImg = prevWrap ? prevWrap.querySelector('img') : null;
-      if (prevWrap && prevImg) {
-        prevImg.title = 'Klik gambar untuk anotasi';
-        prevImg.style.cursor = 'pointer';
-        prevImg.addEventListener('click', () => {
-          const annBtn = modalEl.querySelector('[data-action="annotate"]');
-          if (annBtn && !annBtn.disabled) annBtn.click();
-        });
-        const hint = document.createElement('div');
-        hint.className = 'rf-capture-preview-hint';
-        hint.textContent = '✏️ Klik gambar untuk anotasi';
-        prevWrap.appendChild(hint);
-      }
-    }
-
       const close = (result) => {
         if (modalEl) { modalEl.remove(); modalEl = null; }
         document.removeEventListener('keydown', escHandler, true);
@@ -635,6 +615,31 @@
         await handleAction(action, btn);
       });
     });
+
+    // v3.24.5 FIX — KLIK GAMBAR PREVIEW = BUKA ANOTASI (cara kedua selain
+    // tombol "Anotasi" — permintaan user). v3.24.4 salah memasang blok ini
+    // di showModePicker() (dialog pilih mode — TIDAK punya .rf-capture-
+    // modal-preview) sehingga wiring-nya mati singkat dan klik gambar tak
+    // pernah berfungsi. Kini terpasang di modal "Screenshot diambil" yang
+    // benar. Route lewat tombol annotate yang sama supaya satu jalur kode
+    // (spinner/disable/status otomatis ikut).
+    {
+      const prevWrap = modalEl.querySelector('.rf-capture-modal-preview');
+      const prevImg = prevWrap ? prevWrap.querySelector('img') : null;
+      const annBtn0 = modalEl.querySelector('[data-action="annotate"]');
+      if (prevWrap && prevImg && annBtn0) {
+        prevImg.title = 'Klik gambar untuk anotasi';
+        prevImg.style.cursor = 'pointer';
+        prevImg.addEventListener('click', () => {
+          const annBtn = modalEl.querySelector('[data-action="annotate"]');
+          if (annBtn && !annBtn.disabled) annBtn.click();
+        });
+        const hint = document.createElement('div');
+        hint.className = 'rf-capture-preview-hint';
+        hint.textContent = '✏️ Klik gambar untuk anotasi';
+        prevWrap.appendChild(hint);
+      }
+    }
   }
 
   function showStatus(msg, isError = false) {
