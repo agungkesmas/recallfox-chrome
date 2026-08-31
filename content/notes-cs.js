@@ -227,6 +227,16 @@
     // Baris berawalan '>' = subtask aktif (radio + indent), '>x ' = selesai
     // (tercoret + turun ke dasar deret sesuai urutan selesai). Klik radio =
     // toggle. Hanya aktif di dalam RecallNote.
+    // v3.24.3: (a) Enter pada baris task = langsung buat '> ' baru di bawah
+    // (seperti bullet di Word) sampai Backspace melepas mode; Enter pada
+    // task KOSONG / Backspace di depan isi = keluar mode (kembali ngetik
+    // normal); Backspace pada done = un-done dulu. (b) FIX FIREFOX "teks
+    // tidak bisa dihapus": perintah hapus/pilih native Firefox gagal senyap
+    // di contenteditable dalam Shadow DOM (ShadowRoot.getSelection tidak
+    // tersedia; engine edit FF menuntun seleksi dokumen yang ter-retarget ke
+    // host). Shim RF_IS_FF mengambil alih hapus karakter/kata/seleksi,
+    // Ctrl+A/Ctrl+C/Ctrl+X, dan ketik-ganti-seleksi lewat bedah DOM model
+    // baris datar — HANYA di Firefox; Chrome tetap 100% native.
     // RF_TASK_MODEL_START (fungsi murni — diuji langsung oleh task_sim)
     function parseTaskLine(raw){
       const s = String(raw == null ? '' : raw);
@@ -405,14 +415,24 @@
           }
         })(sp);
         if (!tns.length) { const tn = rfEnsureTextHost(sp); if (tn) tns.push(tn); }
-        let node = tns[0], off = 0, acc = 0;
-        for (let i = 0; i < tns.length; i++) {
-          const len = String(tns[i].textContent || '').length;
-          if (target <= acc + len) { node = tns[i]; off = target - acc; break; }
-          acc += len; node = tns[i]; off = len;
-        }
+        let node = tns[0], off = 0, acc = 0, total = 0;
+        for (const t of tns) total += String(t.textContent || '').length;
         const rg = document.createRange();
-        rg.setStart(node, off); rg.collapse(true);
+        if (total === 0) {
+          // v3.24.3: baris KOSONG — caret di level SPAN (posisi stabil di
+          // Chromium/Firefox). Caret pada text-node kosong membuat browser
+          // melompatkan caret ke baris tetangga (ketikan/Backspace mendarat
+          // di baris yang salah — bug nyata saat uji browser nyata).
+          rg.setStart(sp, 0);
+        } else {
+          for (let i = 0; i < tns.length; i++) {
+            const len = String(tns[i].textContent || '').length;
+            if (target <= acc + len) { node = tns[i]; off = target - acc; break; }
+            acc += len; node = tns[i]; off = len;
+          }
+          rg.setStart(node, off);
+        }
+        rg.collapse(true);
         const sel = rfGetSel(); if (!sel) return;
         if (sel.removeAllRanges) sel.removeAllRanges();
         if (sel.addRange) sel.addRange(rg);
@@ -427,7 +447,13 @@
       try {
         const sel = rfGetSel(); if (!sel || !sel.rangeCount) return false;
         const n = sel.getRangeAt(0).startContainer;
-        return !!(n && n.nodeType === 3 && rfLineOfNode(n));
+        if (n && n.nodeType === 3 && rfLineOfNode(n)) return true;
+        // v3.24.3: caret level ELEMEN di dalam baris (span/baris kosong)
+        // juga HIDUP — baris kosong menempatkan caret di span (posisi
+        // stabil lintas browser); menganggapnya mati membuat rfRescueCaret
+        // memindahkan caret ke baris lain (bug nyata saat uji browser).
+        if (n && n.nodeType === 1 && rfLineOfNode(n)) return true;
+        return false;
       } catch (e) { return false; }
     }
     function rfRescueCaret(){
@@ -572,7 +598,36 @@
       for (const ln of rfKids(textarea)) {
         try {
           if (!ln.classList || !ln.classList.contains('rfn-line')) continue;
-          if (ln.classList.contains('rfn-task') || ln.classList.contains('rfn-done')) continue;
+          if (ln.classList.contains('rfn-task') || ln.classList.contains('rfn-done')) {
+            // v3.24.3: '>' yang diketik DI DALAM baris task redundan (refleks
+            // setelah auto-continue '> ' — anti '> > teks'). Telan in-place:
+            // '>' / '> ' → tetap task; '>x' / '>x ' → sekalian jadi done
+            // (coret), konsisten dengan serialisasi. Caret dipulihkan.
+            const wasDone = ln.classList.contains('rfn-done');
+            const b2 = rfLineText(ln);
+            if (b2.indexOf('>') === 0) {
+              const isX = b2.indexOf('>x') === 0;
+              const eat = isX ? (b2.length > 2 && b2.charAt(2) === ' ' ? 3 : 2)
+                              : (b2.length > 1 && b2.charAt(1) === ' ' ? 2 : 1);
+              const isF2 = (ln === rfFocusedLine());
+              const cOff2 = isF2 ? rfCaretInLine(ln) : -1;
+              const sp2 = rfSpanOf(ln);
+              let ate = false;
+              if (sp2) {
+                const tn2 = rfFirstText(sp2);
+                if (tn2 && tn2.deleteData && String(tn2.textContent || '').length >= eat) {
+                  try { tn2.deleteData(0, eat); ate = true; } catch (e2) {}
+                }
+              }
+              if (!ate) rfSetLineText(ln, b2.slice(eat));
+              // spasi pertama ketikan user setelah '>' redundan ikut ditelan
+              // (paritas dengan konversi '>' live — anti '>  teks' dobel spasi)
+              try { rfJustConv.add(ln); } catch (e2) {}
+              if (isX && !wasDone) ln.classList.add('rfn-done');
+              if (isF2 && cOff2 >= 0) rfPlaceCaret(ln, Math.max(0, cOff2 - eat));
+            }
+            continue;
+          }
           const before = rfLineText(ln);
           const m = parseTaskLine(before);
           if (m.kind === 'plain') continue;
@@ -657,10 +712,25 @@
       const off = rfCaretInLine(ln);
       const cur = rfLineText(ln);
       const hasCaret = off >= 0;
+      const isTaskLn = !!(ln.classList && ln.classList.contains('rfn-task'));
+      const isDoneLn = !!(ln.classList && ln.classList.contains('rfn-done'));
+      // v3.24.3: Enter di baris task KOSONG = keluar mode task (ala bullet
+      // Word: enter pada bullet kosong menutup daftar, tak menumpuk radio).
+      if (isTaskLn && !isDoneLn && cur.length === 0) {
+        try { ln.classList.remove('rfn-task'); } catch (e) {}
+        try { rfJustConv.delete(ln); } catch (e) {}
+        rfPlaceCaret(ln, 0);
+        rfSyncEmptyClass();
+        return;
+      }
       const before = hasCaret ? cur.slice(0, off) : cur;
       const after = hasCaret ? cur.slice(off) : '';
       rfSetLineText(ln, before);
-      const nl = rfMakeLine({ kind: 'plain', text: after });
+      // v3.24.3: lanjutan baris task aktif = baris task baru langsung ber-
+      // radio (permintaan user: "pencet enter langsung buat > lagi seperti
+      // membuat bullet di word" — sampai Backspace melepas mode).
+      const contTask = !!(isTaskLn && !isDoneLn);
+      const nl = rfMakeLine({ kind: contTask ? 'task' : 'plain', text: after });
       try { textarea.insertBefore(nl, ln.nextSibling || null); } catch (e) { textarea.appendChild(nl); }
       rfPlaceCaret(nl, 0);
       rfSyncEmptyClass();
@@ -733,7 +803,240 @@
       else rfPlaceCaret(anchor, rfLineText(anchor).length);
       rfSyncEmptyClass();
     }
+    // ---- v3.24.3 SHIM FIREFOX: mengapa ada shim? ----
+    // Firefox TIDAK memiliki ShadowRoot.getSelection() dan perintah edit
+    // nativenya (Backspace/Delete/ketik-ganti-seleksi/Ctrl+A) menuntun
+    // seleksi level-DOKUMEN yang ter-retarget ke HOST — di dalam Shadow DOM
+    // semuanya gagal SENYAP: ketik & Enter masih jalan (jalur berbeda),
+    // tetapi TIDAK ADA teks yang bisa dihapus (laporan user). Chrome tidak
+    // punya masalah ini. Maka: shim AKTIF HANYA bila Firefox — hapus
+    // karakter/kata/seleksi, Ctrl+A/Ctrl+C/Ctrl+X, dan ketik-ganti-seleksi
+    // dikerjakan lewat bedah DOM model baris datar milik engine (caret
+    // selalu dipulihkan). Di Chrome shim mati total — perilaku native 100%.
+    // v3.24.3: RF_IS_FF kini LOKAL di dalam installNoteTaskEngine (lihat catatan di sana).
+    function rfFFTextNodeAt(sp, charOff) {
+      // text node + offset lokal untuk posisi karakter charOff dalam span
+      try {
+        let acc = 0;
+        for (const n of (sp.childNodes || [])) {
+          if (n.nodeType !== 3) continue;
+          const len = String(n.textContent || '').length;
+          if (charOff <= acc + len) return { node: n, off: charOff - acc };
+          acc += len;
+        }
+        const last = rfFirstText(sp);
+        return last ? { node: last, off: String(last.textContent || '').length } : null;
+      } catch (e) { return null; }
+    }
+    function rfFFResolvePos(container, offset) {
+      // map posisi seleksi apa pun (text/elemen/level editor) → { ln, off }
+      // dalam model baris datar; null bila di luar editor.
+      try {
+        if (!container) return null;
+        if (container.nodeType === 3) {
+          const ln = rfLineOfNode(container);
+          if (!ln) return null;
+          const sp = rfSpanOf(ln);
+          if (!sp) return { ln, off: 0 };
+          let acc = 0, found = false;
+          (function walk(x) {
+            if (!x || found) return;
+            const cs = x.childNodes || [];
+            for (let i = 0; i < cs.length; i++) {
+              if (found) return;
+              const c = cs[i];
+              if (c === container) { found = true; return; }
+              if (c.nodeType === 3) acc += String(c.textContent || '').length;
+              else walk(c);
+            }
+          })(sp);
+          return { ln, off: found ? acc + (typeof offset === 'number' ? offset : 0) : rfLineText(ln).length };
+        }
+        if (container === textarea) {
+          const ks = rfKids(textarea);
+          if (!ks.length) return null;
+          const idx = Math.max(0, Math.min(typeof offset === 'number' ? offset : 0, ks.length));
+          if (idx >= ks.length) { const l = ks[ks.length - 1]; return { ln: l, off: rfLineText(l).length }; }
+          return { ln: ks[idx], off: 0 };
+        }
+        const ln = rfLineOfNode(container);
+        if (!ln) return null;
+        if ((offset || 0) <= 0) return { ln, off: 0 };
+        return { ln, off: rfLineText(ln).length };
+      } catch (e) { return null; }
+    }
+    function rfFFSelRange() {
+      try { const sel = rfGetSel(); if (!sel || !sel.rangeCount) return null; return sel.getRangeAt(0); }
+      catch (e) { return null; }
+    }
+    function rfFFResolveRange() {
+      // seleksi aktif → { a:{ln,off}, b:{ln,off} } TERURUT; null bila tak valid
+      try {
+        const r = rfFFSelRange();
+        if (!r) return null;
+        let a = rfFFResolvePos(r.startContainer, r.startOffset);
+        let b = rfFFResolvePos(r.endContainer, r.endOffset);
+        if (!a || !b) return null;
+        const ks = rfKids(textarea);
+        const ka = ks.indexOf(a.ln), kb = ks.indexOf(b.ln);
+        if (ka < 0 || kb < 0) return null;
+        if (ka > kb || (ka === kb && a.off > b.off)) { const t = a; a = b; b = t; }
+        return { a, b };
+      } catch (e) { return null; }
+    }
+    function rfFFSplice(ln, start, end) {
+      // hapus karakter [start, end) dari baris via deleteData (node teks
+      // dipertahankan — caret stabil), isi baris diperbarui di tempat.
+      try {
+        const sp = rfSpanOf(ln);
+        if (!sp) return;
+        let acc = 0;
+        for (const n of Array.prototype.slice.call(sp.childNodes || [])) {
+          if (n.nodeType !== 3) continue;
+          const len = String(n.textContent || '').length;
+          const s = Math.max(start, acc), e = Math.min(end, acc + len);
+          if (e > s) { try { n.deleteData(s - acc, e - s); } catch (e2) {} }
+          acc += len;
+          if (acc >= end) break;
+        }
+      } catch (e) {}
+    }
+    function rfFFDeleteRange(rng) {
+      // hapus rentang model datar (satu/berapa baris); caret kembali di titik
+      // sambung. Editor SELALU berakhir >= 1 baris.
+      try {
+        const ks = rfKids(textarea);
+        const iA = ks.indexOf(rng.a.ln), iB = ks.indexOf(rng.b.ln);
+        if (iA < 0 || iB < 0) return null;
+        const headKeep = rfLineText(rng.a.ln).slice(0, rng.a.off);
+        const tailKeep = rfLineText(rng.b.ln).slice(rng.b.off);
+        for (let i = iB; i > iA; i--) { try { textarea.removeChild(ks[i]); } catch (e2) {} }
+        rfSetLineText(rng.a.ln, headKeep + tailKeep);
+        rfSyncEmptyClass();
+        return { ln: rng.a.ln, off: headKeep.length };
+      } catch (e) { return null; }
+    }
+    function rfFFDeleteChar(ln, off, dir) {
+      // hapus SATU karakter di depan/belakang caret (dir: -1 mundur, 1 maju)
+      try {
+        const t = rfLineText(ln);
+        if (dir < 0) {
+          if (off <= 0) return false;
+          rfFFSplice(ln, off - 1, off);
+          rfPlaceCaret(ln, off - 1);
+          return true;
+        }
+        if (off >= t.length) return false;
+        rfFFSplice(ln, off, off + 1);
+        rfPlaceCaret(ln, off);
+        return true;
+      } catch (e) { return false; }
+    }
+    function rfFFDeleteWord(ln, off, dir) {
+      // hapus satu kata (ala Ctrl+Backspace / Ctrl+Delete): lewati spasi,
+      // lalu karakter bukan-spasi. dir: -1 mundur, 1 maju.
+      try {
+        const t = rfLineText(ln);
+        let s = off, e = off;
+        if (dir < 0) {
+          while (s > 0 && /\s/.test(t.charAt(s - 1))) s--;
+          while (s > 0 && !/\s/.test(t.charAt(s - 1))) s--;
+        } else {
+          while (e < t.length && /\s/.test(t.charAt(e))) e++;
+          while (e < t.length && !/\s/.test(t.charAt(e))) e++;
+        }
+        if (s === e) return false;
+        rfFFSplice(ln, s, e);
+        rfPlaceCaret(ln, s);
+        return true;
+      } catch (e2) { return false; }
+    }
+    function rfFFSelectAll() {
+      // Ctrl+A manual: range INNER dari awal baris pertama ke akhir baris
+      // terakhir — seleksi bawaan FF (retarget host) tak terbaca engine.
+      try {
+        const ks = rfKids(textarea);
+        if (!ks.length) return;
+        const nA = rfFirstText(ks[0]) || rfEnsureTextHost(rfSpanOf(ks[0]));
+        const nZ = rfFirstText(ks[ks.length - 1]) || rfEnsureTextHost(rfSpanOf(ks[ks.length - 1]));
+        if (!nA || !nZ) return;
+        const rg = document.createRange();
+        rg.setStart(nA, 0);
+        rg.setEnd(nZ, String(nZ.textContent || '').length);
+        const sel = rfGetSel();
+        if (!sel) return;
+        if (sel.removeAllRanges) sel.removeAllRanges();
+        if (sel.addRange) sel.addRange(rg);
+      } catch (e) {}
+    }
+    function rfFFSelText(rng) {
+      // teks terseleksi (untuk copy/cut) — baris digabung dengan '\n'.
+      try {
+        const ks = rfKids(textarea);
+        const iA = ks.indexOf(rng.a.ln), iB = ks.indexOf(rng.b.ln);
+        if (iA < 0 || iB < 0) return '';
+        if (iA === iB) return rfLineText(rng.a.ln).slice(rng.a.off, rng.b.off);
+        const out = [rfLineText(rng.a.ln).slice(rng.a.off)];
+        for (let i = iA + 1; i < iB; i++) out.push(rfLineText(ks[i]));
+        out.push(rfLineText(rng.b.ln).slice(0, rng.b.off));
+        return out.join('\n');
+      } catch (e) { return ''; }
+    }
+    function rfFFCopy(cut) {
+      // Ctrl+C / Ctrl+X manual — clipboard FF di dalam shadow sering kosong;
+      // tulis sendiri via navigator.clipboard (fallback execCommand).
+      // Untuk cut: setelah tersalin, hapus seleksi lewat bedah model datar.
+      try {
+        const rng = rfFFResolveRange();
+        if (!rng) return;
+        const t = rfFFSelText(rng);
+        if (t) {
+          let done = false;
+          try {
+            if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(t).then(() => {}, () => {});
+              done = true;
+            }
+          } catch (e2) {}
+          if (!done) {
+            try {
+              const ta = document.createElement('textarea');
+              ta.value = t; ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+              document.body.appendChild(ta); ta.select();
+              try { document.execCommand('copy'); } catch (e4) {}
+              ta.remove();
+            } catch (e3) {}
+          }
+        }
+        if (cut) {
+          const pos = rfFFDeleteRange(rng);
+          if (pos) { rfPlaceCaret(pos.ln, pos.off); rfAfterStructural(); }
+        }
+      } catch (e) {}
+    }
+    function rfFFReplaceSelection(txt) {
+      // ketik MENGGANTIKAN seleksi (native FF gagal di shadow): hapus rentang,
+      // sisipkan teks di titik sambung, caret akhir = setelah teks sisipan.
+      try {
+        const rng = rfFFResolveRange();
+        if (!rng) return false;
+        const pos = rfFFDeleteRange(rng);
+        if (!pos) return false;
+        const ins = String(txt == null ? '' : txt);
+        const t = rfLineText(pos.ln);
+        rfSetLineText(pos.ln, t.slice(0, pos.off) + ins + t.slice(pos.off));
+        rfPlaceCaret(pos.ln, pos.off + ins.length);
+        return true;
+      } catch (e) { return false; }
+    }
     function installNoteTaskEngine(){
+      // v3.24.3: deteksi Firefox = variabel LOKAL di sini. JANGAN naikkan ke
+      // level buildCtrl — installNoteTaskEngine() dipanggil di AWAL buildCtrl
+      // (sebelum baris-deklarasi level bawah sempat dieksekusi), sehingga
+      // konst level-bawah = TDZ ReferenceError senyap → try{} di call site
+      // menelannya → keydown/paste/click GAGAL TERPASANG (bug nyata saat
+      // pengembangan v3.24.3: shim FF mati total di kedua browser).
+      const RF_IS_FF = (typeof navigator !== 'undefined' && /firefox/i.test(String((typeof navigator !== 'undefined' && navigator && navigator.userAgent) || '')));
       let composing = false;
       const onInput = () => {
         // Ketikan biasa = keempat langkah NO-OP total (tidak ada node liar /
@@ -757,22 +1060,154 @@
             }
           } catch (ee) {}
         });
+
+        if (RF_IS_FF) textarea.addEventListener('beforeinput', (e) => {
+          // v3.24.3 JARING PENGAMAN FF (menu konteks / jalur tanpa keydown):
+          // perintah hapus native FF gagal senyap di shadow → sanggut lalu
+          // bedah sendiri; mengetik yang MENGGANTIKAN seleksi juga gagal →
+          // ganti manual. Chrome tidak pernah masuk sini (RF_IS_FF false).
+          try {
+            if (composing) return;
+            const it2 = String((e && e.inputType) || '');
+            if (it2.indexOf('delete') === 0) {
+              if (e.preventDefault) e.preventDefault();
+              if (!rfSelCollapsed()) {
+                const rng = rfFFResolveRange();
+                if (rng) { const pos = rfFFDeleteRange(rng); if (pos) { rfPlaceCaret(pos.ln, pos.off); rfAfterStructural(); } }
+              } else if (it2 === 'deleteWordBackward' || it2 === 'deleteWordForward') {
+                const ln = rfFocusedLine();
+                if (ln) {
+                  const off = rfCaretInLine(ln);
+                  const okd = rfFFDeleteWord(ln, off, it2 === 'deleteWordForward' ? 1 : -1);
+                  if (okd) rfAfterStructural();
+                }
+              } else if (it2 === 'deleteContentForward' || it2 === 'deleteSoftLineForward') {
+                const ln = rfFocusedLine();
+                if (ln) {
+                  const off = rfCaretInLine(ln);
+                  if (it2 === 'deleteSoftLineForward') { rfFFSplice(ln, off, rfLineText(ln).length); rfPlaceCaret(ln, off); rfAfterStructural(); }
+                  else if (rfFFDeleteChar(ln, off, 1)) rfAfterStructural();
+                }
+              } else {
+                const ln = rfFocusedLine();
+                if (ln) {
+                  const off = rfCaretInLine(ln);
+                  if (rfFFDeleteChar(ln, off, -1)) rfAfterStructural();
+                  else if (rfCaretInLine(ln) === 0 && rfMergeWithPrev(ln)) rfAfterStructural();
+                }
+              }
+              return;
+            }
+            if ((it2 === 'insertText' || it2 === 'insertReplacementText' || it2 === 'insertFromPaste') && !rfSelCollapsed()) {
+              if (e.preventDefault) e.preventDefault();
+              rfFFReplaceSelection(typeof e.data === 'string' ? e.data : '');
+              rfAfterStructural();
+            }
+          } catch (ee) {}
+        });
         textarea.addEventListener('keydown', (e) => {
           try {
             if (composing) return;
             const k = e && e.key;
+            const mod = !!(e && (e.ctrlKey || e.metaKey));
             if (k === 'Enter') { e.preventDefault(); rfSplitAtCaret(); rfAfterStructural(); return; }
+            if (mod && (k === 'a' || k === 'A')) {
+              // v3.24.3: Ctrl+A lewat shim FF — seleksi dokumen FF (retarget
+              // host) tak terbaca engine; buat range INNER sendiri. Chrome native.
+              if (RF_IS_FF) { e.preventDefault(); rfFFSelectAll(); }
+              return;
+            }
+            if (mod && (k === 'c' || k === 'C' || k === 'x' || k === 'X')) {
+              // v3.24.3: copy/cut manual shim FF (clipboard shadow FF kosong).
+              if (RF_IS_FF && !rfSelCollapsed()) {
+                e.preventDefault();
+                rfFFCopy(k === 'x' || k === 'X');
+                rfAfterStructural();
+              }
+              return;
+            }
+            if (RF_IS_FF && !mod && !e.altKey && k && k.length === 1 && !rfSelCollapsed()) {
+              // v3.24.3: mengetik MENGGANTIKAN seleksi — native FF gagal di
+              // shadow; ganti manual dengan bedah model datar.
+              e.preventDefault();
+              rfFFReplaceSelection(k);
+              rfAfterStructural();
+              return;
+            }
             if (k === 'Backspace') {
-              // seleksi rentang → biarkan native menghapus seleksi
-              if (!rfSelCollapsed()) return;
+              // seleksi rentang → hapus seleksi (Chrome: native; FF: shim)
+              if (!rfSelCollapsed()) {
+                if (RF_IS_FF) {
+                  const rng = rfFFResolveRange();
+                  if (rng) {
+                    e.preventDefault();
+                    const pos = rfFFDeleteRange(rng);
+                    if (pos) { rfPlaceCaret(pos.ln, pos.off); rfAfterStructural(); }
+                  }
+                }
+                return;
+              }
               const ln = rfFocusedLine();
-              if (ln && rfCaretInLine(ln) === 0 && rfMergeWithPrev(ln)) { e.preventDefault(); rfAfterStructural(); }
+              if (ln && rfCaretInLine(ln) === 0) {
+                // v3.24.3: Backspace di depan isi baris TANPA bergantung
+                // perintah edit native (yang mati di FF): baris done →
+                // un-done dulu (coret hilang, tetap di tempat); baris task →
+                // LEPAS MODE task (dedent ala Word — inilah pintu keluar
+                // '> ' menuju ngetik normal); baris plain → merge ke atas.
+                if (ln.classList && ln.classList.contains('rfn-done')) {
+                  e.preventDefault();
+                  try { ln.classList.remove('rfn-done'); } catch (e2) {}
+                  rfAfterStructural();
+                  rfPlaceCaret(ln, 0);
+                  return;
+                }
+                if (ln.classList && ln.classList.contains('rfn-task')) {
+                  e.preventDefault();
+                  try { ln.classList.remove('rfn-task'); } catch (e2) {}
+                  try { rfJustConv.delete(ln); } catch (e2) {}
+                  rfAfterStructural();
+                  rfPlaceCaret(ln, 0);
+                  return;
+                }
+                if (rfMergeWithPrev(ln)) { e.preventDefault(); rfAfterStructural(); }
+                return;
+              }
+              if (RF_IS_FF && ln) {
+                // v3.24.3 FF: hapus karakter/kata mundur MANUAL (native gagal
+                // di shadow — inilah akar "teks tidak bisa dihapus").
+                e.preventDefault();
+                const off = rfCaretInLine(ln);
+                if (off < 0) { try { rfPlaceCaret(ln, rfLineText(ln).length); } catch (e2) {} return; }
+                const word = !!(e.altKey || e.ctrlKey || e.metaKey);
+                const okd = word ? rfFFDeleteWord(ln, off, -1) : rfFFDeleteChar(ln, off, -1);
+                if (okd) rfAfterStructural();
+                else if (rfCaretInLine(ln) === 0 && rfMergeWithPrev(ln)) rfAfterStructural();
+              }
               return;
             }
             if (k === 'Delete') {
-              if (!rfSelCollapsed()) return;
+              if (!rfSelCollapsed()) {
+                if (RF_IS_FF) {
+                  const rng = rfFFResolveRange();
+                  if (rng) {
+                    e.preventDefault();
+                    const pos = rfFFDeleteRange(rng);
+                    if (pos) { rfPlaceCaret(pos.ln, pos.off); rfAfterStructural(); }
+                  }
+                }
+                return;
+              }
               const ln = rfFocusedLine();
-              if (ln && rfCaretInLine(ln) === rfLineText(ln).length && rfMergeNext(ln)) { e.preventDefault(); rfAfterStructural(); }
+              if (ln && rfCaretInLine(ln) === rfLineText(ln).length && rfMergeNext(ln)) { e.preventDefault(); rfAfterStructural(); return; }
+              if (RF_IS_FF && ln) {
+                // v3.24.3 FF: hapus karakter/kata maju manual.
+                e.preventDefault();
+                const off = rfCaretInLine(ln);
+                if (off < 0) return;
+                const word = !!(e.ctrlKey || e.metaKey);
+                const okd = word ? rfFFDeleteWord(ln, off, 1) : rfFFDeleteChar(ln, off, 1);
+                if (okd) rfAfterStructural();
+              }
               return;
             }
           } catch (ee) {}
@@ -1000,5 +1435,5 @@
   }catch(e){}
 
   // ===== Template (HTML + CSS inlined in Shadow DOM) =====
-  const TEMPLATE=`<style>:host{all:initial}.rfn-popover{--p-bd:rgba(16,185,129,.25);--p-idle:rgba(19,78,74,.55);--p-idle-bd:rgba(110,231,183,.35);--p-idle-l:rgba(204,251,241,.85);--p-idle-bd-l:rgba(16,185,129,.3);--p-hd:#0F2E2A;--p-hd-bd:rgba(16,185,129,.2);--p-hd-l:#ECFDF5;--p-tt:#6EE7B7;--p-tt-l:#047857;--p-act:#134E4A;--p-act-c:#6EE7B7;--p-act-bd:rgba(110,231,183,.3);--p-flash:#10B981}.rfn-popover[data-color="blue"]{--p-bd:rgba(59,130,246,.25);--p-idle:rgba(30,58,138,.5);--p-idle-bd:rgba(147,197,253,.35);--p-idle-l:rgba(219,234,254,.85);--p-idle-bd-l:rgba(59,130,246,.3);--p-hd:#0F2440;--p-hd-bd:rgba(59,130,246,.2);--p-hd-l:#EFF6FF;--p-tt:#93C5FD;--p-tt-l:#1D4ED8;--p-act:#1E3A8A;--p-act-c:#93C5FD;--p-act-bd:rgba(147,197,253,.3);--p-flash:#3B82F6}.rfn-popover[data-color="amber"]{--p-bd:rgba(245,158,11,.25);--p-idle:rgba(120,53,15,.55);--p-idle-bd:rgba(251,191,36,.35);--p-idle-l:rgba(254,243,199,.85);--p-idle-bd-l:rgba(245,158,11,.3);--p-hd:#3A1F00;--p-hd-bd:rgba(245,158,11,.2);--p-hd-l:#FFFBEB;--p-tt:#FCD34D;--p-tt-l:#92400E;--p-act:#78350F;--p-act-c:#FCD34D;--p-act-bd:rgba(251,191,36,.3);--p-flash:#F59E0B}.rfn-popover[data-color="rose"]{--p-bd:rgba(244,63,94,.25);--p-idle:rgba(159,18,57,.45);--p-idle-bd:rgba(253,164,175,.35);--p-idle-l:rgba(255,228,230,.85);--p-idle-bd-l:rgba(244,63,94,.3);--p-hd:#3F0A17;--p-hd-bd:rgba(244,63,94,.2);--p-hd-l:#FFF1F2;--p-tt:#FDA4AF;--p-tt-l:#BE123C;--p-act:#881337;--p-act-c:#FDA4AF;--p-act-bd:rgba(253,164,175,.3);--p-flash:#F43F5E}.rfn-popover[data-color="violet"]{--p-bd:rgba(139,92,246,.25);--p-idle:rgba(76,29,149,.5);--p-idle-bd:rgba(196,181,253,.35);--p-idle-l:rgba(237,233,254,.85);--p-idle-bd-l:rgba(139,92,246,.3);--p-hd:#221040;--p-hd-bd:rgba(139,92,246,.2);--p-hd-l:#F5F3FF;--p-tt:#C4B5FD;--p-tt-l:#6D28D9;--p-act:#4C1D95;--p-act-c:#C4B5FD;--p-act-bd:rgba(196,181,253,.3);--p-flash:#8B5CF6}.rfn-popover[data-color="cyan"]{--p-bd:rgba(6,182,212,.25);--p-idle:rgba(21,94,117,.5);--p-idle-bd:rgba(103,232,249,.35);--p-idle-l:rgba(207,250,254,.85);--p-idle-bd-l:rgba(6,182,212,.3);--p-hd:#083344;--p-hd-bd:rgba(6,182,212,.2);--p-hd-l:#ECFEFF;--p-tt:#67E8F9;--p-tt-l:#0E7490;--p-act:#164E63;--p-act-c:#67E8F9;--p-act-bd:rgba(103,232,249,.3);--p-flash:#06B6D4}.rfn-popover[data-color="orange"]{--p-bd:rgba(249,115,22,.25);--p-idle:rgba(154,52,18,.5);--p-idle-bd:rgba(253,186,116,.35);--p-idle-l:rgba(255,237,213,.85);--p-idle-bd-l:rgba(249,115,22,.3);--p-hd:#3B1400;--p-hd-bd:rgba(249,115,22,.2);--p-hd-l:#FFF7ED;--p-tt:#FDBA74;--p-tt-l:#C2410C;--p-act:#7C2D12;--p-act-c:#FDBA74;--p-act-bd:rgba(253,186,116,.3);--p-flash:#F97316}.rfn-popover[data-color="lime"]{--p-bd:rgba(132,204,22,.25);--p-idle:rgba(63,98,18,.5);--p-idle-bd:rgba(190,242,100,.35);--p-idle-l:rgba(236,252,203,.85);--p-idle-bd-l:rgba(132,204,22,.3);--p-hd:#1A2E05;--p-hd-bd:rgba(132,204,22,.2);--p-hd-l:#F7FEE7;--p-tt:#BEF264;--p-tt-l:#4D7C0F;--p-act:#365314;--p-act-c:#BEF264;--p-act-bd:rgba(190,242,100,.3);--p-flash:#84CC16}.rfn-palette{position:absolute;top:40px;left:10px;z-index:6;display:none;flex-wrap:wrap;gap:7px;max-width:210px;background:#0E182A;border:1px solid #22375A;border-radius:10px;padding:9px;box-shadow:0 12px 34px rgba(0,0,0,.5)}:host([data-theme="light"]) .rfn-palette{background:#FFF;border-color:#E2E8F0}.rfn-popover.rfn-pal-open .rfn-palette{display:flex}.rfn-swatch{width:19px;height:19px;border-radius:50%;border:2px solid rgba(255,255,255,.25);cursor:pointer;padding:0;transition:transform .12s}.rfn-swatch:hover{transform:scale(1.18)}.rfn-swatch.on{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.35)}:host([data-theme="light"]) .rfn-swatch{border-color:rgba(0,0,0,.2)}*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}.rfn-popover{position:fixed;top:60px;right:14px;width:320px;max-height:560px;background:#0E182A;color:#E8EEF7;border:1px solid var(--p-bd);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.55);display:flex;flex-direction:column;overflow:hidden;font-family:Menlo,monospace;font-size:13px;opacity:0;transform:translateY(-6px) scale(.98);pointer-events:none;transition:.15s;resize:both;min-width:280px;min-height:220px}.rfn-popover.rfn-show{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}.rfn-popover.rfn-idle{opacity:0.35;background:var(--p-idle);backdrop-filter:blur(2px);border-color:var(--p-idle-bd)}:host([data-theme="light"]) .rfn-popover.rfn-idle{background:var(--p-idle-l);border-color:var(--p-idle-bd-l)}:host([data-theme="light"]) .rfn-popover{background:#F8FAFC;color:#1E293B;border-color:#E2E8F0}.rfn-popover.rfn-min{min-height:0;height:auto;resize:none;width:320px!important}.rfn-popover.rfn-pal-open{overflow:visible}.rfn-popover.rfn-min .rfn-editor,.rfn-popover.rfn-min .rfn-status{display:none}.rfn-hd{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:move;background:var(--p-hd);border-bottom:1px solid var(--p-hd-bd)}:host([data-theme="light"]) .rfn-hd{background:var(--p-hd-l);border-bottom:1px solid var(--p-hd-bd)}.rfn-title{font-size:11px;font-weight:700;flex:1;display:flex;gap:5px;font-family:-apple-system,sans-serif;color:var(--p-tt);white-space:nowrap;overflow:hidden}:host([data-theme="light"]) .rfn-title{color:var(--p-tt-l)}.rfn-actions{display:flex;gap:2px}.rfn-btn{width:24px;height:24px;border-radius:5px;border:none;background:none;color:#A3B0C2;display:grid;place-items:center;cursor:pointer}.rfn-btn:hover{background:rgba(255,255,255,.08)}:host([data-theme="light"]) .rfn-btn:hover{background:rgba(0,0,0,.06)}.rfn-btn.rfn-active{background:var(--p-act);color:var(--p-act-c);border:1px solid var(--p-act-bd)}.rfn-btn.rfn-flash{background:var(--p-flash);color:#fff}.rfn-btn svg{width:13px;height:13px}.rfn-collapse svg{transition:transform .15s}.rfn-popover.rfn-min .rfn-collapse svg{transform:rotate(-90deg)}.rfn-editor{flex:1;overflow-y:auto;min-height:190px;max-height:480px;background:#273953;color:#E8EEF7;font-size:13px;line-height:20px;padding:10px 14px;border:none;outline:none;resize:none;width:100%;white-space:pre-wrap;overflow-wrap:break-word}:host([data-theme="light"]) .rfn-editor{background:#FFF;color:#1E293B}.rfn-status{padding:6px 12px;background:#1A293D;border-top:1px solid #0F1E33;display:flex;font-size:11px;color:#A3B0C2;font-family:-apple-system,sans-serif}:host([data-theme="light"]) .rfn-status{background:#FFF;border-top:1px solid #E2E8F0}.rfn-autosave{margin-left:auto}.rfn-toast{position:absolute;bottom:8px;left:50%;transform:translateX(-50%) translateY(8px);background:#E8EEF7;color:#0E182A;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;opacity:0;pointer-events:none;transition:.2s;white-space:nowrap;max-width:90%}.rfn-toast.rfn-show{opacity:1;transform:translateX(-50%) translateY(0)}/*TASK CSS v3.24.2 — radio = ::before pseudo (NOL elemen non-editable di alur teks)*/.rfn-line{position:relative;min-height:20px;line-height:20px}.rfn-line-txt{outline:none}.rfn-line.rfn-task{padding-left:25px}.rfn-line.rfn-task::before{content:'';position:absolute;left:4px;top:3px;width:13px;height:13px;border:2px solid #7C8DA6;border-radius:50%;box-sizing:border-box;transition:transform .12s}.rfn-line.rfn-task:hover::before{transform:scale(1.15)}.rfn-line.rfn-done::before{background:#6EE7B7;border-color:#6EE7B7;box-shadow:inset 0 0 0 2px #273953}:host([data-theme="light"]) .rfn-line.rfn-task::before{border-color:#64748B}:host([data-theme="light"]) .rfn-line.rfn-done::before{background:#10B981;border-color:#10B981;box-shadow:inset 0 0 0 2px #FFF}.rfn-line.rfn-done .rfn-line-txt{text-decoration:line-through;opacity:.55}.rfn-editor.rfn-empty::before{content:attr(data-placeholder);color:#8A99B0;pointer-events:none;display:block;white-space:pre-wrap}:host([data-theme="light"]) .rfn-editor.rfn-empty::before{color:#94A3B8}</style><div class="rfn-popover" role="dialog"><div class="rfn-palette" role="menu"><button class="rfn-swatch" data-c="green" title="Hijau" style="background:#10B981"></button><button class="rfn-swatch" data-c="blue" title="Biru" style="background:#3B82F6"></button><button class="rfn-swatch" data-c="amber" title="Kuning" style="background:#F59E0B"></button><button class="rfn-swatch" data-c="rose" title="Merah Muda" style="background:#F43F5E"></button><button class="rfn-swatch" data-c="violet" title="Ungu" style="background:#8B5CF6"></button><button class="rfn-swatch" data-c="cyan" title="Cyan" style="background:#06B6D4"></button><button class="rfn-swatch" data-c="orange" title="Oranye" style="background:#F97316"></button><button class="rfn-swatch" data-c="lime" title="Hijau Limau" style="background:#84CC16"></button></div><div class="rfn-hd"><div class="rfn-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> RecallNote</div><div class="rfn-actions"><button class="rfn-btn rfn-collapse" title="Gulung / buka lagi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg></button><button class="rfn-btn rfn-color" title="Warna lembar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 4-4 4h-2.2a1.8 1.8 0 0 0-1.3 3.1c.3.3.5.7.5 1.1 0 .9-.7 1.8-1.8 1.8z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15" cy="8" r="1" fill="currentColor"/></svg></button><button class="rfn-btn rfn-pin rfn-active" title="Pin (terpin — klik untuk lepas)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 17v5"/><path d="M9 10.5V4h6v6.5l2 3.5H7l2-3.5z"/></svg></button><button class="rfn-btn rfn-new" title="Lembar baru (RecallNote baru)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><button class="rfn-btn rfn-print" title="Cetak"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button><button class="rfn-btn rfn-copy" title="Salin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><button class="rfn-btn rfn-clear" title="Kosongkan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button><button class="rfn-btn rfn-close" title="Tutup lembar ini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div></div><div class="rfn-editor" contenteditable="true" spellcheck="false" role="textbox" aria-multiline="true" data-placeholder="Catatan mengambang — ketik bebas, autosave otomatis.&#10;Ketik > di awal baris = subtask (radio) · klik radio = selesai (coret &amp; turun)"></div><div class="rfn-status"><span class="rfn-autosave">✓ Tersimpan otomatis</span></div><div class="rfn-toast"></div></div>`;
+  const TEMPLATE=`<style>:host{all:initial}.rfn-popover{--p-bd:rgba(16,185,129,.25);--p-idle:rgba(19,78,74,.55);--p-idle-bd:rgba(110,231,183,.35);--p-idle-l:rgba(204,251,241,.85);--p-idle-bd-l:rgba(16,185,129,.3);--p-hd:#0F2E2A;--p-hd-bd:rgba(16,185,129,.2);--p-hd-l:#ECFDF5;--p-tt:#6EE7B7;--p-tt-l:#047857;--p-act:#134E4A;--p-act-c:#6EE7B7;--p-act-bd:rgba(110,231,183,.3);--p-flash:#10B981}.rfn-popover[data-color="blue"]{--p-bd:rgba(59,130,246,.25);--p-idle:rgba(30,58,138,.5);--p-idle-bd:rgba(147,197,253,.35);--p-idle-l:rgba(219,234,254,.85);--p-idle-bd-l:rgba(59,130,246,.3);--p-hd:#0F2440;--p-hd-bd:rgba(59,130,246,.2);--p-hd-l:#EFF6FF;--p-tt:#93C5FD;--p-tt-l:#1D4ED8;--p-act:#1E3A8A;--p-act-c:#93C5FD;--p-act-bd:rgba(147,197,253,.3);--p-flash:#3B82F6}.rfn-popover[data-color="amber"]{--p-bd:rgba(245,158,11,.25);--p-idle:rgba(120,53,15,.55);--p-idle-bd:rgba(251,191,36,.35);--p-idle-l:rgba(254,243,199,.85);--p-idle-bd-l:rgba(245,158,11,.3);--p-hd:#3A1F00;--p-hd-bd:rgba(245,158,11,.2);--p-hd-l:#FFFBEB;--p-tt:#FCD34D;--p-tt-l:#92400E;--p-act:#78350F;--p-act-c:#FCD34D;--p-act-bd:rgba(251,191,36,.3);--p-flash:#F59E0B}.rfn-popover[data-color="rose"]{--p-bd:rgba(244,63,94,.25);--p-idle:rgba(159,18,57,.45);--p-idle-bd:rgba(253,164,175,.35);--p-idle-l:rgba(255,228,230,.85);--p-idle-bd-l:rgba(244,63,94,.3);--p-hd:#3F0A17;--p-hd-bd:rgba(244,63,94,.2);--p-hd-l:#FFF1F2;--p-tt:#FDA4AF;--p-tt-l:#BE123C;--p-act:#881337;--p-act-c:#FDA4AF;--p-act-bd:rgba(253,164,175,.3);--p-flash:#F43F5E}.rfn-popover[data-color="violet"]{--p-bd:rgba(139,92,246,.25);--p-idle:rgba(76,29,149,.5);--p-idle-bd:rgba(196,181,253,.35);--p-idle-l:rgba(237,233,254,.85);--p-idle-bd-l:rgba(139,92,246,.3);--p-hd:#221040;--p-hd-bd:rgba(139,92,246,.2);--p-hd-l:#F5F3FF;--p-tt:#C4B5FD;--p-tt-l:#6D28D9;--p-act:#4C1D95;--p-act-c:#C4B5FD;--p-act-bd:rgba(196,181,253,.3);--p-flash:#8B5CF6}.rfn-popover[data-color="cyan"]{--p-bd:rgba(6,182,212,.25);--p-idle:rgba(21,94,117,.5);--p-idle-bd:rgba(103,232,249,.35);--p-idle-l:rgba(207,250,254,.85);--p-idle-bd-l:rgba(6,182,212,.3);--p-hd:#083344;--p-hd-bd:rgba(6,182,212,.2);--p-hd-l:#ECFEFF;--p-tt:#67E8F9;--p-tt-l:#0E7490;--p-act:#164E63;--p-act-c:#67E8F9;--p-act-bd:rgba(103,232,249,.3);--p-flash:#06B6D4}.rfn-popover[data-color="orange"]{--p-bd:rgba(249,115,22,.25);--p-idle:rgba(154,52,18,.5);--p-idle-bd:rgba(253,186,116,.35);--p-idle-l:rgba(255,237,213,.85);--p-idle-bd-l:rgba(249,115,22,.3);--p-hd:#3B1400;--p-hd-bd:rgba(249,115,22,.2);--p-hd-l:#FFF7ED;--p-tt:#FDBA74;--p-tt-l:#C2410C;--p-act:#7C2D12;--p-act-c:#FDBA74;--p-act-bd:rgba(253,186,116,.3);--p-flash:#F97316}.rfn-popover[data-color="lime"]{--p-bd:rgba(132,204,22,.25);--p-idle:rgba(63,98,18,.5);--p-idle-bd:rgba(190,242,100,.35);--p-idle-l:rgba(236,252,203,.85);--p-idle-bd-l:rgba(132,204,22,.3);--p-hd:#1A2E05;--p-hd-bd:rgba(132,204,22,.2);--p-hd-l:#F7FEE7;--p-tt:#BEF264;--p-tt-l:#4D7C0F;--p-act:#365314;--p-act-c:#BEF264;--p-act-bd:rgba(190,242,100,.3);--p-flash:#84CC16}.rfn-palette{position:absolute;top:40px;left:10px;z-index:6;display:none;flex-wrap:wrap;gap:7px;max-width:210px;background:#0E182A;border:1px solid #22375A;border-radius:10px;padding:9px;box-shadow:0 12px 34px rgba(0,0,0,.5)}:host([data-theme="light"]) .rfn-palette{background:#FFF;border-color:#E2E8F0}.rfn-popover.rfn-pal-open .rfn-palette{display:flex}.rfn-swatch{width:19px;height:19px;border-radius:50%;border:2px solid rgba(255,255,255,.25);cursor:pointer;padding:0;transition:transform .12s}.rfn-swatch:hover{transform:scale(1.18)}.rfn-swatch.on{border-color:#fff;box-shadow:0 0 0 2px rgba(255,255,255,.35)}:host([data-theme="light"]) .rfn-swatch{border-color:rgba(0,0,0,.2)}*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}.rfn-popover{position:fixed;top:60px;right:14px;width:320px;max-height:560px;background:#0E182A;color:#E8EEF7;border:1px solid var(--p-bd);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.55);display:flex;flex-direction:column;overflow:hidden;font-family:Menlo,monospace;font-size:13px;opacity:0;transform:translateY(-6px) scale(.98);pointer-events:none;transition:.15s;resize:both;min-width:280px;min-height:220px}.rfn-popover.rfn-show{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}.rfn-popover.rfn-idle{opacity:0.35;background:var(--p-idle);backdrop-filter:blur(2px);border-color:var(--p-idle-bd)}:host([data-theme="light"]) .rfn-popover.rfn-idle{background:var(--p-idle-l);border-color:var(--p-idle-bd-l)}:host([data-theme="light"]) .rfn-popover{background:#F8FAFC;color:#1E293B;border-color:#E2E8F0}.rfn-popover.rfn-min{min-height:0;height:auto;resize:none;width:320px!important}.rfn-popover.rfn-pal-open{overflow:visible}.rfn-popover.rfn-min .rfn-editor,.rfn-popover.rfn-min .rfn-status{display:none}.rfn-hd{display:flex;align-items:center;gap:6px;padding:7px 10px;cursor:move;background:var(--p-hd);border-bottom:1px solid var(--p-hd-bd)}:host([data-theme="light"]) .rfn-hd{background:var(--p-hd-l);border-bottom:1px solid var(--p-hd-bd)}.rfn-title{font-size:11px;font-weight:700;flex:1;display:flex;gap:5px;font-family:-apple-system,sans-serif;color:var(--p-tt);white-space:nowrap;overflow:hidden}:host([data-theme="light"]) .rfn-title{color:var(--p-tt-l)}.rfn-actions{display:flex;gap:2px}.rfn-btn{width:24px;height:24px;border-radius:5px;border:none;background:none;color:#A3B0C2;display:grid;place-items:center;cursor:pointer}.rfn-btn:hover{background:rgba(255,255,255,.08)}:host([data-theme="light"]) .rfn-btn:hover{background:rgba(0,0,0,.06)}.rfn-btn.rfn-active{background:var(--p-act);color:var(--p-act-c);border:1px solid var(--p-act-bd)}.rfn-btn.rfn-flash{background:var(--p-flash);color:#fff}.rfn-btn svg{width:13px;height:13px}.rfn-collapse svg{transition:transform .15s}.rfn-popover.rfn-min .rfn-collapse svg{transform:rotate(-90deg)}.rfn-editor{flex:1;overflow-y:auto;min-height:190px;max-height:480px;background:#273953;color:#E8EEF7;font-size:13px;line-height:20px;padding:10px 14px;border:none;outline:none;resize:none;width:100%;white-space:pre-wrap;overflow-wrap:break-word}:host([data-theme="light"]) .rfn-editor{background:#FFF;color:#1E293B}.rfn-status{padding:6px 12px;background:#1A293D;border-top:1px solid #0F1E33;display:flex;font-size:11px;color:#A3B0C2;font-family:-apple-system,sans-serif}:host([data-theme="light"]) .rfn-status{background:#FFF;border-top:1px solid #E2E8F0}.rfn-autosave{margin-left:auto}.rfn-toast{position:absolute;bottom:8px;left:50%;transform:translateX(-50%) translateY(8px);background:#E8EEF7;color:#0E182A;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;opacity:0;pointer-events:none;transition:.2s;white-space:nowrap;max-width:90%}.rfn-toast.rfn-show{opacity:1;transform:translateX(-50%) translateY(0)}/*TASK CSS v3.24.2 — radio = ::before pseudo (NOL elemen non-editable di alur teks)*/.rfn-line{position:relative;min-height:20px;line-height:20px}.rfn-line-txt{outline:none}.rfn-line.rfn-task{padding-left:25px}.rfn-line.rfn-task::before{content:'';position:absolute;left:4px;top:3px;width:13px;height:13px;border:2px solid #7C8DA6;border-radius:50%;box-sizing:border-box;transition:transform .12s}.rfn-line.rfn-task:hover::before{transform:scale(1.15)}.rfn-line.rfn-done::before{background:#6EE7B7;border-color:#6EE7B7;box-shadow:inset 0 0 0 2px #273953}:host([data-theme="light"]) .rfn-line.rfn-task::before{border-color:#64748B}:host([data-theme="light"]) .rfn-line.rfn-done::before{background:#10B981;border-color:#10B981;box-shadow:inset 0 0 0 2px #FFF}.rfn-line.rfn-done .rfn-line-txt{text-decoration:line-through;opacity:.55}.rfn-editor.rfn-empty::before{content:attr(data-placeholder);color:#8A99B0;pointer-events:none;display:block;white-space:pre-wrap}:host([data-theme="light"]) .rfn-editor.rfn-empty::before{color:#94A3B8}</style><div class="rfn-popover" role="dialog"><div class="rfn-palette" role="menu"><button class="rfn-swatch" data-c="green" title="Hijau" style="background:#10B981"></button><button class="rfn-swatch" data-c="blue" title="Biru" style="background:#3B82F6"></button><button class="rfn-swatch" data-c="amber" title="Kuning" style="background:#F59E0B"></button><button class="rfn-swatch" data-c="rose" title="Merah Muda" style="background:#F43F5E"></button><button class="rfn-swatch" data-c="violet" title="Ungu" style="background:#8B5CF6"></button><button class="rfn-swatch" data-c="cyan" title="Cyan" style="background:#06B6D4"></button><button class="rfn-swatch" data-c="orange" title="Oranye" style="background:#F97316"></button><button class="rfn-swatch" data-c="lime" title="Hijau Limau" style="background:#84CC16"></button></div><div class="rfn-hd"><div class="rfn-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> RecallNote</div><div class="rfn-actions"><button class="rfn-btn rfn-collapse" title="Gulung / buka lagi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg></button><button class="rfn-btn rfn-color" title="Warna lembar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22a10 10 0 1 1 10-10c0 2.2-1.8 4-4 4h-2.2a1.8 1.8 0 0 0-1.3 3.1c.3.3.5.7.5 1.1 0 .9-.7 1.8-1.8 1.8z"/><circle cx="7.5" cy="11.5" r="1" fill="currentColor"/><circle cx="10.5" cy="7.5" r="1" fill="currentColor"/><circle cx="15" cy="8" r="1" fill="currentColor"/></svg></button><button class="rfn-btn rfn-pin rfn-active" title="Pin (terpin — klik untuk lepas)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 17v5"/><path d="M9 10.5V4h6v6.5l2 3.5H7l2-3.5z"/></svg></button><button class="rfn-btn rfn-new" title="Lembar baru (RecallNote baru)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button><button class="rfn-btn rfn-print" title="Cetak"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></button><button class="rfn-btn rfn-copy" title="Salin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button><button class="rfn-btn rfn-clear" title="Kosongkan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button><button class="rfn-btn rfn-close" title="Tutup lembar ini"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></div></div><div class="rfn-editor" contenteditable="true" spellcheck="false" role="textbox" aria-multiline="true" data-placeholder="Catatan mengambang — ketik bebas, autosave otomatis.&#10;Ketik > di awal baris = subtask (radio) · Enter = lanjut subtask · Backspace di depan = keluar mode · klik radio = selesai (coret &amp; turun)"></div><div class="rfn-status"><span class="rfn-autosave">✓ Tersimpan otomatis</span></div><div class="rfn-toast"></div></div>`;
 })();
