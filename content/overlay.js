@@ -502,13 +502,31 @@
           <button class="rf-capture-modal-close" title="Tutup">×</button>
         </div>
         <div class="rf-capture-modal-body">
-          <div class="rf-capture-modal-filename-row" style="margin-bottom:12px">
+          <div class="rf-capture-modal-filename-row" style="margin-bottom:10px">
             <label for="rf-capture-modal-filename" style="display:block;font-size:12px;font-weight:600;color:#57534e;margin-bottom:4px">📝 Nama file</label>
             <input id="rf-capture-modal-filename" type="text"
               value="${escapeHtmlAttr(defaultFileName)}"
               placeholder="Ketik nama file (tanpa ekstensi)..."
               style="width:100%;padding:9px 12px;font-size:14px;font-weight:500;border:1.5px solid #6d3df5;border-radius:8px;outline:none;box-sizing:border-box;background:#faf5ff;color:#1c1917" />
             <div style="font-size:11px;color:#78716c;margin-top:4px">Ekstensi (.pdf / .jpg / .png) ditambahkan otomatis sesuai tombol simpan. Langsung ketik untuk menimpa nama default.</div>
+          </div>
+          <!-- v3.24.6: Tombol unduh (PDF/JPG/PNG) pindah ke ATAS — tepat di bawah field
+               nama file, sebelum preview. Alasan: user tak perlu scroll melewati preview
+               besar cuma untuk menjangkau tombol download; alur rename → unduh jadi
+               satu zona di puncak modal. Aksi sekunder tetap di footer. -->
+          <div class="rf-capture-modal-actions-primary">
+            <button class="rf-cap-btn rf-cap-btn-primary" data-action="save-pdf">
+              <span class="rf-cap-btn-icon">📄</span>
+              <span>Simpan PDF</span>
+            </button>
+            <button class="rf-cap-btn rf-cap-btn-primary" data-action="save-jpg">
+              <span class="rf-cap-btn-icon">🖼️</span>
+              <span>Simpan JPG</span>
+            </button>
+            <button class="rf-cap-btn rf-cap-btn-primary" data-action="save-png">
+              <span class="rf-cap-btn-icon">🖼️</span>
+              <span>Simpan PNG</span>
+            </button>
           </div>
           <div class="rf-capture-modal-preview">
             <img src="${dataUrl}" alt="Screenshot preview" />
@@ -524,20 +542,6 @@
           </div>
         </div>
         <div class="rf-capture-modal-footer">
-          <div class="rf-capture-modal-actions-primary">
-            <button class="rf-cap-btn rf-cap-btn-primary" data-action="save-pdf">
-              <span class="rf-cap-btn-icon">📄</span>
-              <span>Simpan PDF</span>
-            </button>
-            <button class="rf-cap-btn rf-cap-btn-primary" data-action="save-jpg">
-              <span class="rf-cap-btn-icon">🖼️</span>
-              <span>Simpan JPG</span>
-            </button>
-            <button class="rf-cap-btn rf-cap-btn-primary" data-action="save-png">
-              <span class="rf-cap-btn-icon">🖼️</span>
-              <span>Simpan PNG</span>
-            </button>
-          </div>
           <div class="rf-capture-modal-actions-secondary">
             <button class="rf-cap-btn rf-cap-btn-ghost" data-action="annotate">
               <span class="rf-cap-btn-icon">✏️</span>

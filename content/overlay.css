@@ -496,7 +496,23 @@
   justify-content: space-between;
   align-items: center;
 }
-.rf-capture-modal-actions-primary,
+/* v3.24.6: Zona unduh pindah ke atas modal (tepat di bawah field nama file).
+   Grid 3 kolom = tombol besar sejajar gampang dijangkau; kartu violet lembut
+   menandai ini aksi utama. Aksi sekunder (anotasi/salin/vault/batal) tetap di footer. */
+.rf-capture-modal-actions-primary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.rf-capture-modal-actions-primary .rf-cap-btn {
+  width: 100%;
+  padding: 10px 8px;
+}
 .rf-capture-modal-actions-secondary {
   display: flex;
   gap: 8px;
