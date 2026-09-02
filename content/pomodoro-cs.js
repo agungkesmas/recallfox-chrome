@@ -470,6 +470,8 @@
       if (area !== 'local' || !changes || !changes[KEY]) return;
       const nv = changes[KEY].newValue;
       if (nv) cache = nv;
+      // v3.24.8: POPUP AWARE — popup window tidak merender floater dari sync lintas-tab
+      try { if (window.__RFDock && window.__RFDock.isPopup && window.__RFDock.isPopup()) return; } catch (e) {}
       reconcileFromStorage();
     });
   } catch (e) {}
@@ -478,7 +480,15 @@
   try { setInterval(() => { try { tickAttempt(); } catch (e) {} }, 500); } catch (e) {}
 
   // Boot: pulihkan bila state open:true (incl. file://).
-  (async function boot() { try { const s = await load(); if (s && s.open) { if (!ctrl) ctrl = buildCtrl(s); await ctrl.show(); rfLayout(); } } catch (e) {} })();
+  // v3.24.8: POPUP AWARE — di popout/popup window jangan auto-pulihkan pomodoro
+  // (state storage TIDAK diubah — timer tetap jalan, hanya tidak dirender di
+  // jendela kecil itu). Verdict normal belakangan → pulihan jalan via callback.
+  let __rfBootDone = false;
+  async function rfBootOnce(){ if (__rfBootDone) return; __rfBootDone = true; try { const s = await load(); if (s && s.open) { if (!ctrl) ctrl = buildCtrl(s); await ctrl.show(); rfLayout(); } } catch (e) {} }
+  function rfPopupHideLocal(){ try { const h = document.getElementById(HOST_ID); if (h) h.style.display = 'none'; if (ctrl) ctrl.hideDom(); } catch (e) {} }
+  (function(){ const D = window.__RFDock; const pop = !!(D && D.isPopup && D.isPopup()); if (!pop) rfBootOnce();
+    if (D && D.whenPopupVerdict) D.whenPopupVerdict(function (isPop) { if (isPop) rfPopupHideLocal(); else rfBootOnce(); });
+  })();
 
   // ===== Template (HTML + CSS inlined in Shadow DOM) =====
   const TEMPLATE = `<style>

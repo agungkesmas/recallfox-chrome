@@ -830,7 +830,14 @@
   try { window.addEventListener('rf-open-tape', () => { try{ createTapeInstance({}); }catch(e){} }); } catch (e) {}
 
   // Boot: pulihkan semua instance open:true (auto-show, incl. file://)
-  (async function boot(){ try{ const list = await getList(); await reconcile(list); }catch(e){} })();
+  // v3.24.8: POPUP AWARE — di popout/popup window jangan auto-pulihkan floater
+  // (state storage TIDAK diubah — hanya tidak dirender di jendela kecil itu).
+  let __rfBootDone = false;
+  async function rfBootOnce(){ if (__rfBootDone) return; __rfBootDone = true; try{ const list = await getList(); await reconcile(list); }catch(e){} }
+  function rfPopupHideLocal(){ try{ document.querySelectorAll('[id^="recallfox-tape-host"]').forEach(h=>{ h.style.display='none'; }); ctrls.forEach(c=>{ if(c.isVisible) c.hideDom(); }); }catch(e){} }
+  (function(){ const D = window.__RFDock; const pop = !!(D && D.isPopup && D.isPopup()); if (!pop) rfBootOnce();
+    if (D && D.whenPopupVerdict) D.whenPopupVerdict(function (isPop) { if (isPop) rfPopupHideLocal(); else rfBootOnce(); });
+  })();
 
   // Cross-tab real-time: reconciliasi setiap perubahan tapeInstances (DOM saja)
   try{
@@ -838,6 +845,8 @@
       if (area !== 'local' || !changes || !changes.tapeInstances) return;
       const nv = changes.tapeInstances.newValue;
       if (!Array.isArray(nv)) return;
+      // v3.24.8: POPUP AWARE — popup window tidak merender floater dari sync lintas-tab
+      try { if (window.__RFDock && window.__RFDock.isPopup && window.__RFDock.isPopup()) return; } catch (e) {}
       reconcile(nv);
     });
   }catch(e){}

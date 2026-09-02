@@ -87,6 +87,47 @@
   }
   try { ensurePrintHide(); } catch (e) {}
 
+  // v3.24.8: POPUP AWARE — laporan user: di jendela popout (popup kecil bukan
+  // tab baru) floating button + floater note/tape/pomodoro ikut muncul dan
+  // mengganggu karena jendelanya kecil. Deteksi DUA LAPIS:
+  //   1) HEURISTIK SINKRON (instan, sebelum UI sempat berkedip):
+  //      window.opener ada + jendela kecil (w<850 dan h<650) = popout klasik
+  //      hasil window.open (OAuth, popup detail, dsb). Tab baru / jendela
+  //      penuh TIDAK dianggap popup (aman — user: "bukan tab lain ya").
+  //   2) VERDICT OTORITATIF via background (RF_GET_WINDOW_INFO →
+  //      browser.windows.get(sender.tab.windowId).type): type !== 'normal'
+  //      (popup/panel/devtools) = popup terkonfirmasi. Verdict menggantikan
+  //      heuristik begitu tiba: popup BESAR tanpa opener pun tertangkap,
+  //      dan salah-duga heuristik pada tab normal dikoreksi (floater
+  //      dipasang ulang). Konsumen: isPopup() (nilai terkini) +
+  //      whenPopupVerdict(cb) (dipanggil sekali saat verdict final datang).
+  var popupVerdict = (function () {
+    try {
+      var op = null;
+      try { op = window.opener; } catch (e) { op = null; }
+      if (!op || op === window) return false;
+      var w = window.outerWidth || window.innerWidth || 0;
+      var h = window.outerHeight || window.innerHeight || 0;
+      if (w <= 0 || h <= 0) return false; // ukuran tak terbaca → jangan menebak popup
+      return (w < 850 && h < 650);
+    } catch (e) { return false; }
+  })();
+  var popupKnown = false;
+  var popupCbs = [];
+  function firePopupCbs() {
+    var cbs = popupCbs.splice(0);
+    for (var pi = 0; pi < cbs.length; pi++) { try { cbs[pi](popupVerdict); } catch (e) {} }
+  }
+  function setPopupVerdict(v) { popupVerdict = !!v; popupKnown = true; firePopupCbs(); }
+  try {
+    var RFBR = (typeof browser !== 'undefined') ? browser : (typeof chrome !== 'undefined' ? chrome : null);
+    if (RFBR && RFBR.runtime && RFBR.runtime.sendMessage && RFBR.runtime.onMessage) {
+      RFBR.runtime.sendMessage({ type: 'RF_GET_WINDOW_INFO' }).then(function (r) {
+        setPopupVerdict(!!(r && r.ok && r.wtype && r.wtype !== 'normal'));
+      }).catch(function () { popupKnown = true; firePopupCbs(); });
+    } else { popupKnown = true; firePopupCbs(); }
+  } catch (e) { popupKnown = true; firePopupCbs(); }
+
   function num(fn, d) {
     try { var v = fn(); return (typeof v === 'number' && v > 0) ? v : d; } catch (e) { return d; }
   }
@@ -244,6 +285,14 @@
     isolateKeys: isolateKeys,
     sidebarW: function () { return sidebarW; },
     has: function (key) { return reg.has(key); },
+    // v3.24.8: POPUP AWARE — isPopup() = verdict terkini (heuristik dulu,
+    // lalu digantikan verdict background); whenPopupVerdict(cb) = callback
+    // sekali saat verdict final tiba (false = tab/jendela normal).
+    isPopup: function () { return popupVerdict; },
+    whenPopupVerdict: function (cb) {
+      if (typeof cb !== 'function') return;
+      if (popupKnown) { try { cb(popupVerdict); } catch (e) {} } else popupCbs.push(cb);
+    },
   };
   try { if (typeof window.addEventListener === 'function') window.addEventListener('resize', function () { layout(); }); } catch (e) {}
   window.__RFDock = dock;

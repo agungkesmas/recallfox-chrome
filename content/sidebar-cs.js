@@ -251,6 +251,11 @@
   function mountFloater() {
     if (floaterPair) return;
 
+    // v3.24.8: POPUP AWARE — jangan pasang pill tombol di popout/popup window
+    // (laporan user: pill mengganggu di jendela popout yang kecil). Guard ini
+    // memakai verdict TERKINI (heuristik awal, lalu verdict background).
+    try { if (window.__RFDock && window.__RFDock.isPopup && window.__RFDock.isPopup()) return; } catch (e) {}
+
     // Container untuk 5 tombol: rf + sc + note + tape + pomo (pill transparan hover)
     floaterPair = document.createElement('div');
     floaterPair.id = FLOATER_ID;
@@ -791,6 +796,16 @@
     isPinned = state.pinned;
     userResized = state.userResized;  // v3.20.9: persist userResized across page reloads
     mountFloater();
+    // v3.24.8: koreksi verdict popup — popup terkonfirmasi (type !== 'normal')
+    // → cabut pill yang sudah terpasang; ternyata tab normal (heuristik
+    // meleset) → pasang ulang pill. mountFloater idempoten (floaterPair check).
+    try { if (window.__RFDock && window.__RFDock.whenPopupVerdict) window.__RFDock.whenPopupVerdict(function (isPop) {
+      if (isPop) {
+        if (floaterPair) { try { floaterPair.remove(); } catch (e) {} floaterPair = null; }
+      } else {
+        mountFloater();
+      }
+    }); } catch (e) {}
     if (state.visible) {
       setTimeout(() => show(), 500);
     }

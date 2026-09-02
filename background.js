@@ -5116,3 +5116,20 @@ try {
     }
   });
 } catch(e){}
+
+// ===== v3.24.8: WINDOW INFO — deteksi popout/popup window =====
+// Laporan user: floating button + floater ikut muncul di jendela popout
+// (popup kecil bukan tab baru) dan mengganggu. Content script tidak bisa
+// memanggil windows API → tanya background: type window tempat tab berada.
+// type !== 'normal' (popup/panel/devtools) = popout → float UI disembunyikan.
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'RF_GET_WINDOW_INFO') return;
+  try {
+    const wid = sender && sender.tab && sender.tab.windowId;
+    if (typeof wid !== 'number') { try { sendResponse({ ok: false }); } catch (e) {} return true; }
+    browser.windows.get(wid).then((w) => {
+      try { sendResponse({ ok: true, wtype: (w && w.type) ? w.type : 'normal', width: w && w.width, height: w && w.height }); } catch (e) {}
+    }).catch(() => { try { sendResponse({ ok: false }); } catch (e) {} });
+  } catch (e) { try { sendResponse({ ok: false }); } catch (ee) {} }
+  return true; // async
+});
