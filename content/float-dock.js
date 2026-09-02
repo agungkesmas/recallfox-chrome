@@ -56,6 +56,37 @@
   var sidebarW = 0;    // v3.23.4: offset geser-kiri saat sidebar buka (0 = tutup)
   var SLOT_PREFIX = '__rfDockSlot:'; // v3.24.5 sessionStorage per-tab
 
+  // v3.24.7: PRINT CLEAN — laporan user: saat halaman di-print / Save as PDF
+  // lewat browser, floating button + RecallNote/Tape/Pomodoro ikut kecetak.
+  // Semua UI RecallFox = chrome addon (bukan isi halaman) → wajib hilang di
+  // @media print. Di-inject sebagai satu <style> halaman dari float-dock
+  // (titik tunggal yang dijamin jalan di http/https/file, dijalankan sekali
+  // berkat guard __RFDock di atas). Elemen transient (modal, toast, banner,
+  // overlay anotasi/pemilihan/element-blocker/guard/adzan) ikut disembunyikan.
+  function ensurePrintHide() {
+    try {
+      if (document.getElementById('recallfox-print-hide')) return;
+      var st = document.createElement('style');
+      st.id = 'recallfox-print-hide';
+      st.textContent = [
+        '@media print {',
+        '  #recallfox-sidebar-host, #recallfox-sidebar-floater-pair,',
+        '  [id^="recallfox-notes-host"], [id^="recallfox-tape-host"], #recallfox-pomodoro-host,',
+        '  .rf-capture-modal-overlay, .recallfox-mini-info, .recallfox-overlay-error,',
+        '  .recallfox-capture-toast, .recallfox-capture-banner, .recallfox-sel-overlay,',
+        '  #rf-annotate-overlay, .rf-ann-text-input, #recallfox-ai-popup,',
+        '  .rf-eb-picker-overlay, .rf-eb-picker-hover, .rf-eb-picker-status,',
+        '  #rf-cg-empty-banner, #rf-cg-watch-overlay, #rf-adzan-banner,',
+        '  .recallfox-modal-overlay, .recallfox-toast {',
+        '    display: none !important;',
+        '  }',
+        '}'
+      ].join('\n');
+      (document.head || document.documentElement).appendChild(st);
+    } catch (e) {}
+  }
+  try { ensurePrintHide(); } catch (e) {}
+
   function num(fn, d) {
     try { var v = fn(); return (typeof v === 'number' && v > 0) ? v : d; } catch (e) { return d; }
   }

@@ -1182,3 +1182,23 @@
   border-radius: 999px;
   user-select: none;
 }
+
+/* ===== v3.24.7 — PRINT CLEAN =====
+   Saat halaman di-print / Save as PDF lewat browser, SEMUA UI RecallFox
+   (floating button, RecallNote/Tape/Pomodoro + host Shadow DOM-nya, sidebar,
+   modal, toast, banner, overlay anotasi/pemilihan/element-blocker/guard/adzan)
+   wajib hilang dari hasil cetak — itu chrome addon, bukan isi halaman.
+   Blok ini duplikat dari inject float-dock.js (yang menjamin cover halaman
+   file:// yang tidak memuat overlay.css); keduanya wajib identik isinya. */
+@media print {
+  #recallfox-sidebar-host, #recallfox-sidebar-floater-pair,
+  [id^="recallfox-notes-host"], [id^="recallfox-tape-host"], #recallfox-pomodoro-host,
+  .rf-capture-modal-overlay, .recallfox-mini-info, .recallfox-overlay-error,
+  .recallfox-capture-toast, .recallfox-capture-banner, .recallfox-sel-overlay,
+  #rf-annotate-overlay, .rf-ann-text-input, #recallfox-ai-popup,
+  .rf-eb-picker-overlay, .rf-eb-picker-hover, .rf-eb-picker-status,
+  #rf-cg-empty-banner, #rf-cg-watch-overlay, #rf-adzan-banner,
+  .recallfox-modal-overlay, .recallfox-toast {
+    display: none !important;
+  }
+}
