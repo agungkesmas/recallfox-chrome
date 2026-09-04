@@ -8279,7 +8279,7 @@ function openNoteEditor(noteId) {
 // ============ Tools drawer ============
 const TOOLS = [
   ['tape', 'RecallTape', 'Kalkulator pita · keyboard-first', '🧾'],
-  ['pdfsort', 'Urutkan PDF', 'Klaim BPJS/JKK A-Z · offline', '📄'],   // v3.24.9: offline-first, tanpa server
+  ['pdfsort', 'Olah File Tagihan', 'Urutkan PDF & Rekonsiliasi · offline', '🧾'],   // v3.24.10: 2 tab — Urutkan PDF (klaim A-Z) + Rekonsiliasi (xls→zip)
   ['shalat', 'Waktu Shalat', 'Muhammadiyah · countdown', ICONS.mosque],
   ['habits', 'Habits', 'Ngaji & olahraga harian', ICONS.heart],
   ['puasa', 'Puasa Sunnah', 'Kalender Islam & jadwal', ICONS.moonstar],
@@ -8482,7 +8482,7 @@ function openTilePicker() {
 
 function toolPage(k) {
   closeSheet();
-  const names = { tape: '🧾 RecallTape — Kalkulator Pita', pdfsort: '📄 Urutkan PDF — Klaim A-Z', shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  const names = { tape: '🧾 RecallTape — Kalkulator Pita', pdfsort: '🧾 Olah File Tagihan', shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
   // v3.14.0: RecallTape — bukan halaman dalam popup, tapi popover di halaman aktif.
   // Kirim message ke content script di tab aktif untuk toggle popover.
   if (k === 'tape') {
@@ -12620,18 +12620,39 @@ function rfPdfSortPutJob(job) {
   }));
 }
 
-// --- Halaman alat (slide-in .page standar; dipanggil dari toolPage) ---
+// --- Halaman alat: shell 2 tab (v3.24.10) — [📄 Urutkan PDF] [🧮 Rekonsiliasi] ---
+// Konten lama (v3.24.9 Urutkan PDF) utuh sebagai tab 1; mesin PDF kini dimuat
+// MALAS (saat berkas dipilih) supaya pembukaan halaman tetap ringan.
 async function renderPdfSortPage(B) {
-  B.innerHTML = '<div class="card"><div class="hintbox">⏳ Memuat mesin PDF (lokal)…</div></div>';
-  try {
-    await rfPdfSortEnsureRuntime();
-  } catch (e) {
-    console.error('[RecallFox] pdfsort runtime:', e);
-    B.innerHTML = '<div class="card"><h3>Mesin PDF gagal dimuat</h3><div class="hintbox">' + esc(e.message || String(e)) + '<br><br>Tutup-buka sidebar lalu ulangi.</div></div>';
-    return;
-  }
-
   B.innerHTML =
+    '<div style="display:flex;gap:6px;margin-bottom:10px">' +
+      '<button class="btn btn-p" id="rfOlapTabPdf" style="flex:1">📄 Urutkan PDF</button>' +
+      '<button class="btn" id="rfOlapTabRek" style="flex:1">🧮 Rekonsiliasi</button>' +
+    '</div>' +
+    '<div id="rfOlapPanePdf"></div>' +
+    '<div id="rfOlapPaneRek" style="display:none"></div>';
+  const btnPdf = $('#rfOlapTabPdf'), btnRek = $('#rfOlapTabRek');
+  const panePdf = $('#rfOlapPanePdf'), paneRek = $('#rfOlapPaneRek');
+  const setTab = (t) => {
+    const on = t === 'pdf';
+    btnPdf.classList.toggle('btn-p', on);
+    btnRek.classList.toggle('btn-p', !on);
+    panePdf.style.display = on ? '' : 'none';
+    paneRek.style.display = on ? 'none' : '';
+    try { localStorage.setItem('rf_olap_tab', t); } catch (_) {}
+  };
+  btnPdf.addEventListener('click', () => setTab('pdf'));
+  btnRek.addEventListener('click', () => setTab('rek'));
+  let last = 'pdf';
+  try { last = localStorage.getItem('rf_olap_tab') === 'rek' ? 'rek' : 'pdf'; } catch (_) {}
+  setTab(last);
+  rfRenderBillPdfPane(panePdf);   // tab 1: Urutkan PDF (v3.24.9 — alur tidak diubah)
+  rfRenderRekonPane(paneRek);     // tab 2: Rekonsiliasi (v3.24.10)
+}
+
+// --- Tab 1: Urutkan PDF (konten lama v3.24.9, tanpa muat-runtime di awal) ---
+function rfRenderBillPdfPane(P) {
+  P.innerHTML =
     '<div class="card">' +
       '<h3>Pilih berkas PDF klaim</h3>' +
       '<div style="font-size:11.5px;color:var(--text-2);line-height:1.55;margin-bottom:9px">PDF klaim BPJS/JKK dianalisa &amp; diurutkan <b>Nama Peserta A-Z</b> langsung di perangkat — <b>100% offline</b>, tanpa server, tanpa login. Tidak ada data yang dikirim ke mana pun.</div>' +
@@ -12660,6 +12681,17 @@ async function rfPdfSortHandleFile(file) {
   if (!isPdf) {
     state.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ Harus berkas PDF (.pdf).</div>';
     return;
+  }
+  if (!window.PDFSortEngine) {
+    // v3.24.10: runtime PDF dimuat malas — hanya saat berkas benar-benar dipilih
+    state.innerHTML = '<div class="hintbox">⏳ Memuat mesin PDF (lokal)…</div>';
+    try {
+      await rfPdfSortEnsureRuntime();
+    } catch (e) {
+      console.error('[RecallFox] pdfsort runtime:', e);
+      state.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ ' + esc(e.message || 'Mesin PDF gagal dimuat.') + '<br><br>Tutup-buka sidebar lalu ulangi.</div>';
+      return;
+    }
   }
   state.innerHTML = '<div class="hintbox">⏳ Menganalisa <b>' + esc(file.name) + '</b>…</div>';
   res.innerHTML = '';
@@ -12739,4 +12771,314 @@ function rfPdfSortRenderSummary(res, file, a, bytes) {
       toast('Gagal membuka tab: ' + (e.message || e));
     }
   });
+}
+
+// ============================================================================
+// v3.24.10 — REKONSILIASI TAGIHAN (offline-first) — tab ke-2 "Olah File Tagihan"
+// ============================================================================
+// Pecah "Laporan Pembayaran Jaminan" BPJS (.xls/.xlsx/.csv) menjadi satu ZIP
+// berisi 1 berkas Excel per "Nama Rek. Penerima" (+ REKAP.xlsx) untuk
+// rekonsiliasi tagihan ke RS/klinik via email/WA.
+//
+//   1) User pilih berkas laporan di tab Rekonsiliasi.
+//   2) Analisa otomatis (SheetJS lokal): header dideteksi, baris dibersihkan,
+//      dikelompokkan per nama rekening + statistik (tagihan/penerima/total).
+//   3) Daftar penerima: centang per penerima, pencarian, dan rekening FAVORIT
+//      (★ tersimpan permanen via browser.storage.local — tidak perlu nyortir
+//      ulang setiap bulan).
+//   4) Unduh ZIP: <nama berkas> - REKONSILIASI.zip
+//      Isi: NN <Nama Rekening>.xlsx (semua kolom asli + baris TOTAL, urut
+//      Tgl Bayar → Kode Klaim) + REKAP.xlsx (1 baris per penerima).
+//
+// Mesin  : pdftool/xlsx-engine.js (global RFRekonEngine) — uji Node 65/65 PASS
+//          pada berkas asli BPJS user (1222 baris → 71 penerima → ZIP 72 entri).
+// Vendor : vendor/xlsx.full.min.js (SheetJS 0.18.5) + vendor/fflate.min.js
+//          (fflate 0.8.3) — lokal, tanpa jaringan, TANPA permission baru.
+// ============================================================================
+
+const RF_REKON = {
+  VENDOR: ['vendor/xlsx.full.min.js', 'vendor/fflate.min.js'],
+  ENGINE: 'pdftool/xlsx-engine.js',
+  FAV_KEY: 'rf_rekon_favs_v1',
+  ACCEPT: '.xls,.xlsx,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv'
+};
+
+// --- Muat runtime Excel (vendor + engine) sekali; idempoten ---
+let rfRekonRuntimePromise = null;
+function rfRekonEnsureRuntime() {
+  if (window.RFRekonEngine) return Promise.resolve();
+  if (rfRekonRuntimePromise) return rfRekonRuntimePromise;
+  rfRekonRuntimePromise = (async () => {
+    for (const src of RF_REKON.VENDOR) await rfLoadScriptOnce(src);
+    await rfLoadScriptOnce(RF_REKON.ENGINE);
+    if (!window.RFRekonEngine) throw new Error('Mesin Rekonsiliasi gagal dimuat.');
+  })();
+  return rfRekonRuntimePromise;
+}
+
+// --- Rekening favorit (persisten, offline via storage lokal) ---
+async function rfRekonGetFavs() {
+  try {
+    const o = await browser.storage.local.get(RF_REKON.FAV_KEY);
+    const a = o && o[RF_REKON.FAV_KEY];
+    return Array.isArray(a) ? a.filter((x) => typeof x === 'string' && x) : [];
+  } catch (_) { return []; }
+}
+async function rfRekonSetFavs(arr) {
+  try {
+    await browser.storage.local.set({ [RF_REKON.FAV_KEY]: arr.slice(0, 500) });
+  } catch (e) { console.warn('[RecallFox] rekon simpan favorit gagal:', e); }
+}
+
+// --- State tab Rekonsiliasi (dihidupkan ulang tiap berkas baru) ---
+const rfRekonState = {
+  parsed: null, analyzed: null, fileName: '',
+  selected: new Set(),   // kunci grup tercentang
+  favs: new Set(),       // kunci favorit tersimpan
+  search: '',
+  busy: false
+};
+
+// --- Tab 2: Rekonsiliasi — kartu pilih berkas (dipanggil shell 2 tab) ---
+function rfRenderRekonPane(P) {
+  P.innerHTML =
+    '<div class="card">' +
+      '<h3>Pilih berkas laporan tagihan</h3>' +
+      '<div style="font-size:11.5px;color:var(--text-2);line-height:1.55;margin-bottom:9px">Laporan Pembayaran Jaminan BPJS (.xls/.xlsx) dipecah otomatis per <b>Nama Rekening Penerima</b> — satu berkas Excel per penerima (semua kolom asli + baris TOTAL, urut tanggal) + REKAP, dikemas satu ZIP. <b>100% offline</b>, tanpa server, tanpa login — tidak ada data yang dikirim ke mana pun.</div>' +
+      '<input type="file" id="rfRkFile" accept="' + RF_REKON.ACCEPT + '" style="display:none">' +
+      '<button class="btn btn-p" id="rfRkPick" style="width:100%">📊 Pilih berkas Excel…</button>' +
+      '<div id="rfRkState" style="margin-top:10px"></div>' +
+    '</div>' +
+    '<div id="rfRkResult"></div>' +
+    '<div class="hintbox">💡 Rekening yang diberi <b>★</b> tersimpan permanen di perangkat — berikutnya cukup tekan <b>★ Favorit</b> tanpa nyortir ulang.</div>';
+
+  const input = $('#rfRkFile');
+  $('#rfRkPick').addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    const f = input.files && input.files[0];
+    if (f) rfRekonHandleFile(f);
+    input.value = ''; // reset: pilih berkas yang sama lagi tetap terpicu
+  });
+}
+
+// --- Analisa otomatis begitu berkas dipilih ---
+async function rfRekonHandleFile(file) {
+  const state = $('#rfRkState');
+  const res = $('#rfRkResult');
+  if (!state || !res || rfRekonState.busy) return;
+  const okExt = /\.(xls|xlsx|csv)$/i.test(file.name) || /spreadsheetml|ms-?excel|csv/i.test(file.type || '');
+  if (!okExt) {
+    state.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ Harus berkas Excel (.xls / .xlsx / .csv).</div>';
+    return;
+  }
+  rfRekonState.busy = true;
+  try {
+    state.innerHTML = '<div class="hintbox">⏳ Memuat mesin Excel (lokal)…</div>';
+    await rfRekonEnsureRuntime();
+    state.innerHTML = '<div class="hintbox">⏳ Membaca <b>' + esc(file.name) + '</b>…</div>';
+    res.innerHTML = '';
+    const buf = await file.arrayBuffer();
+    const parsed = window.RFRekonEngine.parseWorkbook(new Uint8Array(buf));
+    const analyzed = window.RFRekonEngine.analyze(parsed);
+    const favs = await rfRekonGetFavs();
+    rfRekonState.parsed = parsed;
+    rfRekonState.analyzed = analyzed;
+    rfRekonState.fileName = file.name;
+    rfRekonState.favs = new Set(favs);
+    rfRekonState.search = '';
+    const keys = analyzed.groups.map((g) => g.key);
+    const favHit = keys.filter((k) => rfRekonState.favs.has(k));
+    rfRekonState.selected = new Set(favHit.length ? favHit : keys);
+    state.innerHTML = '';
+    rfRekonRenderSummary(res);
+    if (favHit.length && favHit.length < keys.length) toast('★ ' + favHit.length + ' rekening favorit dipilih');
+  } catch (e) {
+    console.error('[RecallFox] rekon analyze:', e);
+    state.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ ' + esc(e.message || 'Gagal membaca berkas.') + '</div>';
+    res.innerHTML = '';
+  } finally {
+    rfRekonState.busy = false;
+  }
+}
+
+// --- Ringkasan: chip stat + toolbar (cari/semua/nihil/favorit) + daftar ---
+function rfRekonRenderSummary(res) {
+  const E = window.RFRekonEngine;
+  const s = rfRekonState.analyzed.stats;
+  const chips = [
+    ['Tagihan', String(s.totalRows), 'var(--text)'],
+    ['Penerima', String(s.groups), 'var(--green)'],
+    ['Total', E.fmtRp(s.totalAmount), 'var(--violet)'],
+    ['Periode', s.dateMinIso ? E.fmtDate(s.dateMinIso) + ' – ' + E.fmtDate(s.dateMaxIso) : '—', 'var(--text-2)']
+  ];
+  res.innerHTML =
+    '<div class="card">' +
+      '<h3>Hasil analisa — siap dipecah</h3>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:9px">' +
+        chips.map((c) => '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:7px 9px"><div style="font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700">' + esc(c[0]) + '</div><div class="v" style="font-size:13.5px;font-weight:800;color:' + c[2] + '">' + esc(c[1]) + '</div></div>').join('') +
+      '</div>' +
+      '<input type="text" id="rfRkSearch" placeholder="🔍 Cari nama rekening…" value="' + escAttr(rfRekonState.search) + '" style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--text);font-size:12px;outline:none;margin-bottom:8px">' +
+      '<div style="display:flex;gap:6px;margin-bottom:8px">' +
+        '<button class="btn" id="rfRkAll" style="flex:1;font-size:11px">Semua</button>' +
+        '<button class="btn" id="rfRkNone" style="flex:1;font-size:11px">Nihil</button>' +
+        '<button class="btn" id="rfRkFav" style="flex:1;font-size:11px">★ Favorit</button>' +
+      '</div>' +
+      '<div id="rfRkSelBar" style="font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);border-radius:8px;padding:6px 9px;margin-bottom:8px"></div>' +
+      '<div id="rfRkList" style="border:1px solid var(--border);border-radius:9px;overflow:hidden;margin-bottom:9px;max-height:216px;overflow-y:auto"></div>' +
+      '<button class="btn btn-p" id="rfRkDl" style="width:100%">⬇ Unduh ZIP</button>' +
+      '<div id="rfRkDlState" style="margin-top:9px"></div>' +
+    '</div>';
+
+  // pencarian
+  $('#rfRkSearch').addEventListener('input', (ev) => {
+    rfRekonState.search = ev.target.value || '';
+    rfRekonRenderList();
+  });
+  // pilih semua / nihil / favorit
+  $('#rfRkAll').addEventListener('click', () => {
+    rfRekonState.analyzed.groups.forEach((g) => rfRekonState.selected.add(g.key));
+    rfRekonRenderList(); rfRekonUpdateBar();
+  });
+  $('#rfRkNone').addEventListener('click', () => {
+    rfRekonState.selected.clear();
+    rfRekonRenderList(); rfRekonUpdateBar();
+  });
+  $('#rfRkFav').addEventListener('click', async () => {
+    const favs = await rfRekonGetFavs();
+    rfRekonState.favs = new Set(favs);
+    rfRekonState.selected = new Set(rfRekonState.analyzed.groups.map((g) => g.key).filter((k) => rfRekonState.favs.has(k)));
+    rfRekonRenderList(); rfRekonUpdateBar();
+    if (!rfRekonState.selected.size) toast('Belum ada rekening favorit — beri ★ dulu pada daftar');
+  });
+  // delegasi event daftar (tetap hidup walau daftar di-render ulang)
+  $('#rfRkList').addEventListener('change', (ev) => {
+    const cb = ev.target.closest('input[type="checkbox"]');
+    if (!cb) return;
+    const row = cb.closest('[data-rkkey]');
+    if (!row) return;
+    const key = row.getAttribute('data-rkkey');
+    if (cb.checked) rfRekonState.selected.add(key);
+    else rfRekonState.selected.delete(key);
+    rfRekonUpdateBar();
+  });
+  $('#rfRkList').addEventListener('click', async (ev) => {
+    const star = ev.target.closest('[data-rkstar]');
+    if (!star) return;
+    const key = star.getAttribute('data-rkstar');
+    if (rfRekonState.favs.has(key)) {
+      rfRekonState.favs.delete(key);
+    } else {
+      rfRekonState.favs.add(key);
+      toast('★ Disimpan ke favorit');
+    }
+    await rfRekonSetFavs(Array.from(rfRekonState.favs));
+    rfRekonRenderList();
+  });
+  // unduh ZIP
+  $('#rfRkDl').addEventListener('click', rfRekonDownload);
+
+  rfRekonRenderList();
+  rfRekonUpdateBar();
+}
+
+// --- Daftar penerima (dengan filter pencarian) ---
+function rfRekonRenderList() {
+  const E = window.RFRekonEngine;
+  const list = $('#rfRkList');
+  if (!list || !rfRekonState.analyzed) return;
+  const q = E.normKey(rfRekonState.search);
+  const rows = rfRekonState.analyzed.groups.filter((g) => !q || E.normKey(g.name).indexOf(q) >= 0);
+  if (!rows.length) {
+    list.innerHTML = '<div style="padding:14px;text-align:center;color:var(--muted);font-size:11.5px">Tidak ada rekening yang cocok.</div>';
+    return;
+  }
+  list.innerHTML = rows.map((g) => {
+    const on = rfRekonState.selected.has(g.key);
+    const fav = rfRekonState.favs.has(g.key);
+    return '<label data-rkkey="' + escAttr(g.key) + '" style="display:flex;gap:7px;align-items:center;padding:7px 9px;border-bottom:1px solid var(--border);background:var(--surface);cursor:pointer">' +
+      '<input type="checkbox" ' + (on ? 'checked' : '') + ' style="flex:none;accent-color:var(--primary);width:14px;height:14px;margin:0">' +
+      '<span data-rkstar="' + escAttr(g.key) + '" title="Tandai favorit" style="flex:none;font-size:13px;line-height:1;color:' + (fav ? 'var(--amber)' : 'var(--border)') + ';cursor:pointer">★</span>' +
+      '<span style="flex:1;min-width:0;font-weight:600;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)">' + esc(g.name) + '</span>' +
+      '<span style="flex:none;font-size:10px;color:var(--muted);font-family:var(--mono)">' + g.count + ' · ' + esc(E.fmtNum(g.total)) + '</span>' +
+      '</label>';
+  }).join('');
+}
+
+// --- Bar pilihan aktif + label tombol unduh ---
+function rfRekonUpdateBar() {
+  const E = window.RFRekonEngine;
+  const bar = $('#rfRkSelBar');
+  const dl = $('#rfRkDl');
+  if (!bar || !rfRekonState.analyzed) return;
+  let n = 0, cnt = 0, tot = 0;
+  for (const g of rfRekonState.analyzed.groups) {
+    if (rfRekonState.selected.has(g.key)) { n++; cnt += g.count; tot += g.total; }
+  }
+  bar.textContent = n
+    ? 'Dipilih: ' + n + ' penerima · ' + cnt + ' tagihan · ' + E.fmtRp(tot)
+    : 'Belum ada penerima dipilih';
+  if (dl) {
+    dl.disabled = !n;
+    dl.textContent = n ? '⬇ Unduh ZIP (' + n + ' berkas Excel + REKAP)' : '⬇ Unduh ZIP';
+  }
+}
+
+// --- Unduh ZIP hasil pecah ---
+async function rfRekonDownload() {
+  if (rfRekonState.busy) return;
+  const E = window.RFRekonEngine;
+  const dl = $('#rfRkDl');
+  const st = $('#rfRkDlState');
+  if (!dl || !rfRekonState.analyzed) return;
+  const n = rfRekonState.analyzed.groups.filter((g) => rfRekonState.selected.has(g.key)).length;
+  if (!n) { toast('Centang minimal satu penerima'); return; }
+  rfRekonState.busy = true;
+  const oldLabel = dl.textContent;
+  dl.disabled = true;
+  dl.textContent = '⏳ Menyusun…';
+  if (st) st.innerHTML = '<div class="hintbox">⏳ Menyusun ' + n + ' berkas Excel + REKAP…</div>';
+  try {
+    await new Promise((r) => setTimeout(r, 30)); // beri kesempatan UI merender
+    const u8 = E.buildZip(rfRekonState.parsed, rfRekonState.analyzed, rfRekonState.selected);
+    const blob = new Blob([u8], { type: 'application/zip' });
+    const base = E.safeFilename(String(rfRekonState.fileName).replace(/\.(xlsx|xls|csv)$/i, '') || 'laporan').slice(0, 80);
+    await rfRekonDownloadBlob(blob, base + ' - REKONSILIASI.zip');
+    if (st) st.innerHTML = '<div class="hintbox" style="background:var(--green-soft);color:var(--green)">✓ ZIP siap — ' + n + ' berkas Excel + REKAP (' + Math.max(1, Math.round(blob.size / 1024)) + ' KB). Cek folder Unduhan.</div>';
+    toast('✓ ZIP Rekonsiliasi berhasil dibuat');
+  } catch (e) {
+    console.error('[RecallFox] rekon download:', e);
+    if (st) st.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ ' + esc(e.message || 'Gagal membuat ZIP.') + '</div>';
+    toast('Gagal membuat ZIP');
+  } finally {
+    rfRekonState.busy = false;
+    dl.disabled = false;
+    dl.textContent = oldLabel;
+    rfRekonUpdateBar();
+  }
+}
+
+// --- Unduh via downloads API (pola sama dengan pdftool v3.24.9) ---
+async function rfRekonDownloadBlob(blob, fileName) {
+  try {
+    if (browser && browser.downloads && browser.downloads.download) {
+      const url = URL.createObjectURL(blob);
+      try {
+        await browser.downloads.download({ url, filename: fileName, saveAs: false, conflictAction: 'uniquify' });
+        return true;
+      } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      }
+    }
+  } catch (e) {
+    console.warn('[RecallFox rekon] downloads API gagal, fallback anchor:', e);
+  }
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return true;
 }
