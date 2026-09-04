@@ -1,0 +1,168 @@
+/* ============================================================
+   RecallFox v3.24.9 — pdftool.css
+   Halaman tab penuh "Urutkan PDF" — memakai token desain yang
+   sama persis dengan popup.css (light + dark otomatis).
+   ============================================================ */
+:root{
+  --bg:#fafaf9; --surface:#ffffff; --surface-2:#f5f5f4; --hover:#f0efed;
+  --border:#e7e5e4; --border-strong:#d6d3d1;
+  --text:#1c1917; --text-2:#57534e; --muted:#a8a29e;
+  --primary:#4f46e5; --primary-hover:#4338ca; --primary-soft:#eef2ff; --primary-soft-2:#e0e7ff;
+  --green:#059669; --green-soft:#d1fae5; --amber:#d97706; --amber-soft:#fef3c7;
+  --violet:#7c3aed; --violet-soft:#ede9fe;
+  --danger:#dc2626; --danger-soft:#fef2f2;
+  --r-md:12px; --r-lg:16px; --r-full:999px;
+  --sh-md:0 4px 16px rgba(0,0,0,.08);
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#131211; --surface:#1c1b19; --surface-2:#242220; --hover:#2b2926;
+    --border:#2e2b28; --border-strong:#3d3935;
+    --text:#f5f4f2; --text-2:#c9c5c1; --muted:#8a8580;
+    --primary:#818cf8; --primary-hover:#a5b0ff; --primary-soft:rgba(129,140,248,.14); --primary-soft-2:rgba(129,140,248,.22);
+    --green:#34d399; --green-soft:rgba(52,211,153,.14); --amber:#fbbf24; --amber-soft:rgba(251,191,36,.14);
+    --violet:#a78bfa; --violet-soft:rgba(167,139,250,.14);
+    --danger:#f87171; --danger-soft:rgba(248,113,113,.12);
+    --sh-md:0 4px 16px rgba(0,0,0,.4);
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font); background:var(--bg); color:var(--text);
+  -webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+.hidden{display:none !important}
+
+/* ==== Header ==== */
+.rf-top{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:18px 26px; border-bottom:1px solid var(--border); background:var(--surface);
+  position:sticky; top:0; z-index:5;
+}
+.rf-brand{display:flex; align-items:center; gap:12px; min-width:0}
+.rf-logo{
+  width:38px; height:38px; flex:none; display:grid; place-items:center; font-size:20px;
+  background:var(--primary-soft); border-radius:11px;
+}
+.rf-t{font-size:14.5px; font-weight:800; letter-spacing:-.01em}
+.rf-s{font-size:11.5px; color:var(--text-2); margin-top:1px}
+.rf-badge{
+  flex:none; font-size:11px; font-weight:700; color:var(--green);
+  background:var(--green-soft); border-radius:var(--r-full); padding:6px 12px;
+}
+
+/* ==== Layout ==== */
+.rf-main{max-width:860px; margin:0 auto; padding:22px 26px 40px}
+.rf-card{
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--r-md);
+  padding:16px; margin-bottom:12px; box-shadow:var(--sh-md);
+}
+.rf-foot{font-size:11px; color:var(--muted); text-align:center; margin-top:18px; line-height:1.6}
+
+/* ==== Drop zone ==== */
+.rf-drop{text-align:center; padding:40px 20px; border-style:dashed; border-width:1.6px; transition:border-color .15s, background .15s}
+.rf-drop.over{border-color:var(--primary); background:var(--primary-soft)}
+.rf-drop-ic{font-size:40px; margin-bottom:10px}
+.rf-drop-t{font-size:16px; font-weight:800; letter-spacing:-.01em}
+.rf-drop-d{font-size:12px; color:var(--text-2); line-height:1.6; max-width:520px; margin:7px auto 16px}
+
+/* ==== Head siap-unduh ==== */
+.rf-file{font-size:12.5px; font-weight:700; color:var(--text-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:11px}
+.rf-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:8px}
+@media (max-width:560px){ .rf-stats{grid-template-columns:1fr 1fr} }
+.rf-stat{background:var(--surface-2); border:1px solid var(--border); border-radius:10px; padding:9px 11px}
+.rf-stat .k{font-size:9.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.07em; font-weight:700}
+.rf-stat .v{font-size:17px; font-weight:800; margin-top:2px}
+
+/* ==== Switch ==== */
+.rf-row-between{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap}
+.rf-switch-wrap{display:inline-flex; align-items:center; gap:9px; cursor:pointer; user-select:none}
+.rf-switch-wrap input{position:absolute; opacity:0; pointer-events:none}
+.rf-switch{
+  width:34px; height:20px; flex:none; border-radius:var(--r-full); background:var(--border-strong);
+  position:relative; transition:background .15s;
+}
+.rf-switch::after{
+  content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%;
+  background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:transform .15s;
+}
+.rf-switch-wrap input:checked + .rf-switch{background:var(--primary)}
+.rf-switch-wrap input:checked + .rf-switch::after{transform:translateX(14px)}
+.rf-switch-wrap input:focus-visible + .rf-switch{outline:2px solid var(--primary-soft-2); outline-offset:2px}
+.rf-switch-t{font-size:12px; color:var(--text)}
+.rf-count{font-size:11px; color:var(--muted); font-weight:600}
+
+/* ==== Daftar baris halaman ==== */
+.rf-list-hd{
+  display:flex; justify-content:space-between; gap:8px; align-items:baseline;
+  font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+  color:var(--muted); margin:14px 0 7px;
+}
+.rf-list-hd-r{font-weight:600; text-transform:none; letter-spacing:0}
+.rf-rows{display:flex; flex-direction:column; gap:6px; max-height:44vh; overflow:auto; padding:2px}
+.rf-row{
+  display:flex; align-items:center; gap:10px; padding:8px 10px;
+  background:var(--surface); border:1px solid var(--border); border-radius:10px;
+  cursor:grab; transition:border-color .12s, box-shadow .12s, opacity .12s;
+}
+.rf-row:hover{border-color:var(--border-strong)}
+.rf-row.dragging{opacity:.45; cursor:grabbing}
+.rf-row.dragover-top{box-shadow:0 -2px 0 0 var(--primary)}
+.rf-row.dragover-bottom{box-shadow:0 2px 0 0 var(--primary)}
+.rf-grip{color:var(--muted); font-size:13px; flex:none; letter-spacing:1px}
+.rf-idx{
+  flex:none; width:22px; height:22px; display:grid; place-items:center;
+  background:var(--primary-soft); color:var(--primary); border-radius:7px;
+  font-size:10.5px; font-weight:800;
+}
+.rf-rname{flex:1; min-width:0; font-size:12.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.rf-rname.unread{color:var(--amber)}
+.rf-rclaim{flex:none; font-family:var(--mono); font-size:10.5px; color:var(--text-2)}
+.rf-rpg{
+  flex:none; font-size:10px; font-weight:700; color:var(--text-2);
+  background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:3px 7px;
+}
+.rf-mv{flex:none; display:flex; gap:2px}
+.rf-mv button{
+  width:20px; height:20px; border-radius:6px; font-size:10px; line-height:1;
+  color:var(--muted); background:var(--surface-2); border:1px solid var(--border);
+}
+.rf-mv button:hover{color:var(--primary); border-color:var(--primary-soft-2)}
+.rf-mv button:disabled{opacity:.35; cursor:default}
+
+/* ==== Tombol ==== */
+.rf-btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:7px;
+  font-size:12.5px; font-weight:700; padding:10px 16px; border-radius:10px;
+  border:1px solid transparent; transition:.15s;
+}
+.rf-btn:active{transform:scale(.98)}
+.rf-btn:disabled{opacity:.6; cursor:wait}
+.rf-btn-p{background:var(--primary); color:#fff}
+.rf-btn-p:hover{background:var(--primary-hover)}
+.rf-btn-g{background:var(--surface-2); color:var(--text); border-color:var(--border)}
+.rf-btn-g:hover{background:var(--hover)}
+.rf-btnrow{display:flex; gap:8px; margin-top:14px}
+.rf-btnrow .rf-btn-p{flex:1}
+.rf-flash-ok{background:var(--green) !important}
+.rf-flash-err{background:var(--danger) !important}
+.rf-outname{font-size:11px; color:var(--muted); margin-top:10px}
+.rf-outname b{color:var(--text-2); font-weight:700}
+
+/* ==== Status / error ==== */
+.rf-state{margin-top:10px}
+.rf-note{font-size:11.5px; color:var(--text-2); background:var(--surface-2); border-radius:9px; padding:9px 11px; line-height:1.55}
+.rf-note.warn{background:var(--amber-soft); color:var(--amber)}
+.rf-note.err{background:var(--danger-soft); color:var(--danger)}
+.rf-note.ok{background:var(--green-soft); color:var(--green)}
+.rf-err{border-color:var(--danger); font-size:12.5px; color:var(--danger); line-height:1.6}
+
+/* ==== Print bersih (konsisten v3.24.7) ==== */
+@media print{
+  .rf-top,.rf-btnrow,.rf-mv,.rf-foot{display:none !important}
+  body{background:#fff}
+}

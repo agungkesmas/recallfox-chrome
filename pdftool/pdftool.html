@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Urutkan PDF — RecallFox</title>
+  <link rel="stylesheet" href="pdftool.css" />
+</head>
+<body>
+  <header class="rf-top">
+    <div class="rf-brand">
+      <div class="rf-logo">🦊</div>
+      <div>
+        <div class="rf-t">Urutkan PDF — Klaim BPJS/JKK</div>
+        <div class="rf-s">Nama Peserta A-Z · diproses lokal di perangkat Anda</div>
+      </div>
+    </div>
+    <span class="rf-badge">🔒 100% offline</span>
+  </header>
+
+  <main class="rf-main">
+    <!-- ==== Kondisi awal: pilih / tarik berkas ==== -->
+    <section id="rfEmpty" class="rf-card rf-drop" aria-label="Pilih berkas PDF">
+      <div class="rf-drop-ic">📄</div>
+      <div class="rf-drop-t">Tarik &amp; letakkan berkas PDF di sini</div>
+      <div class="rf-drop-d">atau pilih dari perangkat — PDF klaim BPJS/JKK akan dianalisa &amp; diurutkan otomatis (Nama Peserta A-Z, multi-klaim dirapatkan). Tanpa server, tanpa login.</div>
+      <input type="file" id="rfFile" accept="application/pdf,.pdf" style="display:none" />
+      <button class="rf-btn rf-btn-p" id="rfPick">Pilih berkas PDF…</button>
+      <div id="rfEmptyState" class="rf-state"></div>
+    </section>
+
+    <!-- ==== Siap unduh ==== -->
+    <section id="rfReady" class="hidden" aria-label="Pratinjau urutan">
+      <div class="rf-card" id="rfHead">
+        <div class="rf-file" id="rfFileName">—</div>
+        <div class="rf-stats" id="rfStats"></div>
+      </div>
+
+      <div class="rf-card">
+        <div class="rf-row-between">
+          <label class="rf-switch-wrap" for="rfIc">
+            <input type="checkbox" id="rfIc" checked />
+            <span class="rf-switch" aria-hidden="true"></span>
+            <span class="rf-switch-t">Sertakan halaman <b>DAFTAR ISI</b></span>
+          </label>
+          <span class="rf-count" id="rfPageCount"></span>
+        </div>
+        <div class="rf-list-hd">
+          <span>Urutan halaman (baru)</span>
+          <span class="rf-list-hd-r">Geser kartu atau ▲▼ untuk mengubah</span>
+        </div>
+        <div id="rfRows" class="rf-rows"></div>
+        <div class="rf-btnrow">
+          <button class="rf-btn rf-btn-p" id="rfDownload">⬇ Unduh PDF (SORT A-Z)</button>
+          <button class="rf-btn rf-btn-g" id="rfReset" title="Kembalikan urutan A-Z otomatis">↺ A-Z</button>
+          <button class="rf-btn rf-btn-g" id="rfAnother">Pilih berkas lain</button>
+        </div>
+        <div class="rf-outname">Nama berkas hasil: <b id="rfOutName">—</b></div>
+        <div id="rfReadyState" class="rf-state"></div>
+      </div>
+    </section>
+
+    <!-- ==== Error ==== -->
+    <section id="rfErr" class="rf-card rf-err hidden" aria-live="polite"></section>
+
+    <p class="rf-foot">RecallFox v3.24.9 — Urutkan PDF bekerja sepenuhnya offline. Berkas Anda tidak pernah dikirim ke internet.</p>
+  </main>
+
+  <!-- Vendor (lokal) + mesin — urutan penting -->
+  <script src="../vendor/pdf.min.js"></script>
+  <script src="../vendor/pdf.worker.min.js"></script>
+  <script src="../vendor/pdf-lib.min.js"></script>
+  <script src="engine.js"></script>
+  <script src="pdftool.js"></script>
+</body>
+</html>

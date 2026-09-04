@@ -8279,6 +8279,7 @@ function openNoteEditor(noteId) {
 // ============ Tools drawer ============
 const TOOLS = [
   ['tape', 'RecallTape', 'Kalkulator pita · keyboard-first', '🧾'],
+  ['pdfsort', 'Urutkan PDF', 'Klaim BPJS/JKK A-Z · offline', '📄'],   // v3.24.9: offline-first, tanpa server
   ['shalat', 'Waktu Shalat', 'Muhammadiyah · countdown', ICONS.mosque],
   ['habits', 'Habits', 'Ngaji & olahraga harian', ICONS.heart],
   ['puasa', 'Puasa Sunnah', 'Kalender Islam & jadwal', ICONS.moonstar],
@@ -8481,7 +8482,7 @@ function openTilePicker() {
 
 function toolPage(k) {
   closeSheet();
-  const names = { tape: '🧾 RecallTape — Kalkulator Pita', shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
+  const names = { tape: '🧾 RecallTape — Kalkulator Pita', pdfsort: '📄 Urutkan PDF — Klaim A-Z', shalat: '🕌 Waktu Shalat', habits: '❤️ Kebiasaan', puasa: '🌙 Puasa Sunnah', volume: '🔊 Penguat Volume', kontrol: '🛡 Kontrol Situs', cache: '🗑 Bersihkan Cache', askai: '✨ Tanya AI', gdrive: '☁️ Sync Cloud (GDrive + Multi-PC)', backup: '📦 Cadangkan & Pulihkan', keys: '⌨️ Pintasan Keyboard', aimanage: '⚙️ Kelola Situs AI' };
   // v3.14.0: RecallTape — bukan halaman dalam popup, tapi popover di halaman aktif.
   // Kirim message ke content script di tab aktif untuk toggle popover.
   if (k === 'tape') {
@@ -8499,6 +8500,7 @@ function toolPage(k) {
   else if (k === 'keys') renderKeysPage(B);
   else if (k === 'kontrol') renderKontrolSitusPage(B);
   else if (k === 'aimanage') renderAiManagePage(B);  // v3.11.1 (Issue 4)
+  else if (k === 'pdfsort') renderPdfSortPage(B);     // v3.24.9: Urutkan PDF (offline-first)
   else renderToolStubPage(B, k, names[k]);
 }
 
@@ -12513,5 +12515,228 @@ if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.onMessa
       return true;
     }
     return false;
+  });
+}
+
+// ============================================================================
+// ============================================================================
+// v3.24.9 — URUTKAN PDF (offline-first)
+// ============================================================================
+// Porting fitur web "Urutkan PDF A-Z" (workspace user) ke dalam addon:
+// 100% OFFLINE — tanpa server, tanpa login, tanpa permission baru.
+//
+// Alur (UI Kombinasi — ringkasan di sini, pratinjau penuh di tab):
+//   1) User pilih berkas PDF klaim BPJS/JKK di halaman alat ini.
+//   2) Analisa OTOMATIS (teks berkoordinat via vendor/pdf.js) → nama peserta.
+//   3) Urutan A-Z langsung siap → ringkasan (stat + daftar pasien) tampil.
+//   4) Tombol "Buka pratinjau & unduh di tab" → pdftool/pdftool.html
+//      (pratinjau penuh, geser manual per halaman, switch DAFTAR ISI,
+//      unduh "<nama> - SORT A-Z.pdf" via blob + downloads API).
+//
+// Handoff sidebar→tab: IndexedDB origin extension (bytes + metas + order).
+// Mesin  : pdftool/engine.js — port 1:1 dari mesin web tervalidasi E2E.
+// Vendor : vendor/pdf.min.js + pdf.worker.min.js (pdfjs-dist 3.11.174 legacy),
+//          vendor/pdf-lib.min.js (1.17.1) — sama persis dgn versi web.
+// Catatan CSP: semua skrip lokal 'self' (tanpa inline/eval); pdf.js dipakai
+// dgn isEvalSupported:false dari engine.js. TANPA permission baru.
+// ============================================================================
+
+const RF_PDFSORT = {
+  VENDOR: ['vendor/pdf.min.js', 'vendor/pdf.worker.min.js', 'vendor/pdf-lib.min.js'],
+  ENGINE: 'pdftool/engine.js',
+  TAB: 'pdftool/pdftool.html',
+  DB: 'rf-pdftool',
+  STORE: 'jobs',
+  KEY: 'current'
+};
+
+// --- Loader skrip idempoten (urutan terjaga, sekali saja per sesi halaman) ---
+function rfLoadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    const abs = browser.runtime.getURL(src);
+    const exist = document.querySelector('script[data-rfsrc="' + escAttr(src) + '"]');
+    if (exist) {
+      if (exist.dataset.rfloaded === '1') return resolve();
+      exist.addEventListener('rfloaded', () => resolve(), { once: true });
+      exist.addEventListener('rferror', () => reject(new Error('Gagal memuat ' + src)), { once: true });
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = abs;
+    s.async = false;
+    s.dataset.rfsrc = src;
+    s.addEventListener('rfloaded', () => resolve(), { once: true });
+    s.addEventListener('rferror', () => reject(new Error('Gagal memuat ' + src)), { once: true });
+    s.onload = () => { s.dataset.rfloaded = '1'; s.dispatchEvent(new Event('rfloaded')); };
+    s.onerror = () => { s.dataset.rfloaded = '0'; s.dispatchEvent(new Event('rferror')); };
+    document.head.appendChild(s);
+  });
+}
+
+// --- Muat runtime PDF (vendor + engine) sekali; set workerSrc untuk pdf.js ---
+let rfPdfSortRuntimePromise = null;
+function rfPdfSortEnsureRuntime() {
+  if (window.PDFSortEngine) return Promise.resolve();
+  if (rfPdfSortRuntimePromise) return rfPdfSortRuntimePromise;
+  rfPdfSortRuntimePromise = (async () => {
+    for (const src of RF_PDFSORT.VENDOR) await rfLoadScriptOnce(src);
+    await rfLoadScriptOnce(RF_PDFSORT.ENGINE);
+    try {
+      // Worker asli (off main-thread). Bila gagal, pdf.js otomatis jatuh ke
+      // fake worker main-thread karena vendor/pdf.worker.min.js juga dimuat
+      // sebagai <script> (set globalThis.pdfjsWorker → WorkerMessageHandler).
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = browser.runtime.getURL('vendor/pdf.worker.min.js');
+      }
+    } catch (e) {
+      console.warn('[RecallFox] pdfsort: workerSrc gagal diset — pakai fake worker', e);
+    }
+    if (!window.PDFSortEngine) throw new Error('Mesin PDF gagal dimuat.');
+  })();
+  return rfPdfSortRuntimePromise;
+}
+
+// --- IndexedDB handoff: sidebar/popup menulis, tab pdftool.html membaca ---
+function rfPdfSortDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(RF_PDFSORT.DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(RF_PDFSORT.STORE)) db.createObjectStore(RF_PDFSORT.STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('IndexedDB gagal dibuka'));
+  });
+}
+
+function rfPdfSortPutJob(job) {
+  return rfPdfSortDb().then((db) => new Promise((resolve, reject) => {
+    let done = false;
+    const tx = db.transaction(RF_PDFSORT.STORE, 'readwrite');
+    tx.objectStore(RF_PDFSORT.STORE).put(job, RF_PDFSORT.KEY);
+    tx.oncomplete = () => { if (!done) { done = true; db.close(); resolve(); } };
+    tx.onerror = () => { if (!done) { done = true; db.close(); reject(tx.error || new Error('Gagal menyimpan handoff')); } };
+    tx.onabort = () => { if (!done) { done = true; db.close(); reject(tx.error || new Error('Handoff dibatalkan')); } };
+  }));
+}
+
+// --- Halaman alat (slide-in .page standar; dipanggil dari toolPage) ---
+async function renderPdfSortPage(B) {
+  B.innerHTML = '<div class="card"><div class="hintbox">⏳ Memuat mesin PDF (lokal)…</div></div>';
+  try {
+    await rfPdfSortEnsureRuntime();
+  } catch (e) {
+    console.error('[RecallFox] pdfsort runtime:', e);
+    B.innerHTML = '<div class="card"><h3>Mesin PDF gagal dimuat</h3><div class="hintbox">' + esc(e.message || String(e)) + '<br><br>Tutup-buka sidebar lalu ulangi.</div></div>';
+    return;
+  }
+
+  B.innerHTML =
+    '<div class="card">' +
+      '<h3>Pilih berkas PDF klaim</h3>' +
+      '<div style="font-size:11.5px;color:var(--text-2);line-height:1.55;margin-bottom:9px">PDF klaim BPJS/JKK dianalisa &amp; diurutkan <b>Nama Peserta A-Z</b> langsung di perangkat — <b>100% offline</b>, tanpa server, tanpa login. Tidak ada data yang dikirim ke mana pun.</div>' +
+      '<input type="file" id="rfPsFile" accept="application/pdf,.pdf" style="display:none">' +
+      '<button class="btn btn-p" id="rfPsPick" style="width:100%">📄 Pilih berkas PDF…</button>' +
+      '<div id="rfPsState" style="margin-top:10px"></div>' +
+    '</div>' +
+    '<div id="rfPsResult"></div>' +
+    '<div class="hintbox">💡 Multi-klaim satu pasien dirapatkan berurutan (urut no. klaim). Halaman yang namanya tidak terbaca otomatis diletakkan paling akhir.</div>';
+
+  const input = $('#rfPsFile');
+  $('#rfPsPick').addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    const f = input.files && input.files[0];
+    if (f) rfPdfSortHandleFile(f);
+    input.value = ''; // reset: pilih berkas yang sama lagi tetap terpicu
+  });
+}
+
+// --- Analisa otomatis begitu berkas dipilih (alur "Auto siap unduh") ---
+async function rfPdfSortHandleFile(file) {
+  const state = $('#rfPsState');
+  const res = $('#rfPsResult');
+  if (!state || !res) return;
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+  if (!isPdf) {
+    state.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ Harus berkas PDF (.pdf).</div>';
+    return;
+  }
+  state.innerHTML = '<div class="hintbox">⏳ Menganalisa <b>' + esc(file.name) + '</b>…</div>';
+  res.innerHTML = '';
+  try {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf); // analyzePdf TIDAK mengubah buffer ini
+    const a = await window.PDFSortEngine.analyzePdf(bytes);
+    state.innerHTML = '';
+    rfPdfSortRenderSummary(res, file, a, bytes);
+  } catch (e) {
+    console.error('[RecallFox] pdfsort analyze:', e);
+    state.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ ' + esc(e.message || 'Gagal menganalisa PDF.') + '</div>';
+  }
+}
+
+// --- Ringkasan hasil analisa: stat + daftar pasien A-Z + tombol buka tab ---
+function rfPdfSortRenderSummary(res, file, a, bytes) {
+  const E = window.PDFSortEngine;
+  const entries = E.buildIndexEntries(a.sorted, 1);
+  const chips = [
+    ['Halaman', a.stats.total, 'var(--text)'],
+    ['Pasien', a.stats.uniquePatients, 'var(--green)'],
+    ['Multi-klaim', a.stats.multiClaim, a.stats.multiClaim > 0 ? 'var(--violet)' : 'var(--muted)'],
+    ['Tak terbaca', a.stats.unread, a.stats.unread > 0 ? 'var(--amber)' : 'var(--muted)']
+  ];
+  const rows = entries.map((en, i) => {
+    const unreadRow = en.unread;
+    return '<div style="display:flex;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface)">' +
+      '<span style="width:16px;flex:none;color:var(--muted);font-weight:700;font-size:10.5px">' + (i + 1) + '</span>' +
+      '<span style="flex:1;min-width:0;font-weight:600;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + (unreadRow ? 'var(--amber)' : 'var(--text)') + '">' + esc(unreadRow ? E.DISPLAY_UNREAD : en.label) + '</span>' +
+      '<span style="flex:none;font-weight:700;font-size:11px;color:var(--primary);font-family:var(--mono)">' + esc(en.pageLabel) + '</span>' +
+      '</div>';
+  }).join('');
+
+  res.innerHTML =
+    '<div class="card">' +
+      '<h3>Hasil analisa — siap diurutkan</h3>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">' +
+        chips.map((c) => '<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:9px;padding:7px 9px"><div style="font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:700">' + c[0] + '</div><div class="v" style="font-size:15px;font-weight:800;color:' + c[2] + '">' + c[1] + '</div></div>').join('') +
+      '</div>' +
+      '<div style="border:1px solid var(--border);border-radius:9px;overflow:hidden;margin-bottom:10px">' +
+        '<div style="max-height:190px;overflow:auto">' + rows + '</div>' +
+      '</div>' +
+      (a.stats.unread > 0 ? '<div class="hintbox" style="background:var(--amber-soft);color:var(--amber);margin-bottom:10px">⚠ ' + a.stats.unread + ' halaman nama tidak terbaca — diletakkan paling akhir, bisa digeser manual di tab pratinjau.</div>' : '') +
+      '<button class="btn btn-p" id="rfPsOpen" style="width:100%">Buka pratinjau &amp; unduh di tab →</button>' +
+      '<div style="font-size:10.5px;color:var(--muted);text-align:center;margin-top:7px">Diarahkan ke tab penuh: geser manual, DAFTAR ISI, unduh PDF</div>' +
+    '</div>';
+
+  $('#rfPsOpen').addEventListener('click', async () => {
+    const btn = $('#rfPsOpen');
+    btn.disabled = true;
+    btn.textContent = '⏳ Membuka tab…';
+    try {
+      // 1) simpan handoff dulu (await sampai transaksi benar-benar selesai),
+      //    agar popup boleh ditutup browser tanpa kehilangan data.
+      await rfPdfSortPutJob({
+        v: 1,
+        ts: Date.now(),
+        name: file.name,
+        size: bytes.length,
+        bytes: bytes,
+        metas: a.metas,
+        order: a.order,
+        stats: a.stats
+      });
+      // 2) buka tab pratinjau (pola sama dgn viewer.html)
+      await browser.tabs.create({ url: browser.runtime.getURL(RF_PDFSORT.TAB) });
+      btn.textContent = '✓ Terbuka di tab baru';
+      setTimeout(() => {
+        const b2 = $('#rfPsOpen');
+        if (b2) { b2.disabled = false; b2.textContent = 'Buka pratinjau & unduh di tab →'; }
+      }, 2600);
+    } catch (e) {
+      console.error('[RecallFox] pdfsort open tab:', e);
+      btn.disabled = false;
+      btn.textContent = 'Buka pratinjau & unduh di tab →';
+      toast('Gagal membuka tab: ' + (e.message || e));
+    }
   });
 }
