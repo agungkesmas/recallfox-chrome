@@ -1530,7 +1530,12 @@ async function previewFileItem(id) {
       b.querySelector('#pvDl').addEventListener('click', () => { closeSheet(); downloadFileItem(id); });
     });
   } else {
-    toast('File Office tidak bisa dipratinjau di browser — gunakan Unduh', false);
+    // v3.24.11: pesan family-aware — arsip (zip/rar/7z/tar/gz) & Office sama-sama
+    // tidak bisa dipratinjau browser → arahkan ke Unduh.
+    const family = (item.source && item.source.family) || '';
+    toast(family === 'archive'
+      ? 'File arsip tidak bisa dipratinjau di browser — gunakan Unduh'
+      : 'File Office tidak bisa dipratinjau di browser — gunakan Unduh', false);
   }
 }
 
@@ -7156,7 +7161,7 @@ function addItemMenu() {
         setTimeout(opt[1], 80);
       }
     }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar (maks 10MB).</div>');
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar/arsip .zip/.rar/.7z/.tar/.gz (maks 10MB).</div>');
   });
 }
 

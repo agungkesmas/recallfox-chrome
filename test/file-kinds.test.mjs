@@ -38,11 +38,27 @@ assert(png && png.binary && png.family === 'image' && png.preview === 'img', '.p
 assert(detectFileKind({ name: 'foto.JPEG' })?.kind === 'jpg', '.JPEG → jpg');
 assert(detectFileKind({ name: 'x.webp' })?.mime === 'image/webp', '.webp → mime image/webp');
 
+console.log('== Arsip (Fase 3, v3.24.11: zip/rar/7z/tar/gz/dll.) ==');
+const zip = detectFileKind({ name: 'backup.zip' });
+assert(zip && zip.binary === true && zip.family === 'archive' && zip.preview === 'none', '.zip → binary archive, preview none');
+assert(zip.mime === 'application/zip', '.zip → mime application/zip');
+assert(detectFileKind({ name: 'arsip.RAR' })?.kind === 'rar', '.RAR (kapital) → rar');
+assert(detectFileKind({ name: 'paket.7z' })?.kind === '7z', '.7z → 7z');
+assert(detectFileKind({ name: 'source.tar' })?.kind === 'tar', '.tar → tar');
+assert(detectFileKind({ name: 'log.tar.gz' })?.kind === 'gz', '.tar.gz (ekstensi terakhir .gz) → gz');
+assert(detectFileKind({ name: 'data.tgz' })?.kind === 'tgz', '.tgz → tgz');
+assert(detectFileKind({ name: 'lib.tar.bz2' })?.kind === 'bz2', '.tar.bz2 → bz2');
+assert(detectFileKind({ name: 'pkg.tar.xz' })?.kind === 'xz', '.tar.xz → xz');
+assert(detectFileKind({ name: 'bin.zst' })?.kind === 'zst', '.zst → zst');
+assert(kindIcon('zip') === '📦', 'ikon arsip 📦');
+assert(cloudExt('zip', true) === 'zip', 'cloudExt zip');
+assert(cloudExt('7z', true) === '7z', 'cloudExt 7z');
+
 console.log('== Penolakan binary di luar scope ==');
-assert(detectFileKind({ name: 'x.zip' }) === null, '.zip ditolak');
+// v3.24.11: .zip KINI DIDUKUNG (Fase 3) — pindah ke bagian arsip di atas.
 assert(detectFileKind({ name: 'x.mp3' }) === null, '.mp3 ditolak');
-assert(rejectHintFor({ name: 'x.zip' })?.includes('ZIP'), 'hint zip');
 assert(rejectHintFor({ name: 'lagu.mp3' })?.includes('audio'), 'hint audio');
+assert(rejectHintFor({ name: 'x.zip' }) === null, '.zip tidak lagi ditolak (hint null)');
 assert(rejectHintFor({ name: 'x.exe' })?.includes('executable'), 'hint exe');
 assert(detectFileKind({ name: 'x.pdf.exe' }) === null, '.exe (ekstensi terakhir) ditolak');
 assert(detectFileKind({ name: 'tanpaekstensi' }) === null, 'tanpa ekstensi & bukan nama khusus → null');
@@ -66,6 +82,7 @@ console.log('== Batas & accept ==');
 assert(MAX_TEXT_UPLOAD_BYTES === 2 * 1024 * 1024, 'teks 2MB');
 assert(MAX_BINARY_UPLOAD_BYTES === 10 * 1024 * 1024, 'binary 10MB');
 assert(FILE_ACCEPT_ATTR.includes('.pdf') && FILE_ACCEPT_ATTR.includes('.ts') && FILE_ACCEPT_ATTR.includes('.png'), 'accept attr lengkap');
+assert(FILE_ACCEPT_ATTR.includes('.zip') && FILE_ACCEPT_ATTR.includes('.rar') && FILE_ACCEPT_ATTR.includes('.7z') && FILE_ACCEPT_ATTR.includes('.tar') && FILE_ACCEPT_ATTR.includes('.gz'), 'accept attr arsip lengkap');
 
 console.log('\nHasil: ' + passed + ' lolos, ' + failed + ' gagal');
 process.exit(failed > 0 ? 1 : 0);
