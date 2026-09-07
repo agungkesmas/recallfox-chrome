@@ -33,6 +33,16 @@ import {
   MAX_BINARY_UPLOAD_BYTES
 } from '../lib/file-kinds.js';
 import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
+// v3.24.12: Upload file sementara (dual destination) — host litterbox,
+// item hilang otomatis dari vault saat kedaluwarsa. Lihat lib/temp-upload.js.
+import {
+  TEMP_DURATIONS,
+  TEMP_HOST_LABEL,
+  uploadToTempHost,
+  tempRemainingLabel,
+  isTempItem,
+  isTempExpired
+} from '../lib/temp-upload.js';
 import { AI_TOOLS, groupByRegion, matchCurrentTool, getEffectiveTools, getVisibleTools } from '../lib/ai-tools.js';
 import { getAllToppings, buildFinalPrompt } from '../lib/toppings.js';
 import { getNextPrayerIncludingSunnah, getLastPassedPrayer, getSunnahPrayers, formatCountdown, to12Hour } from '../lib/salahtime.js';
@@ -1205,6 +1215,9 @@ function resolveImageUrl(item) {
   if (item.gdrive_file_url) return item.gdrive_file_url;
   const src = item.source || {};
   if (Array.isArray(src.pages) && src.pages[0]?.url) return src.pages[0].url;
+  // v3.24.12: File sementara — URL publik host temp (litterbox) dipakai untuk
+  // Salin Tautan / Unduh / Pratinjau / Sisip (URL serve file mentah).
+  if (src.tempUrl) return src.tempUrl;
   if (src.url) return src.url;
   return null;
 }
@@ -2243,6 +2256,14 @@ function renderItemHtml(it, indent, connector) {
     const activeIds = (currentVault?.settings?.activeContextIds) || [];
     if (activeIds.includes(it.id)) activeContextBadge = ' <span title="Konteks aktif" style="font-size:10px;color:#10b981">\uD83D\uDFE2</span>';
   }
+  // v3.24.12: Badge file sementara — countdown kedaluwarsa (item hilang otomatis
+  // dari vault saat batas waktu habis). Amber = sisa >= 1 jam, merah = < 1 jam.
+  let tempBadge = '';
+  if (isTempItem(it)) {
+    const remain = tempRemainingLabel(it.source.tempExpiresAt);
+    const tColor = (isTempExpired(it) || (remain.endsWith('m') && !remain.includes('j'))) ? '#ef4444' : '#f59e0b';
+    tempBadge = ' <span title="File sementara (' + esc(it.source.tempHost || 'litterbox') + ') — hilang otomatis dari vault dalam ' + esc(remain) + '" style="font-size:10px;color:' + tColor + ';font-weight:600">\u23F3 ' + esc(remain) + '</span>';
+  }
   const indentStyle = indent > 0 ? ' style="padding-left:' + (10 + indent * 16) + 'px"' : '';
   const connectorSpan = connector ? '<span style="font-size:10px;color:var(--muted);flex-shrink:0;width:24px">' + connector + '</span>' : '';
   // v3.19.1: Display GPS location dari PWA capture (source.location).
@@ -2276,7 +2297,7 @@ function renderItemHtml(it, indent, connector) {
     + connectorSpan
     + '<div class="item-ic t-' + it.type + '">' + T.icon + '</div>'
     + '<div class="item-main">'
-    + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + activeContextBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">\u2699\uFE0F</span>' : '') + '</div>'
+    + '<div class="item-title">' + fav + arch + esc(it.title) + docBadge + tempBadge + activeContextBadge + (vars ? ' <span title="' + vars + ' variabel" style="font-size:10px">\u2699\uFE0F</span>' : '') + '</div>'
     + '<div class="item-meta">' + T.label
     + (snapshotBadge ? ' \u00B7 ' + snapshotBadge : '')
     + (contextPurposeBadge ? ' \u00B7 ' + contextPurposeBadge : '')
@@ -5512,7 +5533,9 @@ function itemSheet(id) {
       : (isAi ? 'Sisipkan ke chat' : 'Salin ke clipboard')))));
     const primaryIcon = it.type === 'link' ? ICONS.spark : (it.type === 'bundle' ? ICONS.archive : (it.type === 'file' ? ICONS.copy : (isAi ? ICONS.zap : ICONS.copy)));
     b.innerHTML =
-      '<button class="act" data-a="primary">' + primaryIcon + '<div>' + primaryLabel + '<div class="ad">Sama dengan klik baris — 1 klik</div></div></button>'
+      // v3.24.12: Banner info file sementara — ingatkan batas waktu + auto-hapus
+      (isTempItem(it) ? '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;margin-bottom:8px;font-size:11px"><span style="font-size:14px">\u23F3</span><div style="flex:1"><b>File sementara (' + esc(it.source.tempHost || 'litterbox') + ')</b> — sisa ' + esc(tempRemainingLabel(it.source.tempExpiresAt)) + '.<div style="color:var(--muted);margin-top:1px">Setelah batas waktu, file hilang dari host DAN item hilang otomatis dari vault di semua device.</div></div></div>' : '')
+      + '<button class="act" data-a="primary">' + primaryIcon + '<div>' + primaryLabel + '<div class="ad">Sama dengan klik baris — 1 klik</div></div></button>'
       + (it.type === 'prompt' || it.type === 'context' ? '<button class="act" data-a="attach">' + ICONS.clipA + '<div>Sisipkan dengan lampiran<div class="ad">Prompt + link referensi sekaligus</div></div></button>' : '')
       // v3.16.0 K5: Konteks Aktif — toggle flag untuk auto-prepend saat inject prompt.
       // Maks 3 konteks aktif. Saat user inject prompt, semua konteks aktif di-prepend.
@@ -7161,7 +7184,7 @@ function addItemMenu() {
         setTimeout(opt[1], 80);
       }
     }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Screenshot punya 4 mode: <b>area</b> (seret kotak), <b>viewport</b> (bagian terlihat), <b>seluruh halaman</b> (scroll-stitch), <b>upload manual</b> (file dari disk / paste clipboard). Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar/arsip .zip/.rar/.7z/.tar/.gz (maks 10MB).</div>');
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar/arsip .zip/.rar/.7z/.tar/.gz (maks 10MB). <b>Tujuan simpan:</b> ☁️ Database (permanen) atau ⏳ Sementara — file di host sementara, item hilang otomatis dari vault sesuai batas waktu (1 jam–3 hari).</div>');
   });
 }
 
@@ -7169,19 +7192,41 @@ function addItemMenu() {
 // v3.22.0 (Fase 2): Diperluas jadi "Upload File" — teks (2MB) + binary
 // Office/gambar (10MB) dengan preview per tipe (PDF embed, gambar thumbnail,
 // Office ikon + ukuran).
-// Punya: Judul (opsional), Tag (opsional), area upload (klik/drag&drop), Batal, Simpan
+// v3.24.12: DUAL DESTINATION — user: "fitur upload file bisa dua, 1. masuk ke
+//   database/supabase, 2. masuk ke situs upload file sementara ... alur
+//   menambahkan filenya tidak ada yang beda, hanya saja nomor 2 hilang sendiri
+//   di vault sesuai batas waktu situsnya". Pilihan tujuan: ☁️ Database
+//   (permanen, perilaku lama) | ⏳ Sementara (litterbox.catbox.moe, durasi
+//   1 jam/12 jam/1 hari/3 hari, item otomatis dihapus dari vault saat habis
+//   oleh cleanupExpiredTempItems). Host temp.sh DITOLAK hasil audit (URL
+//   selalu HTML page, bukan file mentah — lihat lib/temp-upload.js).
+// Punya: Judul (opsional), Tag (opsional), Tujuan (database/sementara+durasi),
+// area upload (klik/drag&drop), Batal, Simpan
 function saveFileUploadSheet() {
-  openSheet('📄 Upload File', 'Pilih file teks, PDF, Office, atau gambar — drag & drop juga bisa', b => {
+  openSheet('📄 Upload File', 'Pilih file — teks, PDF, Office, gambar, atau arsip. Pilih tujuan: Database (permanen) atau Sementara (hilang otomatis)', b => {
+    const durOptions = TEMP_DURATIONS.map(d => '<option value="' + d.id + '"' + (d.id === '72h' ? ' selected' : '') + '>' + d.label + '</option>').join('');
     b.innerHTML = '<div class="sheet-form">'
       + '<div><label>Judul <span class="field-hint">(opsional — kosongkan untuk pakai filename)</span></label>'
       +   '<input class="f" id="docT" placeholder="mis. Laporan rapat..."></div>'
       + '<div><label>Tag <span class="field-hint">(pisah koma)</span></label>'
       +   '<input class="f" id="docTag" placeholder="catatan, rapat"></div>'
+      // v3.24.12: Pilihan tujuan simpan — Database (Supabase, permanen) atau Sementara
+      + '<div><label>Tujuan simpan</label>'
+      +   '<div id="destRow" style="display:flex;gap:6px;margin:4px 0 2px">'
+      +     '<button type="button" id="destDb" class="btn btn-g" style="flex:1;font-size:12px;padding:8px 6px">☁️ Database</button>'
+      +     '<button type="button" id="destTemp" class="btn btn-g" style="flex:1;font-size:12px;padding:8px 6px;opacity:.55">⏳ Sementara</button>'
+      +   '</div>'
+      +   '<div id="tempDurRow" style="display:none;margin:4px 0 2px">'
+      +     '<label>Batas waktu <span class="field-hint">(file + item di vault hilang saat habis)</span></label>'
+      +     '<select class="f" id="tempDur">' + durOptions + '</select>'
+      +   '</div>'
+      +   '<div id="destNote" style="font-size:10px;color:var(--muted);margin:2px 0 4px">☁️ Disimpan permanen ke database Supabase (perilaku lama).</div>'
+      + '</div>'
       + '<div id="docDropzone" style="border:2px dashed #c0c0c0;border-radius:8px;padding:24px;text-align:center;color:#666;cursor:pointer;margin:8px 0;transition:all 0.2s">'
       +   '<div style="font-size:32px;margin-bottom:8px">📄</div>'
       +   '<div style="font-weight:600;color:#333">Klik untuk pilih file</div>'
       +   '<div style="font-size:11px;margin-top:4px">atau drag & drop</div>'
-      +   '<div style="font-size:10px;margin-top:4px;color:#999">Teks: .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB)<br>Binary: PDF, Word, Excel, PowerPoint, gambar PNG/JPG/WebP (maks 10MB)</div>'
+      +   '<div style="font-size:10px;margin-top:4px;color:#999">Teks: .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB)<br>Binary: PDF, Word, Excel, PowerPoint, gambar PNG/JPG/WebP, arsip .zip/.rar/.7z/.tar (maks 10MB)</div>'
       + '</div>'
       + '<input type="file" id="docFileInputSheet" accept="' + FILE_ACCEPT_ATTR + '" style="display:none">'
       + '<div id="docPreview" style="display:none;margin:8px 0">'
@@ -7194,8 +7239,31 @@ function saveFileUploadSheet() {
 
     let _fileContent = null, _fileName = '', _fileKind = null, _fileMime = 'text/plain';
     let _fileIsBinary = false, _fileBlob = null, _fileSize = 0;
+    // v3.24.12: 'db' = Supabase permanen, 'temp' = host sementara (litterbox)
+    let _dest = 'db';
     const dropzone = b.querySelector('#docDropzone');
     const fileInput = b.querySelector('#docFileInputSheet');
+
+    // v3.24.12: Toggle tujuan simpan — highlight tombol aktif + tampil/sembunyi
+    // dropdown durasi + ganti catatan penjelas di bawahnya.
+    const destDbBtn = b.querySelector('#destDb');
+    const destTempBtn = b.querySelector('#destTemp');
+    const tempDurRow = b.querySelector('#tempDurRow');
+    const destNote = b.querySelector('#destNote');
+    function _paintDest() {
+      const isDb = _dest === 'db';
+      destDbBtn.style.opacity = isDb ? '1' : '.55';
+      destDbBtn.style.outline = isDb ? '2px solid #6366f1' : 'none';
+      destTempBtn.style.opacity = isDb ? '.55' : '1';
+      destTempBtn.style.outline = isDb ? 'none' : '2px solid #f59e0b';
+      tempDurRow.style.display = isDb ? 'none' : '';
+      destNote.textContent = isDb
+        ? '☁️ Disimpan permanen ke database Supabase (perilaku lama).'
+        : '⏳ File di-upload ke ' + TEMP_HOST_LABEL + ' — URL publik (bisa dibuka AI chat). Setelah batas waktu habis, item ini hilang OTOMATIS dari vault di semua device.';
+    }
+    destDbBtn.addEventListener('click', () => { _dest = 'db'; _paintDest(); });
+    destTempBtn.addEventListener('click', () => { _dest = 'temp'; _paintDest(); });
+    _paintDest();
     dropzone.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', async (e) => { if (e.target.files[0]) await _handleFile(e.target.files[0]); });
     dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.style.borderColor = '#FF7139'; dropzone.style.background = '#FFF4E6'; });
@@ -7276,6 +7344,34 @@ function saveFileUploadSheet() {
             isBinary: _fileIsBinary, uploadedFrom: 'addon-upload', capturedAt: new Date().toISOString()
           }
         };
+        // v3.24.12: DUAL DESTINATION — 'temp' upload ke litterbox dulu; hanya
+        // kalau sukses item dibuat. File binary TIDAK disimpan lokal/cloud
+        // (file hidup di URL temp; Unduh/Pratinjau fetch URL saat dibutuhkan).
+        if (_dest === 'temp') {
+          const durId = b.querySelector('#tempDur').value || '72h';
+          const blobForTemp = _fileIsBinary
+            ? _fileBlob
+            : new Blob([_fileContent], { type: _fileMime || 'text/plain' });
+          payload.source.uploadedFrom = 'addon-upload-temp';
+          btn.textContent = '⏳ Upload sementara...'; btn.disabled = true;
+          const up = await uploadToTempHost(blobForTemp, _fileName, durId);
+          if (!up.ok) {
+            console.error('[RecallFox] Temp upload gagal:', up.error);
+            toast('⚠ Upload sementara gagal (' + up.error + ') — coba lagi atau pakai tujuan Database', false);
+            btn.textContent = ICONS.check + 'Simpan File'; btn.disabled = false;
+            return;
+          }
+          payload.source.tempHost = up.host;
+          payload.source.tempUrl = up.url;
+          payload.source.tempExpiresAt = up.expiresAt;
+          payload.source.tempDuration = up.duration;
+          await addItem(payload); // TANPA fileBlob — tidak ada blob lokal
+          closeSheet();
+          await refreshVault();
+          const dLabel = (TEMP_DURATIONS.find(x => x.id === up.duration) || {}).label || up.duration;
+          toast('⏳ ' + _fileName + ' terupload sementara (' + dLabel + ') — hilang otomatis dari vault');
+          return;
+        }
         const opts = _fileIsBinary ? { fileBlob: _fileBlob } : {};
         await addItem(payload, opts);
         let cloudOk = true;
@@ -11472,6 +11568,34 @@ async function confirmAttachInject() {
 }
 
 // ============ Refresh & init ============
+// ===================================================================
+// v3.24.12: Auto-cleanup file sementara yang sudah kedaluwarsa.
+// Permintaan user: item upload "sementara" (litterbox) "akan hilang
+// sendiri di vault sesuai dengan batas waktu di situs upload
+// sementaranya". Scan vault → item file dengan source.tempExpiresAt
+// yang sudah lewat → deleteItem(id): hapus lokal + hard-delete cloud
+// + delete registry + realtime broadcast ke device lain.
+// Return jumlah item yang dihapus.
+// ===================================================================
+async function cleanupExpiredTempItems() {
+  try {
+    const vault = await getVault();
+    const items = Array.isArray(vault?.items) ? vault.items : [];
+    const expired = items.filter(it => isTempExpired(it));
+    if (expired.length === 0) return 0;
+    for (const it of expired) {
+      try { await deleteItem(it.id); } catch (e) {
+        console.warn('[RecallFox] cleanup temp item gagal:', it.id, e.message);
+      }
+    }
+    console.log('[RecallFox] cleanupExpiredTempItems:', expired.length, 'item dihapus');
+    return expired.length;
+  } catch (e) {
+    console.warn('[RecallFox] cleanupExpiredTempItems failed:', e.message);
+    return 0;
+  }
+}
+
 async function refreshVault() {
   currentVault = await getVault();
   // v3.7.2 (Issue 4): Muat catatan juga supaya search bisa mencari di notes
@@ -11485,12 +11609,33 @@ async function refreshVault() {
 async function init() {
   try { await initTheme(); } catch (e) { console.warn('initTheme failed:', e); }
   try { await refreshVault(); } catch (e) { console.warn('refreshVault failed:', e); }
+  // v3.24.12: Auto-hapus file sementara kedaluwarsa saat popup dibuka + tiap
+  // 60 detik selama popup terbuka — supaya item temp "hilang sendiri di vault
+  // sesuai batas waktu situs upload sementaranya" (permintaan user).
+  try {
+    const _removed = await cleanupExpiredTempItems();
+    if (_removed > 0) {
+      toast('\u23F3 ' + _removed + ' file sementara kedaluwarsa — dihapus dari vault');
+      await refreshVault();
+    }
+  } catch (e) { console.warn('cleanupExpiredTempItems failed:', e); }
+  setInterval(async () => {
+    try {
+      const n = await cleanupExpiredTempItems();
+      if (n > 0) {
+        toast('\u23F3 ' + n + ' file sementara kedaluwarsa — dihapus dari vault');
+        await refreshVault();
+      }
+    } catch (e) {}
+  }, 60000);
   // v3.13.0 (Issue #3): Load notes prefs (sort/view mode) dari vault.settings
   try { loadNotesPrefs(); } catch (e) { console.warn('loadNotesPrefs failed:', e); }
   try { await detectAiContext(); } catch (e) {}
 
   // Sticky bars
+  console.log('[RecallFox] init: sebelum sticky bars');
   await Promise.allSettled([updatePrayerStrip(), updateHabitsStrip(), updateFastStrip()]);
+  console.log('[RecallFox] init: sesudah sticky bars');
   setInterval(() => Promise.allSettled([updatePrayerStrip(), updateHabitsStrip(), updateFastStrip()]), 60000);
 
   // Render tools + notes (lazy)
@@ -11498,6 +11643,7 @@ async function init() {
   await renderNotes();
 
   bindEvents();
+  console.log('[RecallFox] init: bindEvents called');
   try{ await initPomodoro(); }catch(e){ console.warn('initPomodoro failed',e); }
   renderVault();
   // v3.9.0 (Issue 5): Sidebar auto-close after idle (only in sidebar mode)
@@ -11532,6 +11678,8 @@ async function init() {
 
   // v3.11.1: Focus search — di-skip karena search bar sudah dihapus.
   // Quick-actions bar tidak perlu auto-focus (user pilih tombol yang mau).
+  // v3.24.12: marker diagnostik (E2E headless: init bisa menggantung di await strip)
+  console.log('[RecallFox] bindEvents OK');
 }
 
 // ========== Pomodoro sticky (v3.21.14) — safe isolated ==========
