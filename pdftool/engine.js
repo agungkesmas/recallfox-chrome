@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * RecallFox v3.24.9 — URUTKAN PDF (offline-first)
+ * RecallFox v3.24.13 — URUTKAN PDF (offline-first)
  * pdftool/engine.js — Mesin analisa, sort A-Z, & penyusunan ulang PDF klaim.
  * ----------------------------------------------------------------------------
  * Port 1:1 (vanilla JS) dari mesin web yang sudah tervalidasi E2E pada berkas
@@ -134,7 +134,31 @@
   // --------------------------------------------------------------------------
   // BAGIAN 2 — Logika sort pasien (port pdf-sort.ts, disamakan Python
   // urutkan_pdf.py: nama A-Z → no. klaim menaik → tak-terbaca di akhir)
+  //
+  // v3.24.13 (fix urut abjad penuh): perbandingan nama kini PENUH seluruh
+  // huruf via Intl.Collator('id') — kamus ABJAD penuh, tak peka besar-kecil,
+  // angka alami (SUCI 2 < SUCI 10). Sebelumnya pembanding `<`/`>` kode-unit
+  // pada nama yang sudah di-upper — benar untuk A-Z ASCII, tetapi kini lebih
+  // kuat & eksplisit: "ADI" < "ANDI" (d < n), "DEDE" < "DEVI" (d < v),
+  // "IDA" < "IIN" (d < i), dst. dijamin memperhatikan huruf KEDUA dan
+  // seterusnya — bukan hanya huruf pertama.
   // --------------------------------------------------------------------------
+
+  // Collator abjad Indonesia — dibuat SEKALI (mahal bila tiap perbandingan).
+  // Fallback: bila Intl tak tersedia, cmpKey memakai perbandingan kode-unit
+  // pada nama yang sudah dinormalisasi + di-uppercase (tetap seluruh huruf).
+  const NAME_COLLATOR = (typeof Intl !== 'undefined' && Intl.Collator)
+    ? new Intl.Collator('id', { sensitivity: 'base', numeric: true })
+    : null;
+
+  /** Kunci nama utk sort: NFKC → rapatkan spasi → trim → UPPERCASE. */
+  function normSortName(name) {
+    return String(name == null ? '' : name)
+      .normalize('NFKC')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase();
+  }
 
   function extractMetaFromText(text, index) {
     let name = '';
@@ -163,13 +187,25 @@
   function sortKey(info) {
     if (info.name) {
       // klaim tidak ada -> "~~~~~~~~" (setelah digit apa pun di ASCII)
-      return [0, info.name.toUpperCase(), info.claim || '~~~~~~~~', info.index];
+      return [0, normSortName(info.name), info.claim || '~~~~~~~~', info.index];
     }
-    return [1, SENTINEL_UNREAD, '', info.index];
+    return [1, normSortName(SENTINEL_UNREAD), '', info.index];
   }
 
+  /**
+   * Bandingkan dua kunci sort.
+   * Elemen [0] = grup (0=nama terbaca, 1=tak terbaca) — terbaca selalu dulu.
+   * Elemen [1] (NAMA) dibandingkan PENUH huruf-demi-huruf sesuai abjad id
+   * (Collator) — "ADI" vs "ANDI": huruf ke-2 d < n → ADI lebih dulu.
+   * Nama identik → no. klaim menaik → index asli (stabil deterministik).
+   */
   function cmpKey(a, b) {
-    for (let i = 0; i < a.length; i++) {
+    if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;   // grup: tak-terbaca ke akhir
+    const cName = NAME_COLLATOR
+      ? NAME_COLLATOR.compare(a[1], b[1])
+      : (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0);
+    if (cName !== 0) return cName;
+    for (let i = 2; i < a.length; i++) {
       if (a[i] < b[i]) return -1;
       if (a[i] > b[i]) return 1;
     }
@@ -490,8 +526,10 @@
     itemsToText, extractPageTexts,
     // tingkat tinggi
     analyzePdf, buildSortedPdf,
+    // util sort (untuk uji)
+    normSortName,
     // versi mesin
-    ENGINE_VERSION: '1.0.0 (v3.24.9)',
+    ENGINE_VERSION: '1.1.0 (v3.24.13)',
   };
 
   global.PDFSortEngine = API;
