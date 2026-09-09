@@ -2,7 +2,7 @@
 // Jalankan: node test/file-kinds.test.mjs
 import {
   detectFileKind, rejectHintFor, kindIcon, formatBytes, cloudExt,
-  FILE_ACCEPT_ATTR, MAX_TEXT_UPLOAD_BYTES, MAX_BINARY_UPLOAD_BYTES
+  FILE_ACCEPT_ATTR, MAX_TEXT_UPLOAD_BYTES, MAX_BINARY_UPLOAD_BYTES, MAX_TEMP_UPLOAD_BYTES
 } from '../lib/file-kinds.js';
 
 let passed = 0, failed = 0;
@@ -81,6 +81,8 @@ assert(cloudExt('xxx', false) === 'txt', 'cloudExt fallback txt');
 console.log('== Batas & accept ==');
 assert(MAX_TEXT_UPLOAD_BYTES === 2 * 1024 * 1024, 'teks 2MB');
 assert(MAX_BINARY_UPLOAD_BYTES === 10 * 1024 * 1024, 'binary 10MB');
+assert(MAX_TEMP_UPLOAD_BYTES === 100 * 1024 * 1024, 'temp binary 100MB (v3.24.14)');
+assert(MAX_TEMP_UPLOAD_BYTES > MAX_BINARY_UPLOAD_BYTES, 'temp > database limit');
 assert(FILE_ACCEPT_ATTR.includes('.pdf') && FILE_ACCEPT_ATTR.includes('.ts') && FILE_ACCEPT_ATTR.includes('.png'), 'accept attr lengkap');
 assert(FILE_ACCEPT_ATTR.includes('.zip') && FILE_ACCEPT_ATTR.includes('.rar') && FILE_ACCEPT_ATTR.includes('.7z') && FILE_ACCEPT_ATTR.includes('.tar') && FILE_ACCEPT_ATTR.includes('.gz'), 'accept attr arsip lengkap');
 

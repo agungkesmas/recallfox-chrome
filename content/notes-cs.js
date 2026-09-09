@@ -1051,6 +1051,67 @@
         return true;
       } catch (e) { return false; }
     }
+    // ---- v3.24.14 HELPER HAPUS BERSAMA (paritas penuh FF ↔ Chrome) ----
+    // Laporan user: di Chrome, dengan bullet (todo) aktif, teks tidak bisa
+    // dihapus bebas di posisi mana pun — hanya dari ujung terakhir. Akarnya:
+    // sejak v3.24.3 penghapusan Chrome 100% diserahkan ke NATIVE browser
+    // (shim hanya FF), sehingga perilakunya bergantung quirk native Chrome.
+    // Solusi: jalur bedah engine (yang sudah terbukti benar di Firefox)
+    // dipakai di SEMUA browser via beforeinput — perilaku hapus Chrome kini
+    // 1:1 dengan Firefox, tak tergantung native edit lagi.
+    function rfBackspaceEdge(ln) {
+      // Backspace tepat di depan isi baris (offset 0): done → un-done dulu;
+      // task → lepas mode (dedent ala Word); plain → merge ke baris atas.
+      // Sama persis dengan cabang struktural keydown (kontrak v3.24.3).
+      try {
+        if (ln.classList && ln.classList.contains('rfn-done')) {
+          try { ln.classList.remove('rfn-done'); } catch (e2) {}
+          rfAfterStructural();
+          rfPlaceCaret(ln, 0);
+          return true;
+        }
+        if (ln.classList && ln.classList.contains('rfn-task')) {
+          try { ln.classList.remove('rfn-task'); } catch (e2) {}
+          try { rfJustConv.delete(ln); } catch (e2) {}
+          rfAfterStructural();
+          rfPlaceCaret(ln, 0);
+          return true;
+        }
+        if (rfMergeWithPrev(ln)) { rfAfterStructural(); return true; }
+      } catch (e) {}
+      return false;
+    }
+    function rfEngineDeleteBackward(word) {
+      // hapus mundur milik ENGINE: caret mati dipulihkan dulu; tepi baris
+      // (offset 0) memakai rfBackspaceEdge; sisanya hapus 1 char/1 kata.
+      try {
+        const ln = rfFocusedLine();
+        if (!ln) return false;
+        let off = rfCaretInLine(ln);
+        if (off < 0) { try { rfPlaceCaret(ln, rfLineText(ln).length); } catch (e2) {} off = rfCaretInLine(ln); }
+        if (off < 0) return false;
+        if (off === 0) return rfBackspaceEdge(ln);
+        const okd = word ? rfFFDeleteWord(ln, off, -1) : rfFFDeleteChar(ln, off, -1);
+        if (okd) { rfAfterStructural(); return true; }
+        if (rfCaretInLine(ln) === 0) return rfBackspaceEdge(ln);
+        return false;
+      } catch (e) { return false; }
+    }
+    function rfEngineDeleteForward(word) {
+      // hapus maju milik ENGINE: ujung baris = gabung baris berikut; sisanya
+      // hapus 1 char/1 kata di depan caret.
+      try {
+        const ln = rfFocusedLine();
+        if (!ln) return false;
+        let off = rfCaretInLine(ln);
+        if (off < 0) { try { rfPlaceCaret(ln, 0); } catch (e2) {} off = rfCaretInLine(ln); }
+        if (off < 0) return false;
+        if (off >= rfLineText(ln).length) { if (rfMergeNext(ln)) { rfAfterStructural(); return true; } return false; }
+        const okd = word ? rfFFDeleteWord(ln, off, 1) : rfFFDeleteChar(ln, off, 1);
+        if (okd) { rfAfterStructural(); return true; }
+        return false;
+      } catch (e) { return false; }
+    }
     function installNoteTaskEngine(){
       // v3.24.3: deteksi Firefox = variabel LOKAL di sini. JANGAN naikkan ke
       // level buildCtrl — installNoteTaskEngine() dipanggil di AWAL buildCtrl
@@ -1083,40 +1144,44 @@
           } catch (ee) {}
         });
 
-        if (RF_IS_FF) textarea.addEventListener('beforeinput', (e) => {
-          // v3.24.3 JARING PENGAMAN FF (menu konteks / jalur tanpa keydown):
-          // perintah hapus native FF gagal senyap di shadow → sanggut lalu
-          // bedah sendiri; mengetik yang MENGGANTIKAN seleksi juga gagal →
-          // ganti manual. Chrome tidak pernah masuk sini (RF_IS_FF false).
+        textarea.addEventListener('beforeinput', (e) => {
+          // v3.24.14 SEMUA BROWSER (sebelumnya hanya FF): perintah hapus NATIVE
+          // tidak lagi dipakai — semuanya diganti bedah engine model baris
+          // datar, sehingga perilaku hapus Chrome = Firefox (laporan user:
+          // hapus di note Chrome hanya jalan dari ujung terakhir). Meliputi
+          // Backspace/Delete/Ctrl+Backspace/Cmd+Delete/cut/seret-seleksi dan
+          // jalur tanpa keydown (menu konteks, IME, tombol keyboard virtual).
           try {
             if (composing) return;
             const it2 = String((e && e.inputType) || '');
             if (it2.indexOf('delete') === 0) {
               if (e.preventDefault) e.preventDefault();
               if (!rfSelCollapsed()) {
+                // rentang terseleksi: cut/drag butuh clipboard manual dulu,
+                // hapus biasa langsung bedah rentang.
+                if (it2 === 'deleteByCut' || it2 === 'deleteByDrag') { rfFFCopy(true); return; }
                 const rng = rfFFResolveRange();
                 if (rng) { const pos = rfFFDeleteRange(rng); if (pos) { rfPlaceCaret(pos.ln, pos.off); rfAfterStructural(); } }
               } else if (it2 === 'deleteWordBackward' || it2 === 'deleteWordForward') {
+                if (it2 === 'deleteWordBackward') rfEngineDeleteBackward(true);
+                else rfEngineDeleteForward(true);
+              } else if (it2 === 'deleteSoftLineBackward' || it2 === 'deleteHardLineBackward') {
                 const ln = rfFocusedLine();
                 if (ln) {
-                  const off = rfCaretInLine(ln);
-                  const okd = rfFFDeleteWord(ln, off, it2 === 'deleteWordForward' ? 1 : -1);
-                  if (okd) rfAfterStructural();
+                  const off = Math.max(0, rfCaretInLine(ln));
+                  rfFFSplice(ln, 0, off); rfPlaceCaret(ln, 0); rfAfterStructural();
                 }
-              } else if (it2 === 'deleteContentForward' || it2 === 'deleteSoftLineForward') {
+              } else if (it2 === 'deleteSoftLineForward' || it2 === 'deleteHardLineForward') {
                 const ln = rfFocusedLine();
                 if (ln) {
-                  const off = rfCaretInLine(ln);
-                  if (it2 === 'deleteSoftLineForward') { rfFFSplice(ln, off, rfLineText(ln).length); rfPlaceCaret(ln, off); rfAfterStructural(); }
-                  else if (rfFFDeleteChar(ln, off, 1)) rfAfterStructural();
+                  const off = Math.max(0, rfCaretInLine(ln));
+                  rfFFSplice(ln, off, rfLineText(ln).length); rfPlaceCaret(ln, off); rfAfterStructural();
                 }
+              } else if (it2 === 'deleteContentForward') {
+                rfEngineDeleteForward(false);
               } else {
-                const ln = rfFocusedLine();
-                if (ln) {
-                  const off = rfCaretInLine(ln);
-                  if (rfFFDeleteChar(ln, off, -1)) rfAfterStructural();
-                  else if (rfCaretInLine(ln) === 0 && rfMergeWithPrev(ln)) rfAfterStructural();
-                }
+                // deleteContentBackward & varian tak dikenal → hapus mundur
+                rfEngineDeleteBackward(false);
               }
               return;
             }
@@ -1157,7 +1222,9 @@
               return;
             }
             if (k === 'Backspace') {
-              // seleksi rentang → hapus seleksi (Chrome: native; FF: shim)
+              // seleksi rentang → hapus seleksi (v3.24.14: semua browser via
+              // bedah engine — Chrome lewat beforeinput deleteContentBackward,
+              // FF tetap shim keydown)
               if (!rfSelCollapsed()) {
                 if (RF_IS_FF) {
                   const rng = rfFFResolveRange();
@@ -1208,6 +1275,8 @@
               return;
             }
             if (k === 'Delete') {
+              // v3.24.14: sama seperti Backspace — Chrome kini juga lewat bedah
+              // engine (beforeinput deleteContentForward), bukan native lagi.
               if (!rfSelCollapsed()) {
                 if (RF_IS_FF) {
                   const rng = rfFFResolveRange();

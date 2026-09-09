@@ -30,7 +30,8 @@ import {
   formatBytes,
   FILE_ACCEPT_ATTR,
   MAX_TEXT_UPLOAD_BYTES,
-  MAX_BINARY_UPLOAD_BYTES
+  MAX_BINARY_UPLOAD_BYTES,
+  MAX_TEMP_UPLOAD_BYTES
 } from '../lib/file-kinds.js';
 import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
 // v3.24.12: Upload file sementara (dual destination) — host litterbox,
@@ -7184,7 +7185,7 @@ function addItemMenu() {
         setTimeout(opt[1], 80);
       }
     }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar/arsip .zip/.rar/.7z/.tar/.gz (maks 10MB). <b>Tujuan simpan:</b> ☁️ Database (permanen) atau ⏳ Sementara — file di host sementara, item hilang otomatis dari vault sesuai batas waktu (1 jam–3 hari).</div>');
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar/arsip .zip/.rar/.7z/.tar/.gz (maks 10MB ke ☁️ Database, <b>maks 100MB ke ⏳ Sementara</b>). <b>Tujuan simpan:</b> ☁️ Database (permanen) atau ⏳ Sementara — file di host sementara, item hilang otomatis dari vault sesuai batas waktu (1 jam–3 hari).</div>');
   });
 }
 
@@ -7226,7 +7227,7 @@ function saveFileUploadSheet() {
       +   '<div style="font-size:32px;margin-bottom:8px">📄</div>'
       +   '<div style="font-weight:600;color:#333">Klik untuk pilih file</div>'
       +   '<div style="font-size:11px;margin-top:4px">atau drag & drop</div>'
-      +   '<div style="font-size:10px;margin-top:4px;color:#999">Teks: .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB)<br>Binary: PDF, Word, Excel, PowerPoint, gambar PNG/JPG/WebP, arsip .zip/.rar/.7z/.tar (maks 10MB)</div>'
+      +   '<div style="font-size:10px;margin-top:4px;color:#999">Teks: .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB)<br>Binary: PDF, Word, Excel, PowerPoint, gambar PNG/JPG/WebP, arsip .zip/.rar/.7z/.tar (maks 10MB Database · 100MB Sementara)</div>'
       + '</div>'
       + '<input type="file" id="docFileInputSheet" accept="' + FILE_ACCEPT_ATTR + '" style="display:none">'
       + '<div id="docPreview" style="display:none;margin:8px 0">'
@@ -7259,7 +7260,7 @@ function saveFileUploadSheet() {
       tempDurRow.style.display = isDb ? 'none' : '';
       destNote.textContent = isDb
         ? '☁️ Disimpan permanen ke database Supabase (perilaku lama).'
-        : '⏳ File di-upload ke ' + TEMP_HOST_LABEL + ' — URL publik (bisa dibuka AI chat). Setelah batas waktu habis, item ini hilang OTOMATIS dari vault di semua device.';
+        : '⏳ File di-upload ke ' + TEMP_HOST_LABEL + ' — URL publik (bisa dibuka AI chat). Maks 100MB. Setelah batas waktu habis, item ini hilang OTOMATIS dari vault di semua device.';
     }
     destDbBtn.addEventListener('click', () => { _dest = 'db'; _paintDest(); });
     destTempBtn.addEventListener('click', () => { _dest = 'temp'; _paintDest(); });
@@ -7277,9 +7278,12 @@ function saveFileUploadSheet() {
         toast('⚠ Format tidak didukung: ' + file.name + (hint ? ' — ' + hint : ''), false);
         return;
       }
-      const maxBytes = info.binary ? MAX_BINARY_UPLOAD_BYTES : MAX_TEXT_UPLOAD_BYTES;
+      // v3.24.14: batas terluas dulu saat PICK (binary 100MB) agar file besar
+      // untuk tujuan Sementara tidak ditolak prematur — validasi per tujuan
+      // dilakukan ulang saat SAVE (handler #docSave).
+      const maxBytes = info.binary ? Math.max(MAX_BINARY_UPLOAD_BYTES, MAX_TEMP_UPLOAD_BYTES) : MAX_TEXT_UPLOAD_BYTES;
       if (file.size > maxBytes) {
-        toast('⚠ File terlalu besar (maks ' + (info.binary ? '10MB' : '2MB') + ')', false);
+        toast('⚠ File terlalu besar (maks ' + (info.binary ? '100MB' : '2MB') + ')', false);
         return;
       }
       _fileName = file.name; _fileKind = info.kind; _fileMime = info.mime;
@@ -7336,6 +7340,13 @@ function saveFileUploadSheet() {
       const btn = b.querySelector('#docSave');
       btn.textContent = '⏳ Menyimpan...'; btn.disabled = true;
       try {
+        // v3.24.14: validasi ulang sesuai tujuan — Database 10MB, Sementara 100MB
+        const destMax = _fileIsBinary ? (_dest === 'temp' ? MAX_TEMP_UPLOAD_BYTES : MAX_BINARY_UPLOAD_BYTES) : MAX_TEXT_UPLOAD_BYTES;
+        if (_fileSize > destMax) {
+          toast('⚠ File terlalu besar untuk tujuan ' + (_dest === 'temp' ? '⏳ Sementara (maks 100MB)' : '☁️ Database (maks 10MB)'), false);
+          btn.textContent = ICONS.check + 'Simpan File'; btn.disabled = false;
+          return;
+        }
         const payload = {
           type: 'file', title, tags: tagList,
           body: _fileIsBinary ? '' : _fileContent,
