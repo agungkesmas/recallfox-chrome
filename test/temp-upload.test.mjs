@@ -62,12 +62,46 @@ console.log('— uploadToTempHost (mock fetch) —');
   ok(typeof r.expiresAt === 'string' && !Number.isNaN(new Date(r.expiresAt).getTime()), 'expiresAt ISO valid');
 }
 {
-  const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', { fetchImpl: async () => ({ ok: false, status: 500, text: async () => 'err' }) });
+  // v3.24.16: 500 di-retry 3x (sleep instan di test) — tetap gagal → http_500
+  let calls = 0;
+  const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', {
+    sleepImpl: async () => {},
+    fetchImpl: async () => { calls++; return { ok: false, status: 500, text: async () => 'err' }; }
+  });
   ok(r.ok === false && r.error === 'http_500', 'HTTP 500 → error http_500');
+  ok(calls === 3 && r.attempts === 3, 'HTTP 500 di-retry 3x');
 }
 {
-  const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', { fetchImpl: async () => { throw new Error('offline'); } });
+  const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', { sleepImpl: async () => {}, fetchImpl: async () => { throw new Error('offline'); } });
   ok(r.ok === false && r.error.startsWith('network:'), 'fetch throw → error network');
+}
+{
+  // v3.24.16: 500, 500, lalu 200 → sukses (inilah kasus laporan user)
+  let calls = 0;
+  const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', {
+    sleepImpl: async () => {},
+    fetchImpl: async () => { calls++; return calls < 3 ? { ok: false, status: 500, text: async () => 'x' } : { ok: true, text: async () => 'https://litter.catbox.moe/ok.zip' }; }
+  });
+  ok(r.ok === true && r.url === 'https://litter.catbox.moe/ok.zip' && calls === 3, 'flaky 500,500,200 → sukses di percobaan 3');
+}
+{
+  // v3.24.16: 400 TIDAK di-retry (kesalahan request, bukan server)
+  let calls = 0;
+  const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', {
+    sleepImpl: async () => {},
+    fetchImpl: async () => { calls++; return { ok: false, status: 400, text: async () => 'bad' }; }
+  });
+  ok(r.ok === false && r.error === 'http_400' && calls === 1, 'HTTP 400 → 1x percobaan, tanpa retry');
+}
+{
+  // v3.24.16: jeda backoff 1s/2s/4s dipakai berurutan
+  const waits = [];
+  let calls = 0;
+  await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', {
+    sleepImpl: async (ms) => { waits.push(ms); },
+    fetchImpl: async () => { calls++; return { ok: false, status: 503, text: async () => 'x' }; }
+  });
+  ok(calls === 3 && JSON.stringify(waits) === '[1000,2000]', 'backoff 1s lalu 2s (tanpa tunggu ke-3)');
 }
 {
   const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', { fetchImpl: async () => ({ ok: true, text: async () => '<html>oops</html>' }) });

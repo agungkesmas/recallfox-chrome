@@ -7368,7 +7368,7 @@ function saveFileUploadSheet() {
           const up = await uploadToTempHost(blobForTemp, _fileName, durId);
           if (!up.ok) {
             console.error('[RecallFox] Temp upload gagal:', up.error);
-            toast('⚠ Upload sementara gagal (' + up.error + ') — coba lagi atau pakai tujuan Database', false);
+            toast('⚠ Upload sementara gagal (' + up.error + ((up.attempts > 1) ? ', server sibuk — sudah dicoba ' + up.attempts + 'x' : '') + ') — coba lagi atau pakai tujuan Database', false);
             btn.textContent = ICONS.check + 'Simpan File'; btn.disabled = false;
             return;
           }
