@@ -66,10 +66,18 @@ console.log('— uploadToTempHost (mock fetch) —');
   let calls = 0;
   const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', {
     sleepImpl: async () => {},
-    fetchImpl: async () => { calls++; return { ok: false, status: 500, text: async () => 'err' }; }
+    fetchImpl: async () => { calls++; return { ok: false, status: 500, text: async () => '' }; }
   });
-  ok(r.ok === false && r.error === 'http_500', 'HTTP 500 → error http_500');
+  ok(r.ok === false && r.error === 'http_500', 'HTTP 500 tanpa body → error http_500');
   ok(calls === 3 && r.attempts === 3, 'HTTP 500 di-retry 3x');
+}
+{
+  // v3.24.17: body error server ditangkap (diagnosis kasus user)
+  const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', {
+    sleepImpl: async () => {},
+    fetchImpl: async () => ({ ok: false, status: 500, text: async () => 'rate limited, slow down' })
+  });
+  ok(r.ok === false && r.error === 'http_500: rate limited, slow down', 'body error server ikut di error');
 }
 {
   const r = await uploadToTempHost(new Blob(["x"]), 'a.zip', '24h', { sleepImpl: async () => {}, fetchImpl: async () => { throw new Error('offline'); } });
@@ -91,7 +99,7 @@ console.log('— uploadToTempHost (mock fetch) —');
     sleepImpl: async () => {},
     fetchImpl: async () => { calls++; return { ok: false, status: 400, text: async () => 'bad' }; }
   });
-  ok(r.ok === false && r.error === 'http_400' && calls === 1, 'HTTP 400 → 1x percobaan, tanpa retry');
+  ok(r.ok === false && r.error.startsWith('http_400') && calls === 1, 'HTTP 400 → 1x percobaan, tanpa retry');
 }
 {
   // v3.24.16: jeda backoff 1s/2s/4s dipakai berurutan
