@@ -1,7 +1,7 @@
 /**
  * ============================================================================
- * Uji RFMergeEngine v1.0.0 (v3.24.20) — GABUNG PDF dgn pemilihan halaman
- * + halaman pemisah antar berkas.
+ * Uji RFMergeEngine v1.1.0 (v3.24.21) — GABUNG PDF dgn pemilihan halaman
+ * + halaman pembuka (daftar bagian) + halaman pemisah antar berkas.
  * ----------------------------------------------------------------------------
  * Suite ini mengunci perilaku yang diminta user:
  *   1. Dari 2 berkas PDF 10 halaman, hanya 3 halaman per berkas dicentang →
@@ -12,6 +12,9 @@
  *   4. Indeks tak valid (negatif / di luar jangkauan / duplikat) di-clamp.
  *   5. Karakter non-WinAnsi (emoji dll) tidak pernah melempar error pdf-lib.
  *   6. separator:false → gabungan murni tanpa halaman pemisah.
+ *   7. (v3.24.21) cover:true → HALAMAN PEMBUKA di awal berisi "GABUNGAN",
+ *      "DAFTAR BAGIAN", "BAGIAN 1" + nama berkas; cover:false/absen → tanpa
+ *      pembuka; daftar bagian banyak tetap muat 1 halaman + ringkasan.
  *
  * Jalankan: node test/merge-engine.test.mjs
  * ============================================================================
@@ -238,6 +241,70 @@ section('merge — penolakan wajar');
   err = null;
   try { await E.merge({ files: [{ name: 'a.pdf', bytes: new Uint8Array([9, 9, 9]), selected: [0] }] }); } catch (e) { err = e; }
   ok(!!err, 'PDF sampah → error (tidak crash)');
+}
+
+section('merge — cover:true → halaman pembuka daftar bagian (v3.24.21)');
+{
+  const A = await buildNumberedPdf('CA', 10);
+  const B = await buildNumberedPdf('CB', 10);
+  const r = await E.merge({
+    files: [
+      { name: 'tagihan-pasien-a.pdf', bytes: A, selected: [1, 4, 6] },
+      { name: 'tagihan-pasien-b.pdf', bytes: B, selected: [0, 2] }
+    ],
+    separator: true,
+    cover: true
+  });
+  ok(r.cover === 1 && r.pages === 7, '7 halaman (1 pembuka + 3 + pemisah + 2) — hasil: ' + r.pages + '/cover=' + r.cover);
+  const texts = await pageTexts(r.bytes);
+  const c0 = texts[0].replace(/\s+/g, ' ');
+  ok(/G A B U N G A N/.test(texts[0]), 'pembuka berjudul GABUNGAN PDF');
+  ok(/DAFTAR BAGIAN/.test(c0) && /2 berkas, 5 halaman/.test(c0), 'pembuka berisi daftar bagian (2 berkas, 5 halaman)');
+  ok(/BAGIAN\s*1/.test(c0) && /tagihan-pasien-a/.test(c0.toLowerCase()), 'daftar menyebut BAGIAN 1 + nama berkas A');
+  ok(/BAGIAN\s*2/.test(c0) && /tagihan-pasien-b/.test(c0.toLowerCase()), 'daftar menyebut BAGIAN 2 + nama berkas B');
+  ok(/\(3 hlm\)/.test(c0) && /\(2 hlm\)/.test(c0), 'daftar menyebut jumlah halaman per bagian');
+  ok(/CA-HAL2/.test(texts[1]) && /CB-HAL1/.test(texts[5]) && /CB-HAL3/.test(texts[6]), 'isi setelah pembuka tetap urut (A2.. | pemisah | B1,B3)');
+  ok(!/CA-HAL/.test(texts[0]) && !/CB-HAL/.test(texts[0]), 'pembuka tidak mengandung halaman isi');
+  const out = await PDFDocument.load(new Uint8Array(r.bytes).slice());
+  ok(Math.round(out.getPage(0).getWidth()) === 595, 'ukuran pembuka = A4 (mengikuti bagian pertama)');
+}
+
+section('merge — cover default/tanpa opsi → TIDAK ada halaman pembuka');
+{
+  const A = await buildNumberedPdf('NC', 4);
+  const r1 = await E.merge({ files: [{ name: 'a.pdf', bytes: A, selected: [0] }] });
+  ok(r1.cover === 0 && r1.pages === 1, 'cover absen → 1 halaman tanpa pembuka');
+  const r2 = await E.merge({ files: [{ name: 'a.pdf', bytes: A, selected: [0] }], cover: false });
+  ok(r2.cover === 0 && r2.pages === 1, 'cover:false → 1 halaman tanpa pembuka');
+  const texts = await pageTexts(r2.bytes);
+  ok(/NC-HAL1/.test(texts[0]) && !/GABUNGAN/.test(texts[0]), 'hlm-1 langsung isi berkas');
+}
+
+section('merge — cover dgn banyak bagian tetap 1 halaman + ringkasan');
+{
+  const one = await buildNumberedPdf('MN', 1);
+  const files = [];
+  for (let i = 0; i < 60; i++) files.push({ name: 'berkas-sangat-panjang-nomor-' + (i + 1) + '-tagihan-rs-rincian-kwitansi.pdf', bytes: one, selected: [0] });
+  const r = await E.merge({ files, separator: true, cover: true });
+  ok(r.cover === 1, 'cover menyala');
+  ok(r.pages === 120, '60 bagian + 59 pemisah + 1 pembuka = 120 halaman — hasil: ' + r.pages);
+  const texts = await pageTexts(r.bytes);
+  const c0 = texts[0].replace(/\s+/g, ' ');
+  ok(/DAFTAR BAGIAN/.test(c0), 'pembuka tetap satu halaman');
+  ok(/bagian lainnya/.test(c0), 'bagian yang tak muat diringkas "... +N bagian lainnya"');
+  ok(/BAGIAN\s*1/.test(c0) && !/BAGIAN\s*40/.test(c0), 'urutan daftar wajar (BAGIAN 1 ada, BAGIAN 40 tak muat)');
+}
+
+section('merge — cover dgn nama emoji/ekstrem tidak throw');
+{
+  const A = await buildNumberedPdf('EC', 2);
+  const r = await E.merge({
+    files: [{ name: '🏥 “RINCIAN” — ' + 'y'.repeat(140) + '.pdf', bytes: A, selected: [0, 1] }],
+    cover: true
+  });
+  ok(r.pages === 3 && r.cover === 1, 'pembuka + 2 isi = 3 halaman, tanpa throw');
+  const texts = await pageTexts(r.bytes);
+  ok(/G A B U N G A N/.test(texts[0]), 'pembuka tergambar dgn nama tersanitasi');
 }
 
 // ---------------------------------------------------------------- hasil

@@ -1,13 +1,17 @@
 /**
  * ============================================================================
- * RecallFox v3.24.20 — GABUNG PDF (offline-first)
+ * RecallFox v3.24.21 — GABUNG PDF (offline-first)
  * pdftool/merge-engine.js — Mesin gabung PDF dengan pemilihan halaman
- *                            per-berkas + halaman pemisah antar berkas.
+ *        per-berkas + halaman pembuka (daftar bagian) + halaman pemisah.
  * ----------------------------------------------------------------------------
  * Kebutuhan user (v3.24.20): menyatukan beberapa berkas PDF tetapi HANYA
  * halaman yang dicentang dari tiap berkas (mis. dari berkas tagihan RS 10
  * halaman, ambil 3 halaman "rincian kwitansi" saja), dengan halaman pemisah
- * (section) di antara berkas yang menyumbang halaman:
+ * (section) di antara berkas yang menyumbang halaman.
+ *
+ * Revisi v3.24.21 (permintaan user): opsional HALAMAN PEMBUKA di halaman
+ * pertama hasil gabungan — berisi judul, tanggal, dan daftar "BAGIAN n —
+ * nama berkas (k hlm)" supaya verifikasi isi gabungan lebih mudah.
  *
  *   berkas A (10 hlm) → centang [1,4,6]  ┐
  *                                        ├─ hasil: A2 A5 A7 │ PEMISAH │ B1 B3
@@ -269,21 +273,111 @@
   }
 
   // --------------------------------------------------------------------------
+  // Halaman pembuka (cover) — daftar bagian di halaman pertama hasil gabung
+  // --------------------------------------------------------------------------
+
+  /**
+   * Gambar HALAMAN PEMBUKA hasil gabungan (permintaan v3.24.21): judul,
+   * tanggal, dan daftar "BAGIAN n — nama berkas (k hlm)" — memudahkan
+   * verifikasi. Ukuran halaman = ukuran halaman terpilih pertama dari
+   * bagian pertama (menyatu rapi dgn isi setelahnya).
+   * Satu baris per bagian (nama dibungkus 1 baris + ellipsis); bila daftar
+   * melebihi tinggi halaman, sisanya diringkas "… +N bagian lainnya".
+   * Semua teks lewat sanitizeWinAnsi (anti-throw WinAnsi).
+   */
+  async function drawCoverPage(out, fonts, opts) {
+    const { parts, dateLabel, size } = opts;
+    const W = Math.max(72, size.width);
+    const H = Math.max(72, size.height);
+    const page = out.addPage([W, H]);
+    const M = Math.min(64, W * 0.12);
+    const C = {
+      border: pdfLibRgb(0.78, 0.80, 0.85),
+      soft: pdfLibRgb(0.90, 0.91, 0.95),
+      dark: pdfLibRgb(0.13, 0.16, 0.23),
+      mid: pdfLibRgb(0.42, 0.45, 0.52),
+      light: pdfLibRgb(0.62, 0.65, 0.72)
+    };
+
+    // Bingkai tipis (sama dgn halaman pemisah — tinta hemat saat dicetak).
+    const pad = Math.min(28, W * 0.055);
+    page.drawRectangle({
+      x: pad, y: pad, width: W - pad * 2, height: H - pad * 2,
+      borderColor: C.border, borderWidth: 1
+    });
+
+    const totalSel = parts.reduce((a, p) => a + p.idx.length, 0);
+    let y = H - pad - 56;
+    page.drawText('G A B U N G A N   P D F', {
+      x: M, y, size: 18, font: fonts.bold, color: C.dark
+    });
+    y -= 18;
+    page.drawText(sanitizeWinAnsi(dateLabel), {
+      x: M, y, size: 10.5, font: fonts.reg, color: C.mid
+    });
+    y -= 10;
+    page.drawLine({ start: { x: M, y }, end: { x: W - M, y }, thickness: 0.8, color: C.soft });
+    y -= 22;
+    page.drawText(sanitizeWinAnsi(
+      'DAFTAR BAGIAN — ' + parts.length + ' berkas, ' + totalSel + ' halaman'
+    ), { x: M, y, size: 11, font: fonts.bold, color: C.mid });
+    y -= 18;
+
+    const bottomLimit = pad + 40;
+    let shown = 0;
+    for (const p of parts) {
+      if (y < bottomLimit) break;
+      const label = 'BAGIAN ' + (shown + 1);
+      const count = '(' + p.idx.length + ' hlm)';
+      let labelW = 0, countW = 0;
+      try {
+        labelW = fonts.bold.widthOfTextAtSize(label, 9.5) + 8;
+        countW = fonts.reg.widthOfTextAtSize('  ' + count, 10) + 8;
+      } catch (e) { labelW = 52; countW = 40; }
+      const maxChars = Math.max(12, Math.floor((W - M * 2 - labelW - countW) / 5.6));
+      const nameLines = wrapLabel(p.name, maxChars, 1);
+      page.drawText(label, { x: M, y, size: 9.5, font: fonts.bold, color: C.mid });
+      page.drawText(sanitizeWinAnsi(nameLines[0]), {
+        x: M + labelW, y, size: 10.5, font: fonts.reg, color: C.dark
+      });
+      if (W - M - countW > M + labelW) {
+        page.drawText(sanitizeWinAnsi(count), {
+          x: W - M - countW + 8, y, size: 10, font: fonts.reg, color: C.mid
+        });
+      }
+      y -= 17;
+      shown++;
+    }
+    if (shown < parts.length && y >= bottomLimit - 17) {
+      page.drawText(sanitizeWinAnsi('... +' + (parts.length - shown) + ' bagian lainnya'), {
+        x: M, y, size: 9.5, font: fonts.reg, color: C.mid
+      });
+    }
+    page.drawText(sanitizeWinAnsi(FOOTER_TEXT), {
+      x: M, y: pad + 12, size: 8, font: fonts.reg, color: C.light
+    });
+    return page;
+  }
+
+  // --------------------------------------------------------------------------
   // Gabung: susun PDF keluaran
   // --------------------------------------------------------------------------
 
   /**
-   * Gabungkan berkas-berkas: hanya halaman terpilih, opsional pemisah antar
-   * berkas penyumbang.
+   * Gabungkan berkas-berkas: hanya halaman terpilih, opsional halaman
+   * pembuka (daftar bagian) di awal + pemisah antar berkas penyumbang.
    * @param {Object} opts
    * @param {Array<{name:string, bytes:Uint8Array, selected:number[]}>} opts.files
    * @param {boolean} [opts.separator=true] sisipkan halaman pemisah antar berkas
-   * @returns {Promise<{bytes:Uint8Array, pages:number, parts:number, separators:number}>}
+   * @param {boolean} [opts.cover=false] sisipkan halaman pembuka daftar bagian
+   * @returns {Promise<{bytes:Uint8Array, pages:number, parts:number,
+   *                    separators:number, cover:number}>}
    */
   async function merge(opts) {
     const pdfLib = requirePdfLib();
     const files = (opts && Array.isArray(opts.files)) ? opts.files : [];
     const separator = !(opts && opts.separator === false);
+    const withCover = !!(opts && opts.cover);
     if (!files.length) throw EngineError('Tidak ada berkas untuk digabung.', 'nofiles');
 
     // Siapkan bagian yang benar-benar menyumbang halaman.
@@ -304,6 +398,17 @@
     const dateLabel = new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
     let separators = 0;
+    let coverAdded = 0;
+    // Halaman pembuka (daftar bagian) — SEBELUM bagian pertama (v3.24.21).
+    if (withCover) {
+      const firstSel = parts[0].src.getPage(parts[0].idx[0]);
+      await drawCoverPage(out, fonts, {
+        parts,
+        dateLabel,
+        size: firstSel.getSize()
+      });
+      coverAdded = 1;
+    }
     for (let p = 0; p < parts.length; p++) {
       const part = parts[p];
       if (separator && p > 0) {
@@ -328,7 +433,8 @@
       bytes: new Uint8Array(bytes),
       pages: out.getPageCount(),
       parts: parts.length,
-      separators
+      separators,
+      cover: coverAdded
     };
   }
 
@@ -343,7 +449,7 @@
     // konstanta (untuk UI/tests)
     CAP_SNIPPET_PAGES, FOOTER_TEXT,
     // versi mesin
-    ENGINE_VERSION: '1.0.0 (v3.24.20)',
+    ENGINE_VERSION: '1.1.0 (v3.24.21)',
   };
 
   global.RFMergeEngine = API;

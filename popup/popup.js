@@ -13069,7 +13069,7 @@ async function renderPdfSortPage(B) {
   setTab(last);
   rfRenderBillPdfPane(panePdf);   // tab 1: Urutkan PDF (v3.24.9 — alur tidak diubah)
   rfRenderRekonPane(paneRek);     // tab 2: Rekonsiliasi (v3.24.10)
-  rfRenderMergePane(paneGab);     // tab 3: Gabung PDF (v3.24.20)
+  rfRenderMergePane(paneGab);     // tab 3: Gabung PDF (v3.24.21 — wizard)
 }
 
 // --- Tab 1: Urutkan PDF (konten lama v3.24.9, tanpa muat-runtime di awal) ---
@@ -13506,7 +13506,7 @@ async function rfRekonDownloadBlob(blob, fileName) {
 }
 
 // ============================================================================
-// v3.24.20 — GABUNG PDF (offline-first) — tab ke-3 "Olah File Tagihan"
+// v3.24.21 — GABUNG PDF (offline-first) — tab ke-3 "Olah File Tagihan"
 // ============================================================================
 // Satukan beberapa berkas PDF tetapi HANYA halaman yang dicentang dari tiap
 // berkas, dengan halaman pemisah (section) antar berkas penyumbang.
@@ -13514,19 +13514,29 @@ async function rfRekonDownloadBlob(blob, fileName) {
 // penunjang medis — untuk verifikasi cukup halaman "rincian kwitansi" saja
 // dari tiap berkas, digabung satu PDF dgn pemisah antar dokumen.
 //
-//   1) User pilih beberapa PDF sekaligus (input multiple).
-//   2) Tiap berkas dianalisa (pdf.js lokal): jumlah halaman + cuplikan teks
-//      per halaman (membantu mengenali "RINCIAN KWITANSI" dsb.) + thumbnail
-//      halaman (canvas → JPEG, antrian latar, cache di memori).
-//   3) User centang halaman yang diinginkan per berkas (default: KOSONG),
-//      atur urutan berkas (↑ ↓), buang berkas (✕).
-//   4) Opsi halaman pemisah (default ON): "BAGIAN n" + nama berkas +
-//      ringkasan halaman diambil — disisipkan HANYA antar berkas penyumbang,
-//      ukurannya mengikuti berkas berikutnya (pdf-lib, teks WinAnsi aman).
-//   5) Unduh "<berkas pertama> - GABUNG.pdf" via downloads API (blob lokal).
+// ALUR WIZARD (revisi v3.24.21 atas permintaan user — sebelumnya semua kartu
+// tampil sekaligus, sekarang SATU berkas per layar):
+//   1) Pilih beberapa berkas PDF sekaligus (judul = nama berkas).
+//   2) Layar "pilih halaman" menampilkan SATU berkas pada satu waktu
+//      (berkas A dulu) → centang halaman yang mau diambil.
+//   3) [Selanjutnya →] beralih ke berkas B, dst. — di berkas terakhir
+//      tombol berubah jadi [✓ Selesai — lanjut gabung].
+//   4) [← Sebelumnya] dan dropdown judul berkas di atas untuk lompat &
+//      koreksi pilihan kapan pun.
+//   5) Layar ringkasan: daftar bagian + perkiraan jumlah halaman →
+//      [🔗 Gabungkan & unduh] / [← Kembali pilih halaman].
+//   6) Hasil PDF: (opsional) halaman pembuka "daftar bagian" + halaman
+//      terpilih tiap berkas + halaman pemisah ANTAR berkas.
 //
-// Mesin  : pdftool/merge-engine.js (global RFMergeEngine) — uji Node 43/43 PASS
-// Vendor : pdf.js + pdf-lib — DIMUAT ULANG MALAS via rfPdfSortEnsureRuntime
+// Teknis:
+//   - Analisa (pdf.js lokal): jumlah halaman + cuplikan teks per halaman +
+//      thumbnail (canvas → JPEG, antrian latar, cache memori).
+//   - Checkbox halaman di-update SURGICAL (tanpa render ulang grid) supaya
+//      thumbnail tidak kedip & posisi scroll stabil.
+//   - Unduh via downloads API (rfRekonDownloadBlob — blob lokal, offline).
+//
+// Mesin  : pdftool/merge-engine.js (global RFMergeEngine, opsi `cover` baru)
+// Vendor : pdf.js + pdf-lib — DIMUAT MALAS via rfPdfSortEnsureRuntime
 //          (idempoten, berbagi cache dgn tab Urutkan) + engine gabung.
 // GUARD  : alur tab 1 (Urutkan) & tab 2 (Rekonsiliasi) TIDAK disentuh.
 // ============================================================================
@@ -13541,7 +13551,8 @@ const RF_MERGE = {
 const rfMergeState = {
   files: [],      // {id,name,size,bytes,numPages,snippets,selected:Set,thumbs:{},thumbsState,err,abort}
   busy: false,
-  seq: 1
+  seq: 1,
+  step: 'pick'    // 'pick' | indeks berkas aktif (angka) | 'final'
 };
 
 // --- Muat runtime gabung (vendor PDF + engine) sekali; idempoten ---
@@ -13557,28 +13568,18 @@ function rfMergeEnsureRuntime() {
   return rfMergeRuntimePromise;
 }
 
-// --- Tab 3: Gabung PDF — kartu pilih berkas + daftar + opsi (shell memanggil) ---
+// --- Tab 3: Gabung PDF — shell pane (dipanggil renderPdfSortPage) ---
 function rfRenderMergePane(P) {
   P.innerHTML =
     '<div class="card">' +
       '<h3>Gabung beberapa PDF — pilih halamannya</h3>' +
-      '<div style="font-size:11.5px;color:var(--text-2);line-height:1.55;margin-bottom:9px">Satukan beberapa berkas PDF tapi <b>hanya halaman yang dicentang</b> dari tiap berkas — mis. dari 10 halaman ambil 3 halaman <i>rincian kwitansi</i> saja — lengkap dengan <b>halaman pemisah antar berkas</b>. <b>100% offline</b>, tanpa server, tanpa login — tidak ada data yang dikirim ke mana pun.</div>' +
+      '<div style="font-size:11.5px;color:var(--text-2);line-height:1.55;margin-bottom:9px">Satukan beberapa berkas PDF tapi <b>hanya halaman yang dicentang</b> dari tiap berkas — mis. dari 10 halaman ambil 3 halaman <i>rincian kwitansi</i> saja — lengkap dgn <b>halaman pembuka</b> &amp; <b>halaman pemisah antar berkas</b>. Alurnya langkah demi langkah: <b>satu berkas per layar</b>. <b>100% offline</b>, tanpa server, tanpa login — tidak ada data yang dikirim ke mana pun.</div>' +
       '<input type="file" id="rfMgFile" multiple accept="application/pdf,.pdf" style="display:none">' +
       '<button class="btn btn-p" id="rfMgPick" style="width:100%">📄＋ Pilih berkas PDF (bisa banyak)…</button>' +
       '<div id="rfMgState" style="margin-top:10px"></div>' +
     '</div>' +
-    '<div id="rfMgList"></div>' +
-    '<div class="card" id="rfMgOpts" style="margin-bottom:10px;display:none">' +
-      '<h3>Opsi &amp; unduh</h3>' +
-      '<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);cursor:pointer;margin-bottom:8px">' +
-        '<input type="checkbox" id="rfMgSep" checked style="flex:none;accent-color:var(--primary);width:15px;height:15px;margin:0;margin-top:2px">' +
-        '<span style="font-size:11.5px;color:var(--text);line-height:1.5"><b>Halaman pemisah antar berkas</b><br><span style="color:var(--text-2)">Berisi "BAGIAN n" + nama berkas + jumlah halaman yang diambil — pembatas dokumen di dalam PDF gabungan.</span></span>' +
-      '</label>' +
-      '<div id="rfMgBar" style="font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);border-radius:8px;padding:6px 9px;margin-bottom:8px"></div>' +
-      '<button class="btn btn-p" id="rfMgDl" style="width:100%">🔗 Gabungkan &amp; unduh</button>' +
-      '<div id="rfMgDlState" style="margin-top:9px"></div>' +
-    '</div>' +
-    '<div class="hintbox">💡 Contoh: 2 berkas × 10 halaman, ambil 3 halaman dari masing-masing → hasil 7 halaman: 3 + pemisah + 3. Centang <b>hanya yang perlu</b> — halaman tak dicentang tidak ikut. Urutan berkas diatur dgn tombol <b>↑ ↓</b>.</div>';
+    '<div id="rfMgBody"></div>' +
+    '<div class="hintbox">💡 Alur: pilih berkas → centang halaman berkas A → <b>Selanjutnya</b> → berkas B → … → <b>Gabungkan</b>. Koreksi kapan saja lewat <b>← Sebelumnya</b> atau <b>dropdown judul</b> di atas. Urutan berkas diatur di layar "Kelola daftar berkas".</div>';
 
   const input = $('#rfMgFile');
   $('#rfMgPick').addEventListener('click', () => input.click());
@@ -13588,38 +13589,295 @@ function rfRenderMergePane(P) {
     input.value = ''; // reset: pilih berkas yang sama lagi tetap terpicu
   });
 
-  // Delegasi event daftar (tetap hidup walau kartu di-render ulang).
-  $('#rfMgList').addEventListener('change', (ev) => {
-    const cb = ev.target.closest('input[type="checkbox"][data-mgcb]');
-    if (!cb) return;
-    const card = cb.closest('[data-mgcard]');
-    if (!card) return;
-    const f = rfMergeState.files.find((x) => x.id === Number(card.getAttribute('data-mgcard')));
-    if (!f || f.err) return;
-    const i = Number(cb.getAttribute('data-mgcb'));
-    if (cb.checked) f.selected.add(i); else f.selected.delete(i);
-    rfMergeRenderFile(f);        // pakai thumbnail cache → instan, tanpa kedip
-    rfMergeUpdateBar();
-  });
-  $('#rfMgList').addEventListener('click', (ev) => {
-    const btn = ev.target.closest('[data-mgact]');
-    if (!btn) return;
-    const id = Number(btn.getAttribute('data-mgid'));
-    const idx = rfMergeState.files.findIndex((x) => x.id === id);
-    if (idx < 0) return;
-    const f = rfMergeState.files[idx];
-    const act = btn.getAttribute('data-mgact');
-    if (act === 'all' && f.numPages) { for (let i = 0; i < f.numPages; i++) f.selected.add(i); rfMergeRenderFile(f); }
-    else if (act === 'none') { f.selected.clear(); rfMergeRenderFile(f); }
-    else if (act === 'flip' && f.numPages) { for (let i = 0; i < f.numPages; i++) { if (f.selected.has(i)) f.selected.delete(i); else f.selected.add(i); } rfMergeRenderFile(f); }
-    else if (act === 'up' && idx > 0) { rfMergeState.files.splice(idx, 1); rfMergeState.files.splice(idx - 1, 0, f); rfMergeRenderList(); }
-    else if (act === 'down' && idx < rfMergeState.files.length - 1) { rfMergeState.files.splice(idx, 1); rfMergeState.files.splice(idx + 1, 0, f); rfMergeRenderList(); }
-    else if (act === 'del') { f.abort = true; rfMergeState.files.splice(idx, 1); rfMergeRenderList(); }
-    rfMergeUpdateBar();
-  });
+  // Delegasi event pada body (tetap hidup walau isi view di-render ulang).
+  const body = $('#rfMgBody');
+  body.addEventListener('click', rfMergeOnBodyClick);
+  body.addEventListener('change', rfMergeOnBodyChange);
 
-  $('#rfMgDl').addEventListener('click', rfMergeDownload);
+  rfMergeRenderBody(true);
 }
+
+// --- Delegasi klik: navigasi wizard + aksi per-berkas ---
+function rfMergeOnBodyClick(ev) {
+  const btn = ev.target.closest('[data-mgact]');
+  if (!btn || rfMergeState.busy) return;
+  const act = btn.getAttribute('data-mgact');
+  if (act === 'go') { rfMergeGoWizard(); return; }
+  if (act === 'next') { rfMergeStepNext(); return; }
+  if (act === 'prev') { rfMergeStepPrev(); return; }
+  if (act === 'backpick') { rfMergeState.step = 'pick'; rfMergeRenderBody(true); return; }
+  if (act === 'backwiz') { rfMergeState.step = rfMergeDefaultWizardIdx(true); rfMergeRenderBody(true); return; }
+  if (act === 'gabung') { rfMergeDownload(); return; }
+  const id = Number(btn.getAttribute('data-mgid'));
+  const idx = rfMergeState.files.findIndex((x) => x.id === id);
+  if (idx < 0) return;
+  const f = rfMergeState.files[idx];
+  if (act === 'all' && f.numPages) { for (let i = 0; i < f.numPages; i++) f.selected.add(i); rfMergeAfterCountChange(f); }
+  else if (act === 'none') { f.selected.clear(); rfMergeAfterCountChange(f); }
+  else if (act === 'flip' && f.numPages) { for (let i = 0; i < f.numPages; i++) { if (f.selected.has(i)) f.selected.delete(i); else f.selected.add(i); } rfMergeAfterCountChange(f); }
+  else if (act === 'up' || act === 'down') {
+    const j = act === 'up' ? idx - 1 : idx + 1;
+    if (j < 0 || j >= rfMergeState.files.length) return;
+    rfMergeState.files.splice(idx, 1);
+    rfMergeState.files.splice(j, 0, f);
+    rfMergeRenderBody(false);   // nomor di semua tampilan ikut berubah
+  }
+  else if (act === 'del') {
+    f.abort = true;
+    rfMergeState.files.splice(idx, 1);
+    rfMergeNormalizeStep();
+    rfMergeRenderBody(true);
+  }
+}
+
+// --- Delegasi change: dropdown judul + checkbox halaman + opsi ringkasan ---
+function rfMergeOnBodyChange(ev) {
+  const t = ev.target;
+  if (!t) return;
+  if (t.id === 'rfMgJump') {
+    const v = t.value;
+    if (v === 'pick') rfMergeState.step = 'pick';
+    else {
+      const idx = rfMergeState.files.findIndex((x) => x.id === Number(v));
+      if (idx < 0) return;
+      rfMergeState.step = idx;
+    }
+    rfMergeRenderBody(true);
+    return;
+  }
+  if (t.id === 'rfMgCover' || t.id === 'rfMgSep') { rfMergeFinalEstimate(); return; }
+  const cb = t.closest ? t.closest('input[data-mgcb]') : null;
+  if (!cb) return;
+  const cell = cb.closest('[data-mgpage]');
+  if (!cell) return;
+  const f = rfMergeState.files.find((x) => x.id === Number(cell.getAttribute('data-mgfile')));
+  if (!f || f.err || !f.numPages) return;
+  const i = Number(cb.getAttribute('data-mgcb'));
+  if (cb.checked) f.selected.add(i); else f.selected.delete(i);
+  rfMergePaintCell(cell, i, cb.checked);   // surgical — thumbnail tidak tersentuh
+  rfMergeSyncCounters(f);
+}
+
+// --- Update visual SATU sel halaman (border + tanda ☑/☐) tanpa render ulang ---
+function rfMergePaintCell(cell, i, on) {
+  try { cell.style.borderColor = on ? 'var(--primary)' : 'transparent'; } catch (_) {}
+  const mark = cell.querySelector('[data-mgmark]');
+  if (mark) {
+    mark.textContent = (on ? '☑' : '☐') + ' H' + (i + 1);
+    mark.style.color = on ? 'var(--primary)' : 'var(--muted)';
+  }
+}
+
+// --- Sinkronkan semua penghitung berkas (badge, dropdown, baris kelola, dot) ---
+function rfMergeSyncCounters(f) {
+  const badge = document.getElementById('rfMgBadge-' + f.id);
+  if (badge && f.numPages) badge.textContent = f.selected.size + '/' + f.numPages;
+  const opt = document.getElementById('rfMgOpt-' + f.id);
+  if (opt) opt.textContent = rfMergeJumpLabel(f, rfMergeState.files.indexOf(f));
+  const meta = document.getElementById('rfMgMeta-' + f.id);
+  if (meta) meta.innerHTML = rfMergePickMetaHtml(f);
+  const dot = document.getElementById('rfMgDot-' + f.id);
+  if (dot && !f.err) dot.style.background = f.selected.size ? 'var(--green)' : 'var(--border)';
+}
+
+// --- Setelah Semua/Nihil/Balik: perbarui grid bila sedang terlihat + counter ---
+function rfMergeAfterCountChange(f) {
+  if (typeof rfMergeState.step === 'number' && rfMergeState.files[rfMergeState.step] === f) {
+    rfMergeReplaceGrid(f);
+  }
+  rfMergeSyncCounters(f);
+}
+
+function rfMergeReplaceGrid(f) {
+  const wrap = $('#rfMgGridWrap');
+  if (wrap) wrap.innerHTML = rfMergeGridHtml(f);
+}
+
+// --- Navigasi wizard ---
+function rfMergeDefaultWizardIdx(fromBack) {
+  const fs = rfMergeState.files;
+  if (!fs.length) return 'pick';
+  if (!fromBack) {
+    const i = fs.findIndex((f) => !f.err && f.numPages && !f.selected.size);
+    if (i >= 0) return i;
+  }
+  return fs.length - 1;
+}
+function rfMergeGoWizard() {
+  rfMergeState.step = rfMergeDefaultWizardIdx(false);
+  rfMergeRenderBody(true);
+}
+function rfMergeStepNext() {
+  const n = rfMergeState.files.length;
+  if (typeof rfMergeState.step !== 'number') return;
+  rfMergeState.step = rfMergeState.step >= n - 1 ? 'final' : rfMergeState.step + 1;
+  rfMergeRenderBody(true);
+}
+function rfMergeStepPrev() {
+  if (typeof rfMergeState.step !== 'number') return;
+  rfMergeState.step = Math.max(0, rfMergeState.step - 1);
+  rfMergeRenderBody(true);
+}
+function rfMergeNormalizeStep() {
+  const n = rfMergeState.files.length;
+  if (!n) { rfMergeState.step = 'pick'; return; }
+  if (rfMergeState.step === 'final') { if (!rfMergeState.files.some((f) => !f.err && f.selected.size)) rfMergeState.step = rfMergeDefaultWizardIdx(false); return; }
+  if (typeof rfMergeState.step === 'number') rfMergeState.step = Math.min(rfMergeState.step, n - 1);
+}
+
+// --- Render body sesuai step ---
+function rfMergeRenderBody(scrollTop) {
+  const body = $('#rfMgBody');
+  if (!body) return;
+  if (rfMergeState.step === 'final') body.innerHTML = rfMergeViewFinalHtml();
+  else if (typeof rfMergeState.step === 'number') body.innerHTML = rfMergeViewWizardHtml();
+  else body.innerHTML = rfMergeViewPickHtml();
+  if (rfMergeState.step === 'final') rfMergeFinalEstimate();
+  if (scrollTop) { try { window.scrollTo(0, 0); } catch (_) {} }
+}
+
+// ============================ VIEW 1: PILIH BERKAS ==========================
+
+function rfMergePickMetaHtml(f) {
+  if (f.err) return '<span style="color:var(--danger);font-weight:700">⚠ ' + esc(f.err) + '</span>';
+  if (!f.numPages) return '<span style="color:var(--muted)">⏳ membaca…</span>';
+  return '<span style="color:var(--text-2)">' + f.numPages + ' halaman · <b style="color:var(--primary)">' + f.selected.size + ' dipilih</b></span>';
+}
+
+function rfMergePickRowHtml(f, i, n) {
+  return '<div class="card" data-mgrow="' + f.id + '" style="margin-bottom:8px;padding:9px 10px">' +
+    '<div style="display:flex;gap:6px;align-items:center">' +
+      '<span style="flex:1;min-width:0;font-weight:700;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escAttr(f.name) + '">' + (i + 1) + '. 📄 ' + esc(f.name) + '</span>' +
+      (i > 0 ? '<button class="btn" data-mgact="up" data-mgid="' + f.id + '" title="Naikkan urutan" style="flex:none;font-size:10.5px;padding:4px 8px">↑</button>' : '') +
+      (i < n - 1 ? '<button class="btn" data-mgact="down" data-mgid="' + f.id + '" title="Turunkan urutan" style="flex:none;font-size:10.5px;padding:4px 8px">↓</button>' : '') +
+      '<button class="btn" data-mgact="del" data-mgid="' + f.id + '" title="Buang dari daftar" style="flex:none;font-size:10.5px;padding:4px 8px">✕</button>' +
+    '</div>' +
+    '<div id="rfMgMeta-' + f.id + '" style="margin-top:4px;font-size:10.5px">' + rfMergePickMetaHtml(f) + '</div>' +
+  '</div>';
+}
+
+function rfMergeViewPickHtml() {
+  const fs = rfMergeState.files;
+  const rows = fs.length
+    ? fs.map((f, i) => rfMergePickRowHtml(f, i, fs.length)).join('')
+    : '<div class="card" style="padding:14px;text-align:center;color:var(--muted);font-size:11.5px;margin-bottom:10px">Belum ada berkas — tekan tombol <b>Pilih berkas PDF</b> di atas.</div>';
+  const anyOk = fs.some((f) => !f.err);
+  return rows +
+    '<div class="card" style="margin-bottom:10px">' +
+      (fs.length ? '<div style="font-size:11px;color:var(--text-2);margin-bottom:8px;line-height:1.5">' + fs.length + ' berkas. Urutan = urutan di PDF gabungan — atur dgn <b>↑ ↓</b>. Lanjut untuk mencentang halaman <b>satu berkas per layar</b>.</div>' : '') +
+      '<button class="btn btn-p" data-mgact="go" style="width:100%"' + (anyOk ? '' : ' disabled') + '>Lanjut pilih halaman →</button>' +
+    '</div>';
+}
+
+// ====================== VIEW 2: WIZARD SATU BERKAS ==========================
+
+function rfMergeJumpLabel(f, i) {
+  return (i + 1) + '. ' + f.name + (f.numPages ? ' (' + f.selected.size + '/' + f.numPages + ')' : '');
+}
+
+function rfMergeViewWizardHtml() {
+  const fs = rfMergeState.files;
+  if (!fs.length) { rfMergeState.step = 'pick'; return rfMergeViewPickHtml(); }
+  if (rfMergeState.step >= fs.length) rfMergeState.step = fs.length - 1;
+  const idx = rfMergeState.step;
+  const f = fs[idx];
+  const opts = '<option value="pick">⌂ Kelola daftar berkas…</option>' +
+    fs.map((x, i) => '<option id="rfMgOpt-' + x.id + '" value="' + x.id + '"' + (x === f ? ' selected' : '') + '>' + esc(rfMergeJumpLabel(x, i)) + '</option>').join('');
+  const dots = fs.map((x, i) =>
+    '<span id="rfMgDot-' + x.id + '" title="' + escAttr(x.name) + '" style="display:inline-block;width:8px;height:8px;border-radius:50%;margin:0 2px;background:' +
+    (i === idx ? 'var(--primary)' : (x.err ? 'var(--danger)' : (x.selected.size ? 'var(--green)' : 'var(--border)'))) + '"></span>'
+  ).join('');
+  return '<div class="card" style="margin-bottom:10px">' +
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:7px">' +
+      '<span style="font-size:10px;font-weight:800;color:var(--text-2);letter-spacing:.4px">BERKAS ' + (idx + 1) + ' DARI ' + fs.length + '</span>' +
+      '<span style="flex:1"></span>' + dots +
+    '</div>' +
+    '<select id="rfMgJump" title="Lompat ke berkas lain / koreksi" style="width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:11.5px;margin-bottom:8px">' + opts + '</select>' +
+    (f.err ? '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger);margin:0 0 8px">⚠ ' + esc(f.err) + '<br>Buang berkas ini (✕) lalu pilih ulang bila perlu.</div>' : '') +
+    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">' +
+      '<span style="flex:1;min-width:0;font-weight:700;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escAttr(f.name) + '">📄 ' + esc(f.name) + '</span>' +
+      '<span id="rfMgBadge-' + f.id + '" style="flex:none;font-size:10px;font-weight:800;color:var(--primary);background:var(--primary-soft);border-radius:7px;padding:3px 7px;font-family:var(--mono)">' + (f.numPages ? f.selected.size + '/' + f.numPages : '…') + '</span>' +
+      '<button class="btn" data-mgact="del" data-mgid="' + f.id + '" title="Buang berkas ini" style="flex:none;font-size:10.5px;padding:4px 8px">✕</button>' +
+    '</div>' +
+    (f.err ? '' :
+      '<div style="display:flex;gap:5px;margin-bottom:8px">' +
+        '<button class="btn" data-mgact="all" data-mgid="' + f.id + '" style="flex:1;font-size:10.5px;padding:5px 4px">Semua</button>' +
+        '<button class="btn" data-mgact="none" data-mgid="' + f.id + '" style="flex:1;font-size:10.5px;padding:5px 4px">Nihil</button>' +
+        '<button class="btn" data-mgact="flip" data-mgid="' + f.id + '" style="flex:1;font-size:10.5px;padding:5px 4px">Balik</button>' +
+      '</div>' +
+      '<div id="rfMgGridWrap">' + rfMergeGridHtml(f) + '</div>') +
+  '</div>' +
+  '<div class="card" style="margin-bottom:10px;display:flex;gap:7px">' +
+    '<button class="btn" data-mgact="prev" style="flex:1"' + (idx > 0 ? '' : ' disabled') + '>← Sebelumnya</button>' +
+    '<button class="btn btn-p" data-mgact="next" style="flex:1.4">' + (idx < fs.length - 1 ? 'Selanjutnya →' : '✓ Selesai — lanjut gabung') + '</button>' +
+  '</div>';
+}
+
+// ======================== VIEW 3: RINGKASAN & GABUNG ========================
+
+function rfMergePageListLabel(f) {
+  const arr = Array.from(f.selected).sort((a, b) => a - b).map((i) => 'H' + (i + 1));
+  if (arr.length <= 8) return arr.join(', ');
+  return arr.slice(0, 8).join(', ') + ' …+' + (arr.length - 8);
+}
+
+function rfMergeViewFinalHtml() {
+  const fs = rfMergeState.files;
+  if (!fs.length) { rfMergeState.step = 'pick'; return rfMergeViewPickHtml(); }
+  const pending = fs.some((f) => !f.err && !f.numPages);
+  const parts = fs.filter((f) => !f.err && f.selected.size);
+  const rows = fs.map((f, i) => {
+    const meta = f.err ? '<span style="color:var(--danger)">⚠ ' + esc(f.err) + '</span>'
+      : !f.numPages ? '<span style="color:var(--muted)">⏳ masih dibaca…</span>'
+      : f.selected.size
+        ? '<span style="color:var(--text-2)">' + f.selected.size + ' halaman — ' + esc(rfMergePageListLabel(f)) + '</span>'
+        : '<span style="color:var(--muted)">dilewati — tidak ada halaman dicentang</span>';
+    return '<div style="display:flex;gap:7px;padding:7px 0;border-bottom:1px solid var(--border);font-size:11.5px">' +
+      '<span style="flex:none;font-weight:800;color:var(--primary);font-family:var(--mono);padding-top:1px">B' + (i + 1) + '</span>' +
+      '<span style="flex:1;min-width:0"><b style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escAttr(f.name) + '">' + esc(f.name) + '</b>' + meta + '</span>' +
+    '</div>';
+  }).join('');
+  return '<div class="card" style="margin-bottom:10px">' +
+    '<h3>Ringkasan — siap digabung</h3>' +
+    (pending ? '<div class="hintbox" style="background:var(--amber-soft);color:var(--amber);margin-bottom:8px">⏳ Ada berkas yang masih dibaca — tunggu sebentar, tombol gabung menyala sendiri setelah selesai.</div>' : '') +
+    (!parts.length ? '<div class="hintbox" style="background:var(--amber-soft);color:var(--amber);margin-bottom:8px">Belum ada halaman dicentang — kembali dan centang minimal satu halaman.</div>' : '') +
+    rows +
+    '<div id="rfMgEst" style="margin-top:9px"></div>' +
+    '<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);cursor:pointer;margin-top:9px;margin-bottom:8px">' +
+      '<input type="checkbox" id="rfMgCover" checked style="flex:none;accent-color:var(--primary);width:15px;height:15px;margin:0;margin-top:2px">' +
+      '<span style="font-size:11.5px;color:var(--text);line-height:1.5"><b>Halaman pembuka (daftar bagian)</b><br><span style="color:var(--text-2)">Halaman pertama berisi judul + tanggal + daftar "BAGIAN n — nama berkas" — memudahkan verifikasi isi gabungan.</span></span>' +
+    '</label>' +
+    '<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);cursor:pointer;margin-bottom:10px">' +
+      '<input type="checkbox" id="rfMgSep" checked style="flex:none;accent-color:var(--primary);width:15px;height:15px;margin:0;margin-top:2px">' +
+      '<span style="font-size:11.5px;color:var(--text);line-height:1.5"><b>Halaman pemisah antar berkas</b><br><span style="color:var(--text-2)">Berisi "BAGIAN n" + nama berkas + jumlah halaman yang diambil — pembatas dokumen di dalam PDF gabungan.</span></span>' +
+    '</label>' +
+    '<button class="btn btn-p" data-mgact="gabung" style="width:100%"' + ((!parts.length || pending) ? ' disabled' : '') + '>🔗 Gabungkan &amp; unduh</button>' +
+    '<button class="btn" data-mgact="backwiz" style="width:100%;margin-top:7px">← Kembali pilih halaman</button>' +
+    '<div id="rfMgDlState" style="margin-top:9px"></div>' +
+  '</div>';
+}
+
+// --- Perkiraan jumlah halaman hasil (ikut checkbox pembuka/pemisah) ---
+function rfMergeFinalEstimate() {
+  const el = $('#rfMgEst');
+  if (!el) return;
+  const fs = rfMergeState.files;
+  const parts = fs.filter((f) => !f.err && f.selected.size);
+  const totalSel = parts.reduce((a, f) => a + f.selected.size, 0);
+  const coverEl = document.getElementById('rfMgCover');
+  const sepEl = document.getElementById('rfMgSep');
+  const useCover = !(coverEl && !coverEl.checked);
+  const useSep = !(sepEl && !sepEl.checked);
+  const seps = parts.length > 1 ? parts.length - 1 : 0;
+  const total = totalSel + seps + (parts.length && useCover ? 1 : 0);
+  el.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--primary);background:var(--primary-soft);border-radius:8px;padding:6px 9px">' +
+    (!parts.length ? 'Belum ada halaman dicentang'
+      : 'Perkiraan hasil: ' + total + ' halaman — ' + totalSel + ' terpilih' +
+        (useCover ? ' + 1 pembuka' : '') + (useSep && seps ? ' + ' + seps + ' pemisah' : '')) +
+  '</div>';
+}
+
+// ===================== TERIMA BERKAS + ANALISA + THUMB ======================
 
 // --- Terima berkas dari input (multi) — validasi + analisa latar ---
 async function rfMergeHandleFiles(fileList) {
@@ -13655,27 +13913,33 @@ async function rfMergeHandleFiles(fileList) {
   state.innerHTML = skipped.length
     ? '<div class="hintbox" style="background:var(--amber-soft);color:var(--amber)">⚠ Dilewati: ' + skipped.join(' · ') + '</div>'
     : '';
-  rfMergeRenderList();
-  rfMergeUpdateBar();
+  rfMergeRenderBody(false);
   for (const f of added) rfMergeAnalyze(f);   // berurutan latar, UI tetap hidup
 }
 
-// --- Analisa satu berkas: jumlah halaman + cuplikan teks → kartu + thumbnail ---
+// --- Analisa satu berkas: jumlah halaman + cuplikan teks → grid + thumbnail ---
 async function rfMergeAnalyze(f) {
   try {
     const a = await window.RFMergeEngine.analyzeDocument(f.bytes);
     if (f.abort || !rfMergeState.files.includes(f)) return;
     f.numPages = a.numPages;
     f.snippets = a.snippets;
-    rfMergeRenderFile(f);
-    rfMergeUpdateBar();
+    rfMergeSyncAfterData(f);
     rfMergeRenderThumbs(f);   // jangan ditunggu — antrian latar
   } catch (e) {
     if (f.abort || !rfMergeState.files.includes(f)) return;
     console.error('[RecallFox] merge analyze:', e);
     f.err = e.message || 'Gagal membaca PDF.';
-    rfMergeRenderFile(f);
-    rfMergeUpdateBar();
+    rfMergeSyncAfterData(f);
+  }
+}
+
+// --- Sinkron UI setelah data berkas berubah (analisa selesai / error) ---
+function rfMergeSyncAfterData(f) {
+  if (rfMergeState.step === 'pick' || rfMergeState.step === 'final') { rfMergeRenderBody(false); return; }
+  if (typeof rfMergeState.step === 'number') {
+    if (rfMergeState.files[rfMergeState.step] === f) { rfMergeRenderBody(false); return; }
+    rfMergeSyncCounters(f);   // cukup perbarui teks opsi dropdown
   }
 }
 
@@ -13731,30 +13995,6 @@ async function rfMergeRenderThumbs(f) {
   }
 }
 
-// --- Kartu satu berkas (header + toolbar + grid halaman) ---
-function rfMergeCardHtml(f, i, n) {
-  const sel = f.selected.size;
-  const total = f.numPages || 0;
-  const badge = f.err ? '⚠' : (total ? sel + '/' + total : '…');
-  return '<div class="card" data-mgcard="' + f.id + '" style="margin-bottom:10px">' +
-    '<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">' +
-      '<span style="flex:1;min-width:0;font-weight:700;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escAttr(f.name) + '">' + (i + 1) + '. 📄 ' + esc(f.name) + '</span>' +
-      '<span id="rfMgBadge-' + f.id + '" style="flex:none;font-size:10px;font-weight:800;color:var(--primary);background:var(--primary-soft);border-radius:7px;padding:3px 7px;font-family:var(--mono)">' + badge + '</span>' +
-    '</div>' +
-    '<div style="display:flex;gap:5px;margin-bottom:8px">' +
-      '<button class="btn" data-mgact="all" data-mgid="' + f.id + '" style="flex:1;font-size:10.5px;padding:5px 4px">Semua</button>' +
-      '<button class="btn" data-mgact="none" data-mgid="' + f.id + '" style="flex:1;font-size:10.5px;padding:5px 4px">Nihil</button>' +
-      '<button class="btn" data-mgact="flip" data-mgid="' + f.id + '" style="flex:1;font-size:10.5px;padding:5px 4px">Balik</button>' +
-      (i > 0 ? '<button class="btn" data-mgact="up" data-mgid="' + f.id + '" title="Naikkan urutan" style="flex:none;font-size:10.5px;padding:5px 8px">↑</button>' : '') +
-      (i < n - 1 ? '<button class="btn" data-mgact="down" data-mgid="' + f.id + '" title="Turunkan urutan" style="flex:none;font-size:10.5px;padding:5px 8px">↓</button>' : '') +
-      '<button class="btn" data-mgact="del" data-mgid="' + f.id + '" title="Buang berkas dari daftar" style="flex:none;font-size:10.5px;padding:5px 8px">✕</button>' +
-    '</div>' +
-    (f.err
-      ? '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger);margin-bottom:0">⚠ ' + esc(f.err) + '<br>Berkas ini dilewati — buang (✕) lalu pilih ulang bila perlu.</div>'
-      : rfMergeGridHtml(f)) +
-  '</div>';
-}
-
 // --- Grid halaman: thumbnail + checkbox per halaman + cuplikan teks ---
 function rfMergeGridHtml(f) {
   if (!f.numPages) {
@@ -13768,11 +14008,11 @@ function rfMergeGridHtml(f) {
       ? '<img data-mgthumb="' + f.id + ':' + i + '" src="' + f.thumbs[i] + '" alt="" style="width:100%;display:block;border-radius:5px;border:1px solid var(--border)">'
       : '<div data-mgthumb="' + f.id + ':' + i + '" style="width:100%;padding-bottom:130%;background:var(--surface-2);border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:9px;display:flex;align-items:center;justify-content:center">…</div>';
     cells +=
-      '<label data-mgpage="' + i + '" title="' + escAttr(snip || ('Halaman ' + (i + 1))) + '" style="position:relative;display:block;cursor:pointer;border:2px solid ' + (on ? 'var(--primary)' : 'transparent') + ';border-radius:8px;padding:3px;background:var(--surface)">' +
+      '<label data-mgpage="' + i + '" data-mgfile="' + f.id + '" title="' + escAttr(snip || ('Halaman ' + (i + 1))) + '" style="position:relative;display:block;cursor:pointer;border:2px solid ' + (on ? 'var(--primary)' : 'transparent') + ';border-radius:8px;padding:3px;background:var(--surface)">' +
         '<input type="checkbox" data-mgcb="' + i + '" ' + (on ? 'checked' : '') + ' style="position:absolute;top:6px;left:6px;z-index:2;width:15px;height:15px;margin:0;accent-color:var(--primary);box-shadow:0 0 0 2px rgba(255,255,255,.75);border-radius:4px">' +
         thumb +
         '<div style="display:flex;align-items:baseline;margin-top:3px">' +
-          '<span style="font-size:9px;font-weight:800;color:' + (on ? 'var(--primary)' : 'var(--muted)') + ';font-family:var(--mono)">' + (on ? '☑' : '☐') + ' H' + (i + 1) + '</span>' +
+          '<span data-mgmark style="font-size:9px;font-weight:800;color:' + (on ? 'var(--primary)' : 'var(--muted)') + ';font-family:var(--mono)">' + (on ? '☑' : '☐') + ' H' + (i + 1) + '</span>' +
         '</div>' +
         (snip ? '<div style="font-size:8.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">' + esc(snip) + '</div>' : '') +
       '</label>';
@@ -13780,48 +14020,11 @@ function rfMergeGridHtml(f) {
   return '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">' + cells + '</div>';
 }
 
-// --- Render seluruh daftar berkas ---
-function rfMergeRenderList() {
-  const list = $('#rfMgList');
-  if (!list) return;
-  if (!rfMergeState.files.length) { list.innerHTML = ''; return; }
-  list.innerHTML = rfMergeState.files.map((f, i) => rfMergeCardHtml(f, i, rfMergeState.files.length)).join('');
-}
-
-// --- Render ulang kartu SATU berkas saja (thumbnail dari cache — instan) ---
-function rfMergeRenderFile(f) {
-  const old = document.querySelector('[data-mgcard="' + f.id + '"]');
-  if (!old) return;
-  const i = rfMergeState.files.indexOf(f);
-  const tpl = document.createElement('div');
-  tpl.innerHTML = rfMergeCardHtml(f, i, rfMergeState.files.length);
-  old.replaceWith(tpl.firstElementChild);
-}
-
-// --- Bar ringkasan + status tombol unduh ---
-function rfMergeUpdateBar() {
-  const opts = $('#rfMgOpts');
-  const bar = $('#rfMgBar');
-  const dl = $('#rfMgDl');
-  if (!opts) return;
-  const parts = rfMergeState.files.filter((f) => !f.err && f.selected.size);
-  const totalSel = parts.reduce((a, f) => a + f.selected.size, 0);
-  const pending = rfMergeState.files.some((f) => !f.err && !f.numPages);
-  opts.style.display = rfMergeState.files.length ? '' : 'none';
-  if (bar) {
-    bar.textContent = !rfMergeState.files.length ? 'Belum ada berkas'
-      : !parts.length ? 'Belum ada halaman dicentang — centang halaman yang mau digabung'
-      : totalSel + ' halaman dari ' + parts.length + ' berkas siap digabung' + (pending ? ' (masih membaca berkas lain…)' : '');
-  }
-  if (dl) dl.disabled = !parts.length || rfMergeState.busy;
-}
-
 // --- Gabungkan & unduh (downloads API via rfRekonDownloadBlob — pola sama) ---
 async function rfMergeDownload() {
   if (rfMergeState.busy) return;
-  const dl = $('#rfMgDl');
   const st = $('#rfMgDlState');
-  if (!dl) return;
+  const btn = document.querySelector('#rfMgBody [data-mgact="gabung"]');
   const files = rfMergeState.files
     .filter((f) => !f.err && f.selected.size)
     .map((f) => ({ name: f.name, bytes: f.bytes, selected: Array.from(f.selected) }));
@@ -13832,20 +14035,21 @@ async function rfMergeDownload() {
     toast('Mesin PDF gagal dimuat: ' + (e.message || e));
     return;
   }
-  const sep = $('#rfMgSep');
-  const useSep = !(sep && !sep.checked);
+  const coverEl = document.getElementById('rfMgCover');
+  const sepEl = document.getElementById('rfMgSep');
+  const useCover = !(coverEl && !coverEl.checked);
+  const useSep = !(sepEl && !sepEl.checked);
   rfMergeState.busy = true;
-  const oldLabel = dl.textContent;
-  dl.disabled = true;
-  dl.textContent = '⏳ Menyusun…';
+  const oldLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Menyusun…'; }
   if (st) st.innerHTML = '<div class="hintbox">⏳ Menyusun PDF gabungan…</div>';
   try {
     await new Promise((r) => setTimeout(r, 30)); // beri kesempatan UI merender
-    const r = await window.RFMergeEngine.merge({ files, separator: useSep });
+    const r = await window.RFMergeEngine.merge({ files, separator: useSep, cover: useCover });
     const blob = new Blob([r.bytes], { type: 'application/pdf' });
     const base = (String(files[0].name).replace(/\.pdf$/i, '').trim() || 'gabung').slice(0, 60);
     await rfRekonDownloadBlob(blob, base + ' - GABUNG.pdf');
-    if (st) st.innerHTML = '<div class="hintbox" style="background:var(--green-soft);color:var(--green)">✓ PDF gabungan siap — ' + r.pages + ' halaman (' + r.parts + ' berkas' + (r.separators ? ' + ' + r.separators + ' pemisah' : '') + ', ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB). Cek folder Unduhan.</div>';
+    if (st) st.innerHTML = '<div class="hintbox" style="background:var(--green-soft);color:var(--green)">✓ PDF gabungan siap — ' + r.pages + ' halaman (' + r.parts + ' berkas' + (r.cover ? ' + 1 pembuka' : '') + (r.separators ? ' + ' + r.separators + ' pemisah' : '') + ', ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB). Cek folder Unduhan.</div>';
     toast('✓ PDF gabungan berhasil dibuat');
   } catch (e) {
     console.error('[RecallFox] merge download:', e);
@@ -13853,8 +14057,6 @@ async function rfMergeDownload() {
     toast('Gagal menggabungkan PDF');
   } finally {
     rfMergeState.busy = false;
-    dl.disabled = false;
-    dl.textContent = oldLabel;
-    rfMergeUpdateBar();
+    if (btn) { btn.disabled = false; btn.textContent = oldLabel; }
   }
 }
