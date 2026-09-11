@@ -44,6 +44,10 @@ import {
   TEMP_HOST_MANUAL,
   MANUAL_TEMP_DURATION,
   MANUAL_SITES,
+  // v3.24.19: daftar situs manual bisa dikelola user (tambah/ubah/hapus)
+  MANUAL_SITES_MAX,
+  sanitizeManualSites,
+  manualSiteHost,
   tempExpiresAt,
   uploadToTempHost,
   tempRemainingLabel,
@@ -7236,9 +7240,26 @@ function saveFileUploadSheet() {
       +   '</div>'
       // v3.24.18: panel MANUAL — daftar situs (klik → tab baru) + input URL.
       // Ditampilkan hanya saat tujuan Manual; dropzone disembunyikan.
+      // v3.24.19: daftar situs BISA dikelola user — tombol ✏️ Kelola membuka
+      // mode kelola (tambah/ubah/hapus/pulihkan default), tersimpan di
+      // storage lokal browser ini (key 'recallfox_manual_sites').
       +   '<div id="manualRow" style="display:none;margin:4px 0 6px;border:1px solid #e5e7eb;border-radius:8px;padding:8px;background:var(--surface-2)">'
-      +     '<div style="font-size:11px;font-weight:600;margin-bottom:6px">🌐 Upload manual — klik situs (tab baru), upload di sana, lalu tempel URL-nya di bawah</div>'
+      +     '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px">'
+      +       '<div style="font-size:11px;font-weight:600">🌐 Upload manual — klik situs (tab baru), upload di sana, lalu tempel URL-nya di bawah</div>'
+      +       '<button type="button" id="manualManageBtn" class="btn btn-g" style="font-size:10px;padding:4px 7px;flex:none;white-space:nowrap">✏️ Kelola</button>'
+      +     '</div>'
       +     '<div id="manualSites" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>'
+      +     '<div id="manualManage" style="display:none;border-top:1px dashed #d1d5db;padding-top:8px">'
+      +       '<div id="msList" style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px"></div>'
+      +       '<input class="f" id="msLabel" placeholder="Nama situs — mis. transfer.sh" maxlength="40" style="margin:0 0 4px">'
+      +       '<input class="f" id="msUrl" type="url" placeholder="https://... (wajib https)" style="margin:0 0 6px">'
+      +       '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +         '<button type="button" id="msSubmit" class="btn btn-p" style="font-size:11px;padding:6px 10px">＋ Tambah</button>'
+      +         '<button type="button" id="msCancel" class="btn btn-g" style="font-size:11px;padding:6px 10px;display:none">Batal edit</button>'
+      +         '<button type="button" id="msReset" class="btn btn-g" style="font-size:11px;padding:6px 10px">↺ Pulihkan default</button>'
+      +       '</div>'
+      +       '<div style="font-size:10px;color:var(--muted);margin-top:6px">Daftar tersimpan di browser ini (maks ' + MANUAL_SITES_MAX + ' situs). ✏️ = ubah · 🗑 = hapus.</div>'
+      +     '</div>'
       +     '<label style="font-size:11px;font-weight:600;display:block">URL file <span class="field-hint">(dari situs temp)</span></label>'
       +     '<input class="f" id="manualUrl" type="url" placeholder="https://..." style="margin:2px 0 6px">'
       +     '<label style="font-size:11px;font-weight:600;display:block">Nama file <span class="field-hint">(opsional — otomatis dari URL bila kosong)</span></label>'
@@ -7280,25 +7301,143 @@ function saveFileUploadSheet() {
     const destManualBtn = b.querySelector('#destManual');
     const manualRow = b.querySelector('#manualRow');
     const manualSitesBox = b.querySelector('#manualSites');
+    // v3.24.19: elemen mode kelola daftar situs
+    const manualManageBtn = b.querySelector('#manualManageBtn');
+    const manualManage = b.querySelector('#manualManage');
+    const msList = b.querySelector('#msList');
+    const msLabel = b.querySelector('#msLabel');
+    const msUrl = b.querySelector('#msUrl');
+    const msSubmit = b.querySelector('#msSubmit');
+    const msCancel = b.querySelector('#msCancel');
+    const msReset = b.querySelector('#msReset');
     const manualUrlInput = b.querySelector('#manualUrl');
     const manualNameInput = b.querySelector('#manualName');
     const saveBtn = b.querySelector('#docSave');
     const previewBox = b.querySelector('#docPreview');
     if (!destDbBtn || !destTempBtn || !destManualBtn || !tempDurRow || !destNote
       || !manualRow || !manualSitesBox || !manualUrlInput || !manualNameInput
-      || !saveBtn || !previewBox) {
+      || !saveBtn || !previewBox
+      // v3.24.19: elemen kelola situs ikut dicek — kalau ada yang hilang,
+      // sheet gagal EKSPLISIT (toast), bukan tombol mati diam-diam.
+      || !manualManageBtn || !manualManage || !msList || !msLabel || !msUrl
+      || !msSubmit || !msCancel || !msReset) {
       toast('⚠ Sheet Upload File rusak — elemen tidak lengkap', false);
       closeSheet();
       return;
     }
-    // Daftar situs dirender SEKALI (bukan di dalam _paintDest — dulu bikin
-    // listener terduplikasi tiap pindah tujuan). Klik = buka tab baru.
-    manualSitesBox.innerHTML = MANUAL_SITES.map(s =>
-      '<a href="' + s.url + '" target="_blank" rel="noopener" title="' + s.note + '" class="btn btn-g" style="font-size:11px;padding:6px 8px;text-decoration:none">' + s.label + '</a>'
-    ).join('');
-    manualSitesBox.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
-      toast('🌐 Membuka ' + a.textContent + ' di tab baru — upload di sana, lalu tempel URL-nya ke sini');
-    }));
+    // v3.24.19: DAFTAR SITUS BISA DIKELOLA USER (tambah/ubah/hapus/pulihkan).
+    // Arsitektur (mengikuti pelajaran revert v3.24.18 lama):
+    //  - _sites = daftar aktif; diisi default dulu (instan), lalu dioverride
+    //    async dari storage.local bila user pernah menyimpan daftar sendiri.
+    //  - Render chips TETAP di luar _paintDest (listener tidak terduplikasi).
+    //  - Semua data user (label/url/note) di-escape sebelum masuk innerHTML.
+    //  - Listener semua dipasang SEKALI di sini.
+    //  - storage gagal → fallback default, toast jelas, tidak crash.
+    const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    let _sites = MANUAL_SITES.map(s => ({ label: s.label, url: s.url, note: s.note }));
+    let _sitesManage = false, _msEditIdx = -1;
+    const SITES_KEY = 'recallfox_manual_sites';
+    function _loadSites() {
+      try {
+        return browser.storage.local.get(SITES_KEY).then(r => {
+          const arr = sanitizeManualSites(r && r[SITES_KEY]);
+          return arr.length ? arr : null;
+        }).catch(() => null);
+      } catch (e) { return Promise.resolve(null); }
+    }
+    function _saveSites() {
+      try {
+        const p = browser.storage.local.set({ [SITES_KEY]: _sites });
+        if (p && typeof p.catch === 'function') {
+          p.catch(() => toast('⚠ Daftar situs gagal tersimpan — daftar default dipakai sesi ini', false));
+        }
+      } catch (e) {
+        toast('⚠ Daftar situs gagal tersimpan — daftar default dipakai sesi ini', false);
+      }
+    }
+    function _msFormReset() {
+      _msEditIdx = -1;
+      msLabel.value = ''; msUrl.value = '';
+      msSubmit.textContent = '＋ Tambah';
+      msCancel.style.display = 'none';
+    }
+    function _renderSites() {
+      manualSitesBox.innerHTML = _sites.map(s =>
+        '<a href="' + escHtml(s.url) + '" target="_blank" rel="noopener" title="' + escHtml(s.note || s.url) + '" class="btn btn-g" style="font-size:11px;padding:6px 8px;text-decoration:none">' + escHtml(s.label) + '</a>'
+      ).join('');
+      manualSitesBox.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+        toast('🌐 Membuka ' + a.textContent + ' di tab baru — upload di sana, lalu tempel URL-nya ke sini');
+      }));
+    }
+    function _renderManage() {
+      msList.innerHTML = _sites.length ? _sites.map((s, i) =>
+        '<div style="display:flex;align-items:center;gap:6px;font-size:11px">'
+        + '<div style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>' + escHtml(s.label) + '</b> <span style="color:var(--muted)">· ' + escHtml(manualSiteHost(s.url) || s.url) + '</span></div>'
+        + '<button type="button" data-edit="' + i + '" class="btn btn-g" style="font-size:10px;padding:3px 6px;flex:none" title="Ubah situs ini">✏️</button>'
+        + '<button type="button" data-del="' + i + '" class="btn btn-g" style="font-size:10px;padding:3px 6px;flex:none" title="Hapus dari daftar">🗑</button>'
+        + '</div>'
+      ).join('') : '<div style="font-size:11px;color:var(--muted)">Daftar kosong — tambah situs di bawah atau pulihkan default.</div>';
+      msList.querySelectorAll('button[data-edit]').forEach(bn => bn.addEventListener('click', () => {
+        const i = Number(bn.dataset.edit);
+        if (!_sites[i]) return;
+        _msEditIdx = i;
+        msLabel.value = _sites[i].label;
+        msUrl.value = _sites[i].url;
+        msSubmit.textContent = '✓ Update';
+        msCancel.style.display = '';
+        msLabel.focus();
+      }));
+      msList.querySelectorAll('button[data-del]').forEach(bn => bn.addEventListener('click', () => {
+        const i = Number(bn.dataset.del);
+        const gone = _sites[i] ? _sites[i].label : '';
+        _sites.splice(i, 1);
+        if (_msEditIdx === i) _msFormReset();
+        else if (_msEditIdx > i) _msEditIdx--;
+        _saveSites();
+        _renderManage();
+        toast('🗑 ' + gone + ' dihapus dari daftar situs');
+      }));
+    }
+    function _setSitesMode(on) {
+      _sitesManage = !!on;
+      manualSitesBox.style.display = _sitesManage ? 'none' : '';
+      manualManage.style.display = _sitesManage ? '' : 'none';
+      manualManageBtn.textContent = _sitesManage ? '✓ Selesai' : '✏️ Kelola';
+      if (_sitesManage) { _msFormReset(); _renderManage(); }
+      else { _renderSites(); }
+    }
+    manualManageBtn.addEventListener('click', () => _setSitesMode(!_sitesManage));
+    msCancel.addEventListener('click', _msFormReset);
+    msReset.addEventListener('click', () => {
+      _sites = MANUAL_SITES.map(s => ({ label: s.label, url: s.url, note: s.note }));
+      _msFormReset();
+      _saveSites();
+      _renderManage();
+      toast('↺ Daftar situs dipulihkan ke default');
+    });
+    msSubmit.addEventListener('click', () => {
+      const label = (msLabel.value || '').trim();
+      const url = (msUrl.value || '').trim();
+      if (!label) { toast('⚠ Nama situs wajib diisi', false); return; }
+      if (!/^https:\/\//i.test(url)) { toast('⚠ URL situs wajib diawali https://', false); return; }
+      const key = url.replace(/\/+$/, '').toLowerCase();
+      const dup = _sites.findIndex(s => s.url.replace(/\/+$/, '').toLowerCase() === key);
+      if (dup !== -1 && dup !== _msEditIdx) { toast('⚠ Situs dengan URL itu sudah ada di daftar', false); return; }
+      if (_msEditIdx === -1 && _sites.length >= MANUAL_SITES_MAX) { toast('⚠ Maks ' + MANUAL_SITES_MAX + ' situs', false); return; }
+      const note = 'situs kustom · ' + (manualSiteHost(url) || url.slice(0, 60));
+      if (_msEditIdx === -1) _sites.push({ label, url, note });
+      else _sites[_msEditIdx] = { label, url, note };
+      _saveSites();
+      _msFormReset();
+      _renderManage();
+      toast('✓ ' + label + ' tersimpan di daftar situs');
+    });
+    _renderSites(); // default dulu — instan, tanpa menunggu storage
+    _loadSites().then(list => {
+      if (!list) return;
+      _sites = list;
+      if (_sitesManage) _renderManage(); else _renderSites();
+    });
 
     // v3.24.18: state tombol Simpan terpusat — Manual butuh URL https valid,
     // Database/Sementara butuh file terpilih. Dipanggil dari SATU tempat.

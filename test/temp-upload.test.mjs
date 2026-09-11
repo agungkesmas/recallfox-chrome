@@ -9,6 +9,9 @@ import {
   TEMP_HOST_MANUAL,
   MANUAL_TEMP_DURATION,
   MANUAL_SITES,
+  MANUAL_SITES_MAX,
+  sanitizeManualSites,
+  manualSiteHost,
   tempDurationById,
   tempExpiresAt,
   isTempItem,
@@ -45,10 +48,37 @@ ok(isTempExpired(mk({ tempHost: 'litterbox', tempUrl: 'u', tempExpiresAt: new Da
 console.log('— v3.24.18: tujuan MANUAL (paritas PWA v1.21.0) —');
 ok(TEMP_HOST_MANUAL === 'manual', "TEMP_HOST_MANUAL === 'manual'");
 ok(MANUAL_TEMP_DURATION === '72h', "MANUAL_TEMP_DURATION === '72h' (default 3 hari vault)");
-ok(Array.isArray(MANUAL_SITES) && MANUAL_SITES.length === 4, 'MANUAL_SITES: 4 situs terverifikasi (litterbox/catbox/gofile/tmpfiles)');
+ok(Array.isArray(MANUAL_SITES) && MANUAL_SITES.length === 4, 'MANUAL_SITES: 4 situs default (litterbox/catbox/temp.sh/tmpfiles)');
 ok(MANUAL_SITES.every(s => typeof s.label === 'string' && s.label.length > 0), 'setiap situs punya label');
 ok(MANUAL_SITES.every(s => /^https:\/\//.test(s.url)), 'setiap situs URL https (bisa diklik buka tab baru)');
-ok(MANUAL_SITES.every(s => { try { return !['temp.sh', '0x0.st', 'file.io', 'www.file.io'].includes(new URL(s.url).hostname); } catch (e) { return false; } }), 'situs hasil audit DITOLAK tidak ada dalam daftar (cek hostname — gofile.io tidak salah positif)');
+// v3.24.19: gofile.io KELUAR (laporan user tidak bisa dipakai), temp.sh MASUK
+// (alur manual saja — URL halaman unduh tidak masalah karena item manual
+// tidak pernah fetch isi file). 0x0.st & file.io tetap ditolak.
+ok(!MANUAL_SITES.some(s => /gofile\.io/i.test(s.url || '')), 'gofile.io TIDAK ada dalam daftar default (keluar per v3.24.19)');
+ok(MANUAL_SITES.some(s => { try { return new URL(s.url).hostname === 'temp.sh'; } catch (e) { return false; } }), 'temp.sh ada dalam daftar default (pengganti gofile per permintaan user)');
+ok(MANUAL_SITES.every(s => { try { return !['0x0.st', 'file.io', 'www.file.io'].includes(new URL(s.url).hostname); } catch (e) { return false; } }), 'situs tetap ditolak (0x0.st/file.io) tidak ada dalam daftar (cek hostname — gofile.io tidak salah positif)');
+ok(typeof MANUAL_SITES_MAX === 'number' && MANUAL_SITES_MAX === 12, 'MANUAL_SITES_MAX = 12');
+
+console.log('— v3.24.19: daftar situs dikelola user (sanitizeManualSites) —');
+ok(Array.isArray(sanitizeManualSites(null)) && sanitizeManualSites(null).length === 0, 'null → array kosong');
+ok(Array.isArray(sanitizeManualSites('x')) && sanitizeManualSites('x').length === 0, 'bukan array → array kosong');
+ok(sanitizeManualSites([{ label: 'A', url: 'https://a.example.com/' }]).length === 1, 'entri valid diterima');
+ok(sanitizeManualSites([{ label: '  Spasi  ', url: '  https://b.example.com  ' }])[0].label === 'Spasi', 'label di-trim');
+ok(sanitizeManualSites([{ label: 'A', url: 'http://a.example.com/' }]).length === 0, 'url http:// DITOLAK');
+ok(sanitizeManualSites([{ label: '', url: 'https://a.example.com/' }]).length === 0, 'label kosong DITOLAK');
+ok(sanitizeManualSites([{ url: 'https://a.example.com/' }]).length === 0, 'tanpa label DITOLAK');
+ok(sanitizeManualSites([{ label: 'A', url: 'https://a.example.com/' }, { label: 'B', url: 'https://a.example.com' }]).length === 1, 'dedupe URL (beda garis miring ekor)');
+ok(sanitizeManualSites([{ label: 'A', url: 'https://A.example.COM/x' }, { label: 'B', url: 'https://a.example.com/x' }]).length === 1, 'dedupe URL case-insensitive');
+ok(sanitizeManualSites([{ label: 'A', url: 'https://a.example.com/' }, null, 'x', 42, { label: 'B', url: 'ftp://b.example.com/' }, {}]).length === 1, 'entri sampah/bukan objek dilewati tanpa error');
+const many = Array.from({ length: 20 }, (_, i) => ({ label: 'S' + i, url: 'https://s' + i + '.example.com/' }));
+ok(sanitizeManualSites(many).length === MANUAL_SITES_MAX, 'cap maks ' + MANUAL_SITES_MAX + ' situs (input 20 → ' + MANUAL_SITES_MAX + ')');
+ok(sanitizeManualSites(many)[0].label === 'S0', 'cap mengambil entri PERTAMA (urutan stabil)');
+const longLbl = 'x'.repeat(50);
+ok(sanitizeManualSites([{ label: longLbl, url: 'https://c.example.com/' }])[0].label.length === 40, 'label dipotong 40 char');
+ok(sanitizeManualSites([{ label: 'A', url: 'https://c.example.com/', note: '  n  ' }])[0].note === 'n', 'note di-trim');
+ok(sanitizeManualSites([{ label: 'A', url: 'https://c.example.com/', note: 123 }])[0].note === '', 'note bukan string → kosong (defensive)');
+ok(manualSiteHost('https://temp.sh/AbCd/file.txt') === 'temp.sh', 'manualSiteHost: hostname benar');
+ok(manualSiteHost('bukan url') === '', 'manualSiteHost: URL invalid → string kosong (tanpa throw)');
 const mExp = tempExpiresAt(MANUAL_TEMP_DURATION, t0);
 ok(mExp === new Date(t0 + 259200e3).toISOString(), 'tempExpiresAt(MANUAL_TEMP_DURATION) = +72 jam (3 hari vault)');
 const manualItem = mk({ tempHost: TEMP_HOST_MANUAL, tempUrl: 'https://litter.catbox.moe/manual.zip', tempExpiresAt: mExp, tempDuration: MANUAL_TEMP_DURATION });
