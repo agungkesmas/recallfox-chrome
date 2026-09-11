@@ -39,6 +39,12 @@ import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
 import {
   TEMP_DURATIONS,
   TEMP_HOST_LABEL,
+  // v3.24.18: tujuan ketiga MANUAL (paritas PWA v1.21.0 — tempHost='manual',
+  // TTL vault 72 jam, daftar situs diklik buka tab baru).
+  TEMP_HOST_MANUAL,
+  MANUAL_TEMP_DURATION,
+  MANUAL_SITES,
+  tempExpiresAt,
   uploadToTempHost,
   tempRemainingLabel,
   isTempItem,
@@ -7185,7 +7191,7 @@ function addItemMenu() {
         setTimeout(opt[1], 80);
       }
     }));
-    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar/arsip .zip/.rar/.7z/.tar/.gz (maks 10MB ke ☁️ Database, <b>maks 1GB ke ⏳ Sementara</b>). <b>Tujuan simpan:</b> ☁️ Database (permanen) atau ⏳ Sementara — file di host sementara, item hilang otomatis dari vault sesuai batas waktu (1 jam–3 hari).</div>');
+    b.insertAdjacentHTML('beforeend', '<div class="sheet-note">💡 Upload File mendukung teks .md/.txt/.json/.html/.csv/.yaml + kode program (maks 2MB) serta PDF/Office/gambar/arsip .zip/.rar/.7z/.tar/.gz (maks 10MB ke ☁️ Database, <b>maks 1GB ke ⏳ Sementara</b>). <b>Tujuan simpan:</b> ☁️ Database (permanen) · ⏳ Sementara (hilang otomatis 1 jam–3 hari) · 🔗 Manual — upload sendiri di situs temporari (klik, buka tab baru), lalu tempel URL; item manual hilang otomatis <b>3 hari</b> setelah masuk vault.</div>');
   });
 }
 
@@ -7204,7 +7210,13 @@ function addItemMenu() {
 // Punya: Judul (opsional), Tag (opsional), Tujuan (database/sementara+durasi),
 // area upload (klik/drag&drop), Batal, Simpan
 function saveFileUploadSheet() {
-  openSheet('📄 Upload File', 'Pilih file — teks, PDF, Office, gambar, atau arsip. Pilih tujuan: Database (permanen) atau Sementara (hilang otomatis)', b => {
+  // v3.24.18: TRIPLE DESTINATION — + 🔗 Manual (upload di situs luar via tab
+  // baru, tempel URL; vault manual TTL 72 jam). Paritas PWA v1.21.0.
+  // PELAJARAN revert v3.24.18 lama: guard `if (_dest === 'temp') {` TIDAK
+  // boleh disentuh; cabang manual dicek DULU sebelum validasi file; semua
+  // listener dipasang sekali; situs dirender sekali; state tombol Simpan
+  // terpusat di _updateSaveState().
+  openSheet('📄 Upload File', 'Pilih tujuan: ☁️ Database (permanen) · ⏳ Sementara (hilang otomatis) · 🔗 Manual (upload di situs lain, vault 3 hari)', b => {
     const durOptions = TEMP_DURATIONS.map(d => '<option value="' + d.id + '"' + (d.id === '72h' ? ' selected' : '') + '>' + d.label + '</option>').join('');
     b.innerHTML = '<div class="sheet-form">'
       + '<div><label>Judul <span class="field-hint">(opsional — kosongkan untuk pakai filename)</span></label>'
@@ -7216,10 +7228,22 @@ function saveFileUploadSheet() {
       +   '<div id="destRow" style="display:flex;gap:6px;margin:4px 0 2px">'
       +     '<button type="button" id="destDb" class="btn btn-g" style="flex:1;font-size:12px;padding:8px 6px">☁️ Database</button>'
       +     '<button type="button" id="destTemp" class="btn btn-g" style="flex:1;font-size:12px;padding:8px 6px;opacity:.55">⏳ Sementara</button>'
+      +     '<button type="button" id="destManual" class="btn btn-g" style="flex:1;font-size:12px;padding:8px 6px;opacity:.55">🔗 Manual</button>'
       +   '</div>'
       +   '<div id="tempDurRow" style="display:none;margin:4px 0 2px">'
       +     '<label>Batas waktu <span class="field-hint">(file + item di vault hilang saat habis)</span></label>'
       +     '<select class="f" id="tempDur">' + durOptions + '</select>'
+      +   '</div>'
+      // v3.24.18: panel MANUAL — daftar situs (klik → tab baru) + input URL.
+      // Ditampilkan hanya saat tujuan Manual; dropzone disembunyikan.
+      +   '<div id="manualRow" style="display:none;margin:4px 0 6px;border:1px solid #e5e7eb;border-radius:8px;padding:8px;background:var(--surface-2)">'
+      +     '<div style="font-size:11px;font-weight:600;margin-bottom:6px">🌐 Upload manual — klik situs (tab baru), upload di sana, lalu tempel URL-nya di bawah</div>'
+      +     '<div id="manualSites" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>'
+      +     '<label style="font-size:11px;font-weight:600;display:block">URL file <span class="field-hint">(dari situs temp)</span></label>'
+      +     '<input class="f" id="manualUrl" type="url" placeholder="https://..." style="margin:2px 0 6px">'
+      +     '<label style="font-size:11px;font-weight:600;display:block">Nama file <span class="field-hint">(opsional — otomatis dari URL bila kosong)</span></label>'
+      +     '<input class="f" id="manualName" placeholder="mis. laporan.pdf" style="margin:2px 0 0">'
+      +     '<div style="font-size:10px;color:var(--muted);margin-top:6px">Vault manual hilang otomatis <b>3 hari</b> setelah disimpan — terlepas dari kapan situsnya menghapus file.</div>'
       +   '</div>'
       +   '<div id="destNote" style="font-size:10px;color:var(--muted);margin:2px 0 4px">☁️ Disimpan permanen ke database Supabase (perilaku lama).</div>'
       + '</div>'
@@ -7241,29 +7265,80 @@ function saveFileUploadSheet() {
     let _fileContent = null, _fileName = '', _fileKind = null, _fileMime = 'text/plain';
     let _fileIsBinary = false, _fileBlob = null, _fileSize = 0;
     // v3.24.12: 'db' = Supabase permanen, 'temp' = host sementara (litterbox)
+    // v3.24.18: 'manual' = user upload di situs luar, tempel URL (vault 72 jam)
     let _dest = 'db';
     const dropzone = b.querySelector('#docDropzone');
     const fileInput = b.querySelector('#docFileInputSheet');
 
-    // v3.24.12: Toggle tujuan simpan — highlight tombol aktif + tampil/sembunyi
-    // dropdown durasi + ganti catatan penjelas di bawahnya.
+    // v3.24.18 (pola defensif PWA v1.21.0): referensi elemen diambil SEKALI.
+    // Kalau markup berubah dan ID hilang → sheet gagal EKSPLISIT (toast),
+    // bukan tombol mati diam-diam seperti insiden revert v3.24.18 lama.
     const destDbBtn = b.querySelector('#destDb');
     const destTempBtn = b.querySelector('#destTemp');
     const tempDurRow = b.querySelector('#tempDurRow');
     const destNote = b.querySelector('#destNote');
+    const destManualBtn = b.querySelector('#destManual');
+    const manualRow = b.querySelector('#manualRow');
+    const manualSitesBox = b.querySelector('#manualSites');
+    const manualUrlInput = b.querySelector('#manualUrl');
+    const manualNameInput = b.querySelector('#manualName');
+    const saveBtn = b.querySelector('#docSave');
+    const previewBox = b.querySelector('#docPreview');
+    if (!destDbBtn || !destTempBtn || !destManualBtn || !tempDurRow || !destNote
+      || !manualRow || !manualSitesBox || !manualUrlInput || !manualNameInput
+      || !saveBtn || !previewBox) {
+      toast('⚠ Sheet Upload File rusak — elemen tidak lengkap', false);
+      closeSheet();
+      return;
+    }
+    // Daftar situs dirender SEKALI (bukan di dalam _paintDest — dulu bikin
+    // listener terduplikasi tiap pindah tujuan). Klik = buka tab baru.
+    manualSitesBox.innerHTML = MANUAL_SITES.map(s =>
+      '<a href="' + s.url + '" target="_blank" rel="noopener" title="' + s.note + '" class="btn btn-g" style="font-size:11px;padding:6px 8px;text-decoration:none">' + s.label + '</a>'
+    ).join('');
+    manualSitesBox.querySelectorAll('a').forEach(a => a.addEventListener('click', () => {
+      toast('🌐 Membuka ' + a.textContent + ' di tab baru — upload di sana, lalu tempel URL-nya ke sini');
+    }));
+
+    // v3.24.18: state tombol Simpan terpusat — Manual butuh URL https valid,
+    // Database/Sementara butuh file terpilih. Dipanggil dari SATU tempat.
+    function _manualUrlOk() {
+      return /^https:\/\//i.test((manualUrlInput.value || '').trim());
+    }
+    function _updateSaveState() {
+      if (_dest === 'manual') { saveBtn.disabled = !_manualUrlOk(); return; }
+      saveBtn.disabled = !(_fileIsBinary ? _fileBlob : _fileContent);
+    }
+
+    // v3.24.12: Toggle tujuan simpan — highlight tombol aktif + tampil/sembunyi
+    // dropdown durasi + ganti catatan penjelas di bawahnya.
+    // v3.24.18: + keadaan Manual (panel situs tampil, dropzone + preview
+    // disembunyikan, durasi disembunyikan).
     function _paintDest() {
-      const isDb = _dest === 'db';
+      const isDb = _dest === 'db', isTemp = _dest === 'temp', isManual = _dest === 'manual';
       destDbBtn.style.opacity = isDb ? '1' : '.55';
       destDbBtn.style.outline = isDb ? '2px solid #6366f1' : 'none';
-      destTempBtn.style.opacity = isDb ? '.55' : '1';
-      destTempBtn.style.outline = isDb ? 'none' : '2px solid #f59e0b';
-      tempDurRow.style.display = isDb ? 'none' : '';
+      destTempBtn.style.opacity = isTemp ? '1' : '.55';
+      destTempBtn.style.outline = isTemp ? '2px solid #f59e0b' : 'none';
+      destManualBtn.style.opacity = isManual ? '1' : '.55';
+      destManualBtn.style.outline = isManual ? '2px solid #10b981' : 'none';
+      tempDurRow.style.display = isTemp ? '' : 'none';
+      manualRow.style.display = isManual ? '' : 'none';
+      dropzone.style.display = isManual ? 'none' : '';
+      // Preview hanya relevan saat file terpilih & tujuan bukan Manual
+      previewBox.style.display = (!isManual && (_fileIsBinary ? _fileBlob : _fileContent)) ? '' : 'none';
       destNote.textContent = isDb
         ? '☁️ Disimpan permanen ke database Supabase (perilaku lama).'
-        : '⏳ File di-upload ke ' + TEMP_HOST_LABEL + ' — URL publik (bisa dibuka AI chat). Maks 1GB. Setelah batas waktu habis, item ini hilang OTOMATIS dari vault di semua device.';
+        : isTemp
+          ? '⏳ File di-upload ke ' + TEMP_HOST_LABEL + ' — URL publik (bisa dibuka AI chat). Maks 1GB. Setelah batas waktu habis, item ini hilang OTOMATIS dari vault di semua device.'
+          : '🔗 Manual: klik situs di atas (tab baru), upload di sana, lalu tempel URL-nya. Item manual hilang otomatis dari vault 3 hari setelah disimpan.';
+      _updateSaveState();
     }
     destDbBtn.addEventListener('click', () => { _dest = 'db'; _paintDest(); });
     destTempBtn.addEventListener('click', () => { _dest = 'temp'; _paintDest(); });
+    destManualBtn.addEventListener('click', () => { _dest = 'manual'; _paintDest(); });
+    // Listener input URL dipasang SEKALI (di luar _paintDest)
+    manualUrlInput.addEventListener('input', _updateSaveState);
     _paintDest();
     dropzone.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', async (e) => { if (e.target.files[0]) await _handleFile(e.target.files[0]); });
@@ -7291,7 +7366,6 @@ function saveFileUploadSheet() {
       const previewMeta = b.querySelector('#docPreviewMeta');
       const previewText = b.querySelector('#docPreviewText');
       const previewMedia = b.querySelector('#docPreviewMedia');
-      const previewBox = b.querySelector('#docPreview');
       const sizeStr = formatBytes(file.size);
 
       if (_fileIsBinary) {
@@ -7324,20 +7398,60 @@ function saveFileUploadSheet() {
         previewText.textContent = text.slice(0, 500) + (text.length > 500 ? '\n... (' + text.length + ' chars total)' : '');
       }
       previewBox.style.display = '';
-      b.querySelector('#docSave').disabled = false;
+      // v3.24.18: state tombol Simpan via _updateSaveState (satu tempat)
+      _updateSaveState();
       const titleEl = b.querySelector('#docT');
       if (!titleEl.value.trim()) titleEl.value = file.name.replace(/\.[^.]+$/, '').slice(0, 60);
       toast('📋 File dimuat — klik Simpan untuk menyimpan');
     }
 
     b.querySelector('#docCancel').addEventListener('click', closeSheet);
-    b.querySelector('#docSave').addEventListener('click', async () => {
-      if (!_fileIsBinary && !_fileContent) { toast('Pilih file dulu', false); return; }
-      if (_fileIsBinary && !_fileBlob) { toast('Pilih file dulu', false); return; }
+    saveBtn.addEventListener('click', async () => {
       const title = (b.querySelector('#docT').value || '').trim() || _fileName;
       const tags = (b.querySelector('#docTag').value || '').trim();
       const tagList = tags ? tags.split(',').map(s => s.trim()).filter(Boolean) : ['file', _fileKind];
-      const btn = b.querySelector('#docSave');
+      const btn = saveBtn;
+      // v3.24.18: cabang MANUAL dicek DULU — TIDAK butuh file terpilih.
+      // (Pelajaran fatal v3.24.18 lama: cabang manual diletakkan SETELAH
+      // validasi file → selalu terblokir toast "Pilih file dulu".)
+      if (_dest === 'manual') {
+        if (!_manualUrlOk()) { toast('⚠ Tempel URL file dulu (harus diawali https://)', false); return; }
+        const manualUrl = (manualUrlInput.value || '').trim();
+        // Nama file: dari input opsional, atau ekor URL (tanpa query string)
+        let mName = (manualNameInput.value || '').trim() || manualUrl.split('/').pop().split('?')[0] || 'file';
+        try { mName = decodeURIComponent(mName); } catch (e) {}
+        if (!mName.includes('.')) mName += '.bin';
+        const mInfo = detectFileKind({ name: mName }) || { kind: 'bin', mime: 'application/octet-stream', binary: true };
+        btn.textContent = '⏳ Menyimpan...'; btn.disabled = true;
+        try {
+          const mPayload = {
+            type: 'file', title: title || mName,
+            tags: tags ? tagList : ['file', mInfo.kind],
+            body: '', // file hidup di situs luar — isi tidak disimpan
+            source: {
+              kind: mInfo.kind, mime: mInfo.mime || 'application/octet-stream',
+              fileName: mName, size: 0, isBinary: !!mInfo.binary,
+              uploadedFrom: 'addon-upload-manual', capturedAt: new Date().toISOString(),
+              // Struktur row IDENTIK dengan temp litterbox → isTempItem true,
+              // badge countdown jalan, sinkron antar device jalan, dan
+              // cleanupExpiredTempItems menghapus otomatis 72 jam (3 hari)
+              // setelah masuk vault — terlepas dari masa simpan situsnya.
+              tempHost: TEMP_HOST_MANUAL, tempUrl: manualUrl,
+              tempExpiresAt: tempExpiresAt(MANUAL_TEMP_DURATION), tempDuration: MANUAL_TEMP_DURATION
+            }
+          };
+          await addItem(mPayload); // TANPA fileBlob — tidak ada blob lokal/cloud
+          closeSheet();
+          await refreshVault();
+          toast('🔗 Manual tersimpan — hilang otomatis dari vault 3 hari');
+        } catch (e) {
+          toast('⚠ Gagal simpan manual: ' + e.message, false);
+          btn.textContent = ICONS.check + 'Simpan File'; btn.disabled = false;
+        }
+        return;
+      }
+      if (!_fileIsBinary && !_fileContent) { toast('Pilih file dulu', false); return; }
+      if (_fileIsBinary && !_fileBlob) { toast('Pilih file dulu', false); return; }
       btn.textContent = '⏳ Menyimpan...'; btn.disabled = true;
       try {
         // v3.24.15: validasi ulang sesuai tujuan — Database 10MB, Sementara 1GB

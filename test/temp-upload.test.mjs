@@ -6,6 +6,9 @@
 import {
   TEMP_DURATIONS,
   TEMP_UPLOAD_ENDPOINT,
+  TEMP_HOST_MANUAL,
+  MANUAL_TEMP_DURATION,
+  MANUAL_SITES,
   tempDurationById,
   tempExpiresAt,
   isTempItem,
@@ -38,6 +41,20 @@ ok(!isTempItem(mk({ kind: 'zip' })), 'file biasa bukan temp item');
 ok(!isTempItem(mk({ tempHost: 'litterbox' })), 'tempHost tanpa tempUrl → bukan temp item valid');
 ok(isTempItem(mk({ tempHost: 'litterbox', tempUrl: 'https://litter.catbox.moe/a.zip' })), 'tempHost+tempUrl → temp item');
 ok(isTempExpired(mk({ tempHost: 'litterbox', tempUrl: 'u', tempExpiresAt: new Date(Date.now() - 1000).toISOString() })), 'expiredAt lewat → expired');
+
+console.log('— v3.24.18: tujuan MANUAL (paritas PWA v1.21.0) —');
+ok(TEMP_HOST_MANUAL === 'manual', "TEMP_HOST_MANUAL === 'manual'");
+ok(MANUAL_TEMP_DURATION === '72h', "MANUAL_TEMP_DURATION === '72h' (default 3 hari vault)");
+ok(Array.isArray(MANUAL_SITES) && MANUAL_SITES.length === 4, 'MANUAL_SITES: 4 situs terverifikasi (litterbox/catbox/gofile/tmpfiles)');
+ok(MANUAL_SITES.every(s => typeof s.label === 'string' && s.label.length > 0), 'setiap situs punya label');
+ok(MANUAL_SITES.every(s => /^https:\/\//.test(s.url)), 'setiap situs URL https (bisa diklik buka tab baru)');
+ok(MANUAL_SITES.every(s => { try { return !['temp.sh', '0x0.st', 'file.io', 'www.file.io'].includes(new URL(s.url).hostname); } catch (e) { return false; } }), 'situs hasil audit DITOLAK tidak ada dalam daftar (cek hostname — gofile.io tidak salah positif)');
+const mExp = tempExpiresAt(MANUAL_TEMP_DURATION, t0);
+ok(mExp === new Date(t0 + 259200e3).toISOString(), 'tempExpiresAt(MANUAL_TEMP_DURATION) = +72 jam (3 hari vault)');
+const manualItem = mk({ tempHost: TEMP_HOST_MANUAL, tempUrl: 'https://litter.catbox.moe/manual.zip', tempExpiresAt: mExp, tempDuration: MANUAL_TEMP_DURATION });
+ok(isTempItem(manualItem), 'item manual → isTempItem TRUE (badge + cleanup + sync jalan tanpa perubahan sisi baca)');
+ok(isTempExpired(manualItem, t0 + 259200e3 + 1) === true, 'item manual expired tepat 72 jam setelah masuk vault');
+ok(isTempExpired(manualItem, t0 + 259199e3) === false, 'item manual BELUM expired sebelum 72 jam');
 ok(!isTempExpired(mk({ tempHost: 'litterbox', tempUrl: 'u', tempExpiresAt: new Date(Date.now() + 3600e3).toISOString() })), 'expiredAt masa depan → tidak expired');
 ok(!isTempExpired(mk({ kind: 'pdf' })), 'file biasa tidak pernah expired');
 ok(!isTempExpired(mk({ tempHost: 'litterbox', tempUrl: 'u', tempExpiresAt: 'not-a-date' })), 'expiredAt invalid → tidak dianggap expired (defensive)');
