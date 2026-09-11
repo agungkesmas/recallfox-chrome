@@ -15,6 +15,10 @@
  *   7. (v3.24.21) cover:true → HALAMAN PEMBUKA di awal berisi "GABUNGAN",
  *      "DAFTAR BAGIAN", "BAGIAN 1" + nama berkas; cover:false/absen → tanpa
  *      pembuka; daftar bagian banyak tetap muat 1 halaman + ringkasan.
+ *   8. (v3.24.22) Kompres ala iLovePDF: COMP_PRESETS 3 tingkat;
+ *      merge(compress) di Node (tanpa canvas) → fallback vektor per halaman
+ *      dgn hasil tetap valid; compress invalid → none; estimateCompressed
+ *      aman di Node + deteksi teks asli (born-digital) bekerja.
  *
  * Jalankan: node test/merge-engine.test.mjs
  * ============================================================================
@@ -305,6 +309,80 @@ section('merge — cover dgn nama emoji/ekstrem tidak throw');
   ok(r.pages === 3 && r.cover === 1, 'pembuka + 2 isi = 3 halaman, tanpa throw');
   const texts = await pageTexts(r.bytes);
   ok(/G A B U N G A N/.test(texts[0]), 'pembuka tergambar dgn nama tersanitasi');
+}
+
+// ================================================================ v3.24.22
+// Kompres hasil ala iLovePDF (Ekstrem / Sedang / Tanpa)
+
+// PDF uji dgn teks asli > 40 karakter non-spasi per halaman (born-digital)
+async function buildTextHeavyPdf(prefix, pages) {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.HelveticaBold);
+  for (let i = 1; i <= pages; i++) {
+    const pg = doc.addPage([595.28, 841.89]);
+    pg.drawText(prefix + '-HAL' + i, { x: 48, y: 760, size: 24, font, color: rgb(0.1, 0.1, 0.1) });
+    pg.drawText(('TEKS ASLI UNTUK DETEKSI BORN-DIGITAL ' + prefix + ' ').repeat(4), { x: 48, y: 700, size: 12, font, color: rgb(0.3, 0.3, 0.3) });
+  }
+  return new Uint8Array(await doc.save());
+}
+
+section('v3.24.22 — COMP_PRESETS & API kompres terekspor');
+{
+  ok(E.COMP_PRESETS && E.COMP_PRESETS.extreme && E.COMP_PRESETS.sedang && E.COMP_PRESETS.none, 'COMP_PRESETS berisi 3 preset (Ekstrem/Sedang/Tanpa)');
+  ok(E.COMP_PRESETS.extreme.dpi === 96 && E.COMP_PRESETS.extreme.q === 0.45, 'Ekstrem = 96 DPI / JPEG 45%');
+  ok(E.COMP_PRESETS.sedang.dpi === 150 && E.COMP_PRESETS.sedang.q === 0.62, 'Sedang = 150 DPI / JPEG 62% (default ala iLovePDF Recommended)');
+  ok(typeof E.rasterPageJpeg === 'function' && typeof E.estimateCompressed === 'function' && typeof E.pageHasText === 'function' && typeof E.openRasterDoc === 'function', 'API raster/estimasi/teks/open tersedia');
+}
+
+section('v3.24.22 — merge compress:"sedang" di Node → fallback vektor per halaman');
+{
+  const A = await buildNumberedPdf('KC', 3);
+  const r = await E.merge({ files: [{ name: 'a.pdf', bytes: A, selected: [0, 2] }], compress: 'sedang' });
+  ok(r.comp === 'sedang', 'hasil melaporkan preset yang dipakai');
+  ok(r.pages === 2, 'jumlah halaman tetap benar walau raster gagal (Node tanpa canvas)');
+  ok(r.rasterized === 0 && r.vectorFallback === 2, 'seluruh halaman fallback vektor di Node — hasil tetap valid');
+  const texts = await pageTexts(r.bytes);
+  ok(/KC-HAL1/.test(texts[0]) && /KC-HAL3/.test(texts[1]), 'isi & urutan halaman benar (teks utuh — bukti salinan vektor)');
+  ok(r.compIn > 0, 'compIn (perkiraan ukuran sebelum) terisi: ' + r.compIn);
+  // cover + separator + compress sekaligus — halaman UI tetap vektor
+  const B = await buildNumberedPdf('KC', 2);
+  const r2 = await E.merge({ files: [{ name: 'a.pdf', bytes: A, selected: [0] }, { name: 'b.pdf', bytes: B, selected: [1] }], compress: 'extreme', cover: true, separator: true });
+  ok(r2.comp === 'extreme' && r2.pages === 4 && r2.cover === 1 && r2.separators === 1, 'compress+cover+pemisah: 1 pembuka + 1 isi + 1 pemisah + 1 isi = 4 hlm');
+  const t2 = await pageTexts(r2.bytes);
+  ok(/DAFTAR BAGIAN/.test(t2[0]) && /KC-HAL1/.test(t2[1]) && /B A G I A N/.test(t2[2]) && /KC-HAL2/.test(t2[3]), 'urutan: pembuka → isi bagian-1 (vektor ber-teks) → pemisah → isi bagian-2');
+}
+
+section('v3.24.22 — merge compress:"none"/absen/invalid → perilaku lama utuh');
+{
+  const A = await buildNumberedPdf('KN', 2);
+  const r1 = await E.merge({ files: [{ name: 'a.pdf', bytes: A, selected: [0, 1] }] });
+  ok(r1.comp === 'none' && r1.rasterized === 0 && r1.vectorFallback === 0, 'default tanpa kompres — tanpa raster/fallback');
+  const r2 = await E.merge({ files: [{ name: 'a.pdf', bytes: A, selected: [1] }], compress: 'none' });
+  ok(r2.comp === 'none' && r2.pages === 1, 'compress:"none" eksplisit → salin vektor');
+  const texts = await pageTexts(r2.bytes);
+  ok(/KN-HAL2/.test(texts[0]), 'halaman terpilih benar');
+  const r3 = await E.merge({ files: [{ name: 'a.pdf', bytes: A, selected: [0] }], compress: 'ngawur' });
+  ok(r3.comp === 'none' && r3.pages === 1, 'preset tak dikenal → none (tidak throw)');
+}
+
+section('v3.24.22 — estimateCompressed + pageHasText (Node tanpa canvas tetap aman)');
+{
+  const A = await buildTextHeavyPdf('KE', 4);
+  const doc = await E.openRasterDoc(A);
+  ok(doc && doc.numPages === 4, 'openRasterDoc membuka dokumen (Node ok)');
+  ok(await E.pageHasText(doc, 1) === true, 'pageHasText → true utk halaman born-digital (>40 kar.)');
+  try { if (doc) await doc.destroy(); } catch (_) {}
+  const r = await E.estimateCompressed([{ bytes: A, selected: [0, 1, 3], numPages: 4 }], 'sedang');
+  ok(r.sampled === 0 && r.est === 0, 'Node tanpa canvas → sampled 0 & est 0, TIDAK throw');
+  ok(r.estRaw > 0, 'estRaw (perkiraan tanpa kompres) terisi: ' + Math.round(r.estRaw));
+  ok(r.hasText === true, 'deteksi teks asli bekerja via estimasi (born-digital)');
+  ok(r.preset === 'sedang', 'preset dilaporkan benar');
+  const rn = await E.estimateCompressed([{ bytes: A, selected: [0], numPages: 4 }], 'none');
+  ok(rn.est === rn.estRaw && rn.estRaw > 0, 'preset none → est = estRaw (vektor utuh)');
+  const rx = await E.estimateCompressed([], 'sedang');
+  ok(rx.est === 0 && rx.sampled === 0, 'input kosong → hasil nol, tidak throw');
+  const rz = await E.estimateCompressed([{ bytes: A, selected: [], numPages: 4 }], 'extreme');
+  ok(rz.est === 0 && rz.estRaw === 0, 'tanpa halaman terpilih → nol, tidak throw');
 }
 
 // ---------------------------------------------------------------- hasil

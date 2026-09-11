@@ -13507,6 +13507,12 @@ async function rfRekonDownloadBlob(blob, fileName) {
 
 // ============================================================================
 // v3.24.21 — GABUNG PDF (offline-first) — tab ke-3 "Olah File Tagihan"
+// v3.24.22 — preset KOMPRESI hasil ala iLovePDF (Ekstrem/Sedang/Tanpa):
+//            blok kartu preset di layar ringkasan (persist localStorage),
+//            estimasi ukuran (sampel hal-1 tiap berkas) + peringatan teks
+//            asli, progress raster per halaman, catatan jujur di hasil.
+//            Mesin: RFMergeEngine v1.2.0 (compress + onProgress + fallback
+//            vektor per halaman; cover & pemisah tetap vektor).
 // ============================================================================
 // Satukan beberapa berkas PDF tetapi HANYA halaman yang dicentang dari tiap
 // berkas, dengan halaman pemisah (section) antar berkas penyumbang.
@@ -13544,7 +13550,8 @@ async function rfRekonDownloadBlob(blob, fileName) {
 const RF_MERGE = {
   ENGINE: 'pdftool/merge-engine.js',
   MAX_FILES: 20,
-  THUMB_WIDTH: 108   // px CSS target lebar thumbnail
+  THUMB_WIDTH: 108,   // px CSS target lebar thumbnail
+  COMP_KEY: 'rf-merge-comp'   // v3.24.22: localStorage preset kompresi
 };
 
 // --- State tab Gabung (bertahan selama halaman sidebar terbuka) ---
@@ -13552,8 +13559,13 @@ const rfMergeState = {
   files: [],      // {id,name,size,bytes,numPages,snippets,selected:Set,thumbs:{},thumbsState,err,abort}
   busy: false,
   seq: 1,
-  step: 'pick'    // 'pick' | indeks berkas aktif (angka) | 'final'
+  step: 'pick',   // 'pick' | indeks berkas aktif (angka) | 'final'
+  comp: 'sedang'  // v3.24.22: preset kompresi 'extreme' | 'sedang' | 'none'
 };
+try {
+  const _c = localStorage.getItem(RF_MERGE.COMP_KEY);
+  if (_c === 'extreme' || _c === 'sedang' || _c === 'none') rfMergeState.comp = _c;
+} catch (_) { /* abaikan */ }
 
 // --- Muat runtime gabung (vendor PDF + engine) sekali; idempoten ---
 let rfMergeRuntimePromise = null;
@@ -13597,6 +13609,83 @@ function rfRenderMergePane(P) {
   rfMergeRenderBody(true);
 }
 
+// --- v3.24.22: preset kompresi hasil (ala iLovePDF) — state + HTML ---
+function rfMergeSetComp(key) {
+  if (key !== 'extreme' && key !== 'sedang' && key !== 'none') return;
+  rfMergeState.comp = key;
+  try { localStorage.setItem(RF_MERGE.COMP_KEY, key); } catch (_) { /* abaikan */ }
+}
+function rfMergeCompHTML() {
+  const P = (window.RFMergeEngine && window.RFMergeEngine.COMP_PRESETS) || {
+    extreme: { dpi: 96,  label: 'Ekstrem',       desc: 'paling kecil — buat kirim WA/email' },
+    sedang:  { dpi: 150, label: 'Sedang',        desc: 'seimbang — direkomendasikan' },
+    none:    { dpi: 0,   label: 'Tanpa kompres', desc: 'kualitas & teks asli utuh' }
+  };
+  const card = (key, icon) => {
+    const c = P[key], on = rfMergeState.comp === key;
+    return '<div data-mgact="comp" data-mgcomp="' + key + '" role="radio" aria-checked="' + on + '" style="flex:1;min-width:104px;cursor:pointer;border:1.5px solid ' + (on ? 'var(--primary)' : 'var(--border)') +
+      ';border-radius:9px;padding:7px 9px;background:' + (on ? 'var(--primary-soft)' : 'transparent') + '">' +
+      '<div style="display:flex;align-items:center;gap:5px"><span style="font-size:12px">' + icon + '</span>' +
+      '<b style="font-size:11.5px;color:' + (on ? 'var(--primary)' : 'var(--text)') + '">' + esc(c.label) + '</b>' + (on ? '<span style="margin-left:auto;color:var(--primary);font-size:10px">●</span>' : '') + '</div>' +
+      '<div style="font-size:9.5px;color:var(--muted);margin-top:2px;line-height:1.4">' + esc(c.desc) + (c.dpi ? ' · ' + c.dpi + ' DPI' : '') + '</div></div>';
+  };
+  return '<div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:9px;background:var(--surface-2)">' +
+    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><b style="font-size:10.5px;letter-spacing:.06em;color:var(--text-2)">🗜 KOMPRESI HASIL</b>' +
+    '<span style="font-size:9.5px;color:var(--muted)">ala iLovePDF — 100% offline di perangkat</span></div>' +
+    '<div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">' + card('extreme', '🔥') + card('sedang', '⚖️') + card('none', '📄') + '</div>' +
+    '<div id="rfMgCompEst" style="margin-top:7px;font-size:10px;font-weight:700;color:var(--primary)"></div>' +
+    '<div id="rfMgCompWarn" style="display:none;margin-top:5px;font-size:10px;line-height:1.5;color:var(--amber);background:var(--amber-soft);border:1px solid var(--border);border-radius:7px;padding:6px 8px"></div>' +
+    '</div>';
+}
+
+// --- v3.24.22: format byte ringkas utk estimasi & hasil kompres ---
+function rfMergeFmtBytes(n) {
+  n = Math.max(0, Math.round(n || 0));
+  if (n >= 1048576) return (n / 1048576).toFixed(1).replace('.', ',') + ' MB';
+  return Math.max(1, Math.round(n / 1024)) + ' KB';
+}
+
+// --- v3.24.22: perkiraan ukuran hasil kompres + peringatan teks asli ---
+let rfMgCompSeq = 0;   // guard race: hanya estimasi terakhir yang menulis UI
+async function rfMergeCompEstimate() {
+  const seq = ++rfMgCompSeq;
+  const estEl = document.getElementById('rfMgCompEst');
+  const warnEl = document.getElementById('rfMgCompWarn');
+  if (!estEl || !warnEl) return;
+  const files = rfMergeState.files.filter((f) => !f.err && f.selected.size);
+  if (!files.length) { estEl.textContent = ''; warnEl.style.display = 'none'; return; }
+  if (rfMergeState.comp === 'none') {
+    estEl.textContent = 'Halaman disalin utuh (vektor) — kualitas & teks asli, tanpa pengecilan.';
+    warnEl.style.display = 'none';
+    return;
+  }
+  estEl.textContent = '⏳ Menghitung perkiraan ukuran…';
+  warnEl.style.display = 'none';
+  try {
+    await rfMergeEnsureRuntime();
+    if (seq !== rfMgCompSeq) return;
+    const eng = window.RFMergeEngine;
+    if (!eng || !eng.estimateCompressed) return;
+    const input = files.map((f) => ({ bytes: f.bytes, selected: Array.from(f.selected), numPages: f.numPages }));
+    const r = await eng.estimateCompressed(input, rfMergeState.comp);
+    if (seq !== rfMgCompSeq) return;
+    const el2 = document.getElementById('rfMgCompEst');
+    const w2 = document.getElementById('rfMgCompWarn');
+    if (!el2 || !w2) return;
+    if (r.hasText) {
+      w2.innerHTML = '⚠ Ada berkas berisi <b>teks asli</b> — hasil kompres jadi gambar: teks tak bisa dicari/diseleksi. Pilih <b>Tanpa kompres</b> bila teks penting.';
+      w2.style.display = 'block';
+    }
+    const totalPick = input.reduce((a, x) => a + x.selected.length, 0);
+    const dpi = (eng.COMP_PRESETS && eng.COMP_PRESETS[rfMergeState.comp] && eng.COMP_PRESETS[rfMergeState.comp].dpi) || '';
+    el2.textContent = r.sampled
+      ? 'Perkiraan hasil: ≈ ' + rfMergeFmtBytes(Math.round(r.est) + 120 * 1024) + ' dari ' + totalPick + ' halaman (sampel ' + r.sampled + ' berkas × ' + dpi + ' DPI) — ukuran final tampil setelah digabung.'
+      : 'Perkiraan ukuran tampil setelah digabung.';
+  } catch (e) {
+    if (seq === rfMgCompSeq) { const el3 = document.getElementById('rfMgCompEst'); if (el3) el3.textContent = ''; }
+  }
+}
+
 // --- Delegasi klik: navigasi wizard + aksi per-berkas ---
 function rfMergeOnBodyClick(ev) {
   const btn = ev.target.closest('[data-mgact]');
@@ -13605,6 +13694,13 @@ function rfMergeOnBodyClick(ev) {
   if (act === 'go') { rfMergeGoWizard(); return; }
   if (act === 'next') { rfMergeStepNext(); return; }
   if (act === 'prev') { rfMergeStepPrev(); return; }
+  if (act === 'comp') {   // v3.24.22: pilih preset kompresi
+    rfMergeSetComp(btn.getAttribute('data-mgcomp') || 'sedang');
+    const wrap = document.getElementById('rfMgCompWrap');
+    if (wrap) wrap.innerHTML = rfMergeCompHTML();   // cat ulang kartu preset
+    rfMergeFinalEstimate();                          // estimasi ukuran ikut preset
+    return;
+  }
   if (act === 'backpick') { rfMergeState.step = 'pick'; rfMergeRenderBody(true); return; }
   if (act === 'backwiz') { rfMergeState.step = rfMergeDefaultWizardIdx(true); rfMergeRenderBody(true); return; }
   if (act === 'gabung') { rfMergeDownload(); return; }
@@ -13843,6 +13939,7 @@ function rfMergeViewFinalHtml() {
     (!parts.length ? '<div class="hintbox" style="background:var(--amber-soft);color:var(--amber);margin-bottom:8px">Belum ada halaman dicentang — kembali dan centang minimal satu halaman.</div>' : '') +
     rows +
     '<div id="rfMgEst" style="margin-top:9px"></div>' +
+    '<div id="rfMgCompWrap">' + rfMergeCompHTML() + '</div>' +   // v3.24.22: preset kompresi
     '<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);cursor:pointer;margin-top:9px;margin-bottom:8px">' +
       '<input type="checkbox" id="rfMgCover" checked style="flex:none;accent-color:var(--primary);width:15px;height:15px;margin:0;margin-top:2px">' +
       '<span style="font-size:11.5px;color:var(--text);line-height:1.5"><b>Halaman pembuka (daftar bagian)</b><br><span style="color:var(--text-2)">Halaman pertama berisi judul + tanggal + daftar "BAGIAN n — nama berkas" — memudahkan verifikasi isi gabungan.</span></span>' +
@@ -13875,6 +13972,7 @@ function rfMergeFinalEstimate() {
       : 'Perkiraan hasil: ' + total + ' halaman — ' + totalSel + ' terpilih' +
         (useCover ? ' + 1 pembuka' : '') + (useSep && seps ? ' + ' + seps + ' pemisah' : '')) +
   '</div>';
+  rfMergeCompEstimate();   // v3.24.22: estimasi ukuran + peringatan teks asli
 }
 
 // ===================== TERIMA BERKAS + ANALISA + THUMB ======================
@@ -14043,13 +14141,33 @@ async function rfMergeDownload() {
   const oldLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Menyusun…'; }
   if (st) st.innerHTML = '<div class="hintbox">⏳ Menyusun PDF gabungan…</div>';
+  const compLabel = (window.RFMergeEngine && window.RFMergeEngine.COMP_PRESETS && window.RFMergeEngine.COMP_PRESETS[rfMergeState.comp])
+    ? window.RFMergeEngine.COMP_PRESETS[rfMergeState.comp].label : '';
   try {
     await new Promise((r) => setTimeout(r, 30)); // beri kesempatan UI merender
-    const r = await window.RFMergeEngine.merge({ files, separator: useSep, cover: useCover });
+    const r = await window.RFMergeEngine.merge({
+      files, separator: useSep, cover: useCover,
+      compress: rfMergeState.comp,                    // v3.24.22: preset kompresi
+      onProgress: (pi) => {                           // v3.24.22: progress raster per halaman
+        if (st) st.innerHTML = '<div class="hintbox">⏳ Menggabung bagian ' + pi.part + '/' + pi.parts + ' — halaman ' + pi.page + '/' + pi.pages + (compLabel ? ' (' + esc(compLabel) + ')' : '') + '…</div>';
+      }
+    });
     const blob = new Blob([r.bytes], { type: 'application/pdf' });
     const base = (String(files[0].name).replace(/\.pdf$/i, '').trim() || 'gabung').slice(0, 60);
     await rfRekonDownloadBlob(blob, base + ' - GABUNG.pdf');
-    if (st) st.innerHTML = '<div class="hintbox" style="background:var(--green-soft);color:var(--green)">✓ PDF gabungan siap — ' + r.pages + ' halaman (' + r.parts + ' berkas' + (r.cover ? ' + 1 pembuka' : '') + (r.separators ? ' + ' + r.separators + ' pemisah' : '') + ', ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB). Cek folder Unduhan.</div>';
+    // v3.24.22: catatan jujur kompres — tak mengecilkan bila sumber sudah efisien
+    let compNote = '';
+    if (rfMergeState.comp !== 'none' && r.compIn) {
+      if (blob.size >= r.compIn) compNote = ' — kompres ' + esc(compLabel) + ' tak mengecilkan berkas (sumber sudah efisien)';
+      else {
+        const pct = Math.round((1 - blob.size / r.compIn) * 100);
+        if (pct > 0) {
+          compNote = ' — 🗜 ' + esc(compLabel) + ': ' + rfMergeFmtBytes(r.compIn) + ' → ' + rfMergeFmtBytes(blob.size) + ' (−' + pct + '%)';
+          toast('🗜 Kompres ' + compLabel + ': ' + rfMergeFmtBytes(r.compIn) + ' → ' + rfMergeFmtBytes(blob.size) + ' (−' + pct + '%)');
+        }
+      }
+    }
+    if (st) st.innerHTML = '<div class="hintbox" style="background:var(--green-soft);color:var(--green)">✓ PDF gabungan siap — ' + r.pages + ' halaman (' + r.parts + ' berkas' + (r.cover ? ' + 1 pembuka' : '') + (r.separators ? ' + ' + r.separators + ' pemisah' : '') + ', ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB' + compNote + '). Cek folder Unduhan.</div>';
     toast('✓ PDF gabungan berhasil dibuat');
   } catch (e) {
     console.error('[RecallFox] merge download:', e);

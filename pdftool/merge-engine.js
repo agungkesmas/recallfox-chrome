@@ -1,8 +1,9 @@
 /**
  * ============================================================================
- * RecallFox v3.24.21 — GABUNG PDF (offline-first)
+ * RecallFox v3.24.22 — GABUNG PDF (offline-first)
  * pdftool/merge-engine.js — Mesin gabung PDF dengan pemilihan halaman
- *        per-berkas + halaman pembuka (daftar bagian) + halaman pemisah.
+ *        per-berkas + halaman pembuka (daftar bagian) + halaman pemisah
+ *        + kompresi hasil (rasterize).
  * ----------------------------------------------------------------------------
  * Kebutuhan user (v3.24.20): menyatukan beberapa berkas PDF tetapi HANYA
  * halaman yang dicentang dari tiap berkas (mis. dari berkas tagihan RS 10
@@ -12,6 +13,15 @@
  * Revisi v3.24.21 (permintaan user): opsional HALAMAN PEMBUKA di halaman
  * pertama hasil gabungan — berisi judul, tanggal, dan daftar "BAGIAN n —
  * nama berkas (k hlm)" supaya verifikasi isi gabungan lebih mudah.
+ *
+ * Revisi v3.24.22 (permintaan user): preset KOMPRESI hasil ala iLovePDF —
+ *   Ekstrem (96 DPI, JPEG 45%) / Sedang (150 DPI, JPEG 62%, default,
+ *   setara "Recommended" iLovePDF) / Tanpa kompres (vektor utuh, lama).
+ *   Halaman ISI di-rasterize (pdf.js → canvas → JPEG → embed pdf-lib)
+ *   dgn FALLBACK VEKTOR per halaman (halaman gagal raster disalin utuh);
+ *   halaman pembuka & pemisah TETAP vektor. Tersedia pula estimasi ukuran
+ *   hasil (sampel halaman terpilih pertama tiap berkas) + deteksi teks
+ *   asli (born-digital) untuk peringatan UI "teks jadi gambar".
  *
  *   berkas A (10 hlm) → centang [1,4,6]  ┐
  *                                        ├─ hasil: A2 A5 A7 │ PEMISAH │ B1 B3
@@ -152,6 +162,133 @@
       throw EngineError('Pustaka penulis PDF (pdf-lib) belum termuat.', 'no-pdflib');
     }
     return lib;
+  }
+
+  // ------------------------------------------------------------------------
+  // v3.24.22 — KOMPRESI HASIL (ala iLovePDF: Ekstrem / Sedang / Tanpa)
+  // ------------------------------------------------------------------------
+
+  /**
+   * Preset kompresi hasil gabungan. Halaman isi di-RASTERIZE (pdf.js render
+   * → canvas → JPEG → embed pdf-lib); halaman pembuka & pemisah TETAP
+   * vektor. Mapping mengikuti iLovePDF: extreme=paling kecil, sedang=default
+   * setara "Recommended", none=perilaku lama (salin vektor utuh).
+   * Catatan: raster membuang teks asli halaman isi (jadi gambar) — UI
+   * memberi peringatan via pageHasText()/estimateCompressed().hasText.
+   */
+  const COMP_PRESETS = {
+    extreme: { dpi: 96,  q: 0.45, label: 'Ekstrem',        desc: 'paling kecil — buat kirim WA/email' },
+    sedang:  { dpi: 150, q: 0.62, label: 'Sedang',         desc: 'seimbang — direkomendasikan' },
+    none:    { dpi: 0,   q: 1,    label: 'Tanpa kompres',  desc: 'kualitas & teks asli utuh' }
+  };
+  const RASTER_MAX_PX = 4096; // pengaman kanvas utk halaman format besar
+
+  /**
+   * Buka dokumen pdf.js utk raster (flag aman CSP MV3 — tanpa eval).
+   * Mengembalikan null bila gagal (caller fallback ke salin vektor).
+   * Buffer TIDAK diubah (diberikan sbg salinan).
+   */
+  async function openRasterDoc(bytes) {
+    const pdfjs = requirePdfjs();
+    try {
+      return await pdfjs.getDocument({
+        data: copyBytes(bytes),
+        isEvalSupported: false,   // wajib: tanpa eval (aman CSP MV3)
+        disableFontFace: true,
+        useWorkerFetch: false,
+      }).promise;
+    } catch (e) { return null; }
+  }
+
+  /**
+   * Render 1 halaman (1-based) → JPEG blob via canvas. w/h yang dikembalikan
+   * = ukuran TITIK asli halaman (72 dpi) supaya dimensi fisik halaman
+   * keluaran tetap sama. Melempar bila canvas tak tersedia (Node) atau
+   * render gagal — caller WAJIB punya fallback vektor per halaman.
+   */
+  async function rasterPageJpeg(pdfjsDoc, pageNo, dpi, q) {
+    if (typeof document === 'undefined' || !document.createElement) {
+      throw EngineError('Canvas tidak tersedia (lingkungan non-browser).', 'no-canvas');
+    }
+    const page = await pdfjsDoc.getPage(pageNo);
+    const vp0 = page.getViewport({ scale: 1 });
+    let scale = dpi / 72;
+    if (Math.max(vp0.width, vp0.height) * scale > RASTER_MAX_PX) {
+      scale = RASTER_MAX_PX / Math.max(vp0.width, vp0.height);
+    }
+    const vp = page.getViewport({ scale });
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(vp.width));
+    cv.height = Math.max(1, Math.round(vp.height));
+    try {
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      const blob = await new Promise((res, rej) =>
+        cv.toBlob((b) => (b ? res(b) : rej(new Error('toBlob gagal'))), 'image/jpeg', q));
+      return { blob, w: vp0.width, h: vp0.height };
+    } finally {
+      try { cv.width = 0; cv.height = 0; } catch (e) { /* abaikan */ }
+      try { page.cleanup(); } catch (e) { /* abaikan */ }
+    }
+  }
+
+  /**
+   * Halaman mengandung teks asli (born-digital)? Ambang >40 karakter
+   * non-spasi — sama dgn PWA desktop. Gagal baca → false (tidak menghalangi).
+   */
+  async function pageHasText(pdfjsDoc, pageNo) {
+    try {
+      const page = await pdfjsDoc.getPage(pageNo);
+      const tc = await page.getTextContent();
+      const chars = (tc.items || []).reduce((a, it) => a + String(it.str || '').replace(/\s+/g, '').length, 0);
+      return chars > 40;
+    } catch (e) { return false; }
+  }
+
+  /**
+   * Estimasi ukuran hasil kompres utk UI (dipanggil SEBELUM merge).
+   * files: [{bytes, selected:number[] (0-based), numPages}] — sampel halaman
+   * terpilih PERTAMA tiap berkas × jumlah halaman terpilih (heuristik sama
+   * dgn PWA desktop). Juga mendeteksi teks asli utk peringatan UI.
+   * Aman di Node (tanpa canvas): sampled=0, est=0 — TIDAK pernah melempar.
+   * @returns {Promise<{est:number, estRaw:number, sampled:number,
+   *                    hasText:boolean, preset:string}>}
+   */
+  async function estimateCompressed(files, presetKey) {
+    const preset = COMP_PRESETS[presetKey] || COMP_PRESETS.none;
+    const out = { est: 0, estRaw: 0, sampled: 0, hasText: false, preset: preset.key || presetKey };
+    const list = Array.isArray(files) ? files : [];
+    const rawOf = (f) => (f && f.bytes && f.bytes.byteLength)
+      ? f.bytes.byteLength * ((f.selected || []).length) / Math.max(1, f.numPages || (f.selected || []).length)
+      : 0;
+    if (preset === COMP_PRESETS.none || !list.length) {
+      out.estRaw = list.reduce((a, f) => a + rawOf(f), 0);
+      out.est = out.estRaw;
+      return out;
+    }
+    for (const f of list) {
+      if (!f || !f.bytes || !f.bytes.length) continue;
+      const sel = Array.isArray(f.selected) ? f.selected.slice().sort((a, b) => a - b) : [];
+      if (!sel.length) continue;
+      out.estRaw += rawOf(f);
+      let doc = null;
+      try {
+        doc = await openRasterDoc(f.bytes);
+        if (!doc) continue;
+        const first = Math.min(sel[0], f.numPages || sel.length) + 1; // 0-based → 1-based
+        // Deteksi teks asli DULU (murah, selalu jalan — juga di Node tanpa canvas)
+        if (!out.hasText) out.hasText = await pageHasText(doc, first);
+        try {
+          const r = await rasterPageJpeg(doc, first, preset.dpi, preset.q);
+          out.est += r.blob.size * sel.length;
+          out.sampled++;
+        } catch (e) { /* sampel raster gagal (mis. Node tanpa canvas) → lewati */ }
+      } catch (e) { /* berkas ini gagal → lewati */ }
+      finally { try { if (doc) await doc.destroy(); } catch (e2) { /* abaikan */ } }
+    }
+    return out;
   }
 
   // --------------------------------------------------------------------------
@@ -370,14 +507,22 @@
    * @param {Array<{name:string, bytes:Uint8Array, selected:number[]}>} opts.files
    * @param {boolean} [opts.separator=true] sisipkan halaman pemisah antar berkas
    * @param {boolean} [opts.cover=false] sisipkan halaman pembuka daftar bagian
+   * @param {string}  [opts.compress='none'] preset kompresi: 'extreme'|'sedang'|'none'
+   * @param {Function} [opts.onProgress] callback({part,parts,page,pages,label})
    * @returns {Promise<{bytes:Uint8Array, pages:number, parts:number,
-   *                    separators:number, cover:number}>}
+   *                    separators:number, cover:number, comp:string,
+   *                    compIn:number, rasterized:number, vectorFallback:number}>}
    */
   async function merge(opts) {
     const pdfLib = requirePdfLib();
     const files = (opts && Array.isArray(opts.files)) ? opts.files : [];
     const separator = !(opts && opts.separator === false);
     const withCover = !!(opts && opts.cover);
+    // v3.24.22: preset kompresi — 'none' default (perilaku lama UTUH).
+    const compKey = (opts && typeof opts.compress === 'string' && COMP_PRESETS[opts.compress]) ? opts.compress : 'none';
+    const comp = COMP_PRESETS[compKey];
+    const useRaster = comp !== COMP_PRESETS.none;
+    const onProgress = (opts && typeof opts.onProgress === 'function') ? opts.onProgress : null;
     if (!files.length) throw EngineError('Tidak ada berkas untuk digabung.', 'nofiles');
 
     // Siapkan bagian yang benar-benar menyumbang halaman.
@@ -387,7 +532,7 @@
       const src = await pdfLib.PDFDocument.load(copyBytes(f.bytes), { ignoreEncryption: true });
       const idx = clampIndices(f.selected, src.getPageCount());
       if (!idx.length) continue; // berkas tanpa halaman terpilih → dilewati
-      parts.push({ name: String(f.name || '(tanpa nama)'), src, idx });
+      parts.push({ name: String(f.name || '(tanpa nama)'), src, idx, bytes: f.bytes });
     }
     if (!parts.length) throw EngineError('Tidak ada halaman yang dicentang. Centang minimal satu halaman.', 'noselection');
 
@@ -399,42 +544,90 @@
 
     let separators = 0;
     let coverAdded = 0;
-    // Halaman pembuka (daftar bagian) — SEBELUM bagian pertama (v3.24.21).
-    if (withCover) {
-      const firstSel = parts[0].src.getPage(parts[0].idx[0]);
-      await drawCoverPage(out, fonts, {
-        parts,
-        dateLabel,
-        size: firstSel.getSize()
-      });
-      coverAdded = 1;
-    }
-    for (let p = 0; p < parts.length; p++) {
-      const part = parts[p];
-      if (separator && p > 0) {
-        const firstSel = part.src.getPage(part.idx[0]);
-        const size = firstSel.getSize();
-        await drawSeparatorPage(out, fonts, {
-          partNo: p + 1,
-          name: part.name,
-          pagesPicked: part.idx.length,
-          pagesTotal: part.src.getPageCount(),
+    // v3.24.22: penghitung raster/fallback + dokumen pdf.js per bagian
+    let rasterized = 0;
+    let vectorFallback = 0;
+    const rasterDocs = useRaster ? new Map() : null; // indeks bagian → pdf.js doc|null
+    const closeRasterDocs = async () => {
+      if (!rasterDocs) return;
+      for (const d of rasterDocs.values()) { try { if (d) await d.destroy(); } catch (e) { /* abaikan */ } }
+      rasterDocs.clear();
+    };
+    try {
+      // Halaman pembuka (daftar bagian) — SEBELUM bagian pertama (v3.24.21).
+      if (withCover) {
+        const firstSel = parts[0].src.getPage(parts[0].idx[0]);
+        await drawCoverPage(out, fonts, {
+          parts,
           dateLabel,
-          size
+          size: firstSel.getSize()
         });
-        separators++;
+        coverAdded = 1;
       }
-      const copied = await out.copyPages(part.src, part.idx);
-      for (const pg of copied) out.addPage(pg);
+      for (let p = 0; p < parts.length; p++) {
+        const part = parts[p];
+        if (separator && p > 0) {
+          const firstSel = part.src.getPage(part.idx[0]);
+          const size = firstSel.getSize();
+          await drawSeparatorPage(out, fonts, {
+            partNo: p + 1,
+            name: part.name,
+            pagesPicked: part.idx.length,
+            pagesTotal: part.src.getPageCount(),
+            dateLabel,
+            size
+          });
+          separators++;
+        }
+        // v3.24.22: siapkan dokumen pdf.js bagian ini bila raster menyala
+        let pdoc = null;
+        if (useRaster) {
+          if (!rasterDocs.has(p)) rasterDocs.set(p, await openRasterDoc(part.bytes));
+          pdoc = rasterDocs.get(p);
+        }
+        if (useRaster && pdoc) {
+          // RASTER: halaman terpilih → JPEG → embed (fallback vektor per halaman)
+          for (let k = 0; k < part.idx.length; k++) {
+            if (onProgress) {
+              try { onProgress({ part: p + 1, parts: parts.length, page: k + 1, pages: part.idx.length, label: comp.label }); } catch (e) { /* abaikan */ }
+            }
+            try {
+              const r = await rasterPageJpeg(pdoc, part.idx[k] + 1, comp.dpi, comp.q);
+              const img = await out.embedJpg(new Uint8Array(await r.blob.arrayBuffer()));
+              const pp = out.addPage([r.w, r.h]);
+              pp.drawImage(img, { x: 0, y: 0, width: r.w, height: r.h });
+              rasterized++;
+            } catch (e) {
+              // Fallback vektor utk halaman ini — hasil tetap benar.
+              const pv = await out.copyPages(part.src, [part.idx[k]]);
+              for (const pg2 of pv) out.addPage(pg2);
+              vectorFallback++;
+            }
+          }
+        } else {
+          if (useRaster && !pdoc) vectorFallback += part.idx.length; // pdf.js gagal → seluruh bagian vektor
+          const copied = await out.copyPages(part.src, part.idx);
+          for (const pg of copied) out.addPage(pg);
+        }
+      }
+    } finally {
+      await closeRasterDocs();
     }
 
+    // v3.24.22: perkiraan ukuran "sebelum" (proporsi byte × rasio halaman)
+    const compIn = Math.round(parts.reduce((a, pt) =>
+      a + (pt.bytes && pt.bytes.byteLength ? pt.bytes.byteLength * pt.idx.length / Math.max(1, pt.src.getPageCount()) : 0), 0));
     const bytes = await out.save({ useObjectStreams: false });
     return {
       bytes: new Uint8Array(bytes),
       pages: out.getPageCount(),
       parts: parts.length,
       separators,
-      cover: coverAdded
+      cover: coverAdded,
+      comp: compKey,
+      compIn,
+      rasterized,
+      vectorFallback
     };
   }
 
@@ -446,10 +639,12 @@
     copyBytes, sanitizeWinAnsi, wrapLabel, clampIndices,
     // tingkat tinggi
     analyzeDocument, merge,
+    // v3.24.22: kompresi hasil
+    COMP_PRESETS, openRasterDoc, rasterPageJpeg, pageHasText, estimateCompressed,
     // konstanta (untuk UI/tests)
-    CAP_SNIPPET_PAGES, FOOTER_TEXT,
+    CAP_SNIPPET_PAGES, FOOTER_TEXT, RASTER_MAX_PX,
     // versi mesin
-    ENGINE_VERSION: '1.1.0 (v3.24.21)',
+    ENGINE_VERSION: '1.2.0 (v3.24.22)',
   };
 
   global.RFMergeEngine = API;
