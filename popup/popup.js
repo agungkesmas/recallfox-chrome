@@ -13591,7 +13591,7 @@ function rfRenderMergePane(P) {
       '<div id="rfMgState" style="margin-top:10px"></div>' +
     '</div>' +
     '<div id="rfMgBody"></div>' +
-    '<div class="hintbox">💡 Alur: pilih berkas → centang halaman berkas A → <b>Selanjutnya</b> → berkas B → … → <b>Gabungkan</b>. Koreksi kapan saja lewat <b>← Sebelumnya</b> atau <b>dropdown judul</b> di atas. Urutan berkas diatur di layar "Kelola daftar berkas".</div>';
+    '<div class="hintbox">💡 Alur: pilih berkas → centang halaman berkas A → <b>Selanjutnya</b> → berkas B → … → <b>Gabungkan</b>. Koreksi kapan saja lewat <b>← Sebelumnya</b> atau <b>dropdown judul</b> di atas. Urutan berkas diatur di layar "Kelola daftar berkas". 🧹 <b>Kosongkan semua</b> membuang daftar kapan saja; setelah PDF berhasil dibuat, daftar <b>otomatis dikosongkan</b>.</div>';
 
   const input = $('#rfMgFile');
   $('#rfMgPick').addEventListener('click', () => input.click());
@@ -13704,6 +13704,17 @@ function rfMergeOnBodyClick(ev) {
   if (act === 'backpick') { rfMergeState.step = 'pick'; rfMergeRenderBody(true); return; }
   if (act === 'backwiz') { rfMergeState.step = rfMergeDefaultWizardIdx(true); rfMergeRenderBody(true); return; }
   if (act === 'gabung') { rfMergeDownload(); return; }
+  if (act === 'clearall') {   // v3.24.23: tombol clear — buang semua berkas + kembali ke layar awal
+    const n = rfMergeState.files.length;
+    if (!n) return;
+    if (!confirm('Kosongkan semua ' + n + ' berkas dari daftar gabung?')) return;
+    for (const x of rfMergeState.files) x.abort = true;
+    rfMergeState.files = [];
+    rfMergeState.step = 'pick';
+    rfMergeRenderBody(true);
+    toast('🧹 Daftar gabung dikosongkan');
+    return;
+  }
   const id = Number(btn.getAttribute('data-mgid'));
   const idx = rfMergeState.files.findIndex((x) => x.id === id);
   if (idx < 0) return;
@@ -13862,6 +13873,7 @@ function rfMergeViewPickHtml() {
     '<div class="card" style="margin-bottom:10px">' +
       (fs.length ? '<div style="font-size:11px;color:var(--text-2);margin-bottom:8px;line-height:1.5">' + fs.length + ' berkas. Urutan = urutan di PDF gabungan — atur dgn <b>↑ ↓</b>. Lanjut untuk mencentang halaman <b>satu berkas per layar</b>.</div>' : '') +
       '<button class="btn btn-p" data-mgact="go" style="width:100%"' + (anyOk ? '' : ' disabled') + '>Lanjut pilih halaman →</button>' +
+      (fs.length ? '<button class="btn" data-mgact="clearall" style="width:100%;margin-top:7px">🧹 Kosongkan semua (' + fs.length + ' berkas)</button>' : '') +
     '</div>';
 }
 
@@ -13950,6 +13962,7 @@ function rfMergeViewFinalHtml() {
     '</label>' +
     '<button class="btn btn-p" data-mgact="gabung" style="width:100%"' + ((!parts.length || pending) ? ' disabled' : '') + '>🔗 Gabungkan &amp; unduh</button>' +
     '<button class="btn" data-mgact="backwiz" style="width:100%;margin-top:7px">← Kembali pilih halaman</button>' +
+    '<button class="btn" data-mgact="clearall" style="width:100%;margin-top:7px">🧹 Kosongkan semua berkas</button>' +
     '<div id="rfMgDlState" style="margin-top:9px"></div>' +
   '</div>';
 }
@@ -14169,6 +14182,18 @@ async function rfMergeDownload() {
     }
     if (st) st.innerHTML = '<div class="hintbox" style="background:var(--green-soft);color:var(--green)">✓ PDF gabungan siap — ' + r.pages + ' halaman (' + r.parts + ' berkas' + (r.cover ? ' + 1 pembuka' : '') + (r.separators ? ' + ' + r.separators + ' pemisah' : '') + ', ' + Math.max(1, Math.round(blob.size / 1024)) + ' KB' + compNote + '). Cek folder Unduhan.</div>';
     toast('✓ PDF gabungan berhasil dibuat');
+    // v3.24.23: daftar dibersihkan otomatis setelah gabung sukses — jangan jadi draf abadi
+    const mergedIds = rfMergeState.files.map((x) => x.id);
+    setTimeout(() => {
+      if (rfMergeState.busy) return;
+      if (!rfMergeState.files.length || rfMergeState.files.some((x) => !mergedIds.includes(x.id))) return;   // user sudah mulai daftar baru — biarkan
+      for (const x of rfMergeState.files) x.abort = true;
+      rfMergeState.files = [];
+      rfMergeState.step = 'pick';
+      rfMergeRenderBody(false);
+      const stx = $('#rfMgState');
+      if (stx) stx.innerHTML = '<div class="hintbox" style="background:var(--green-soft);color:var(--green)">✓ Daftar dikosongkan otomatis setelah PDF gabungan dibuat.</div>';
+    }, 6000);
   } catch (e) {
     console.error('[RecallFox] merge download:', e);
     if (st) st.innerHTML = '<div class="hintbox" style="background:var(--danger-soft);color:var(--danger)">⚠ ' + esc(e.message || 'Gagal menggabungkan PDF.') + '</div>';
