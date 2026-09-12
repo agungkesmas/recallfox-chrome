@@ -2,24 +2,24 @@
 // RecallFox v3.21.0 — Pelindung Konten / Mode Fokus
 //
 // Dibuka oleh background.checkContentGuard saat user melakukan pencarian di
-// luar topik profil aktif (YouTube atau X). URL params:
-//   ?platform=youtube|x&profileId=<id>
+// luar topik profil aktif (YouTube). URL params:
+//   ?platform=youtube&profileId=<id>
+// (v3.24.25: platform=x DIHAPUS — addon tidak lagi mengunci pencarian di X.)
 //
 // Memuat profil dari background (CG_GET_TOPIC_PROFILES), menampilkan kartu
 // untuk tiap topik profil. Klik kartu → navigasi ke search topik di tab yang
-// sama (youtube.com/results?search_query=<topic> atau x.com/search?q=<topic>).
+// sama (youtube.com/results?search_query=<topic>).
 // Query ini lolos pemeriksaan Search Lock (karena persis = topik profil).
 
 (async function () {
   'use strict';
 
   const params = new URLSearchParams(location.search);
-  const platform = params.get('platform') === 'x' ? 'x' : 'youtube';
+  const platform = 'youtube';  // v3.24.25: hanya YouTube
   const profileId = params.get('profileId') || '';
-  const isYouTube = platform === 'youtube';
-  const isX = platform === 'x';
+  const isYouTube = true;
 
-  const platformLabel = isYouTube ? 'YouTube' : (isX ? 'X (Twitter)' : 'platform');
+  const platformLabel = 'YouTube';
   document.getElementById('sl-platform-label').textContent = platformLabel;
   document.getElementById('sl-platform-label-2').textContent = platformLabel;
   document.getElementById('sl-section-icon').textContent = isYouTube ? '📺' : '🔍';
@@ -66,9 +66,7 @@
       'untuk membuka kunci pencarian bebas.</div>';
   } else {
     grid.innerHTML = topics.map(t => {
-      const url = isYouTube
-        ? 'https://www.youtube.com/results?search_query=' + encodeURIComponent(t)
-        : 'https://x.com/search?q=' + encodeURIComponent(t) + '&src=typed_query&f=top';
+      const url = 'https://www.youtube.com/results?search_query=' + encodeURIComponent(t);
       return '<a class="sl-card" href="' + url + '">' +
         '<div class="sl-card-icon">🔎</div>' +
         '<div class="sl-card-body">' +

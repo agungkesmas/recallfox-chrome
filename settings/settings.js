@@ -169,7 +169,6 @@ async function init() {
   try {
     setChk('rf-set-cg-enabled', s.contentGuardEnabled !== false);
     setChk('rf-set-cg-block-yt', s.contentGuardBlockYtChannels !== false);
-    setChk('rf-set-cg-block-x', s.contentGuardBlockXAccounts !== false);
     setChk('rf-set-cg-block-shorts', s.contentGuardBlockShorts === true);
     setChk('rf-set-cg-notify', s.contentGuardNotifyOnBlock !== false);
     setChk('rf-set-cg-debug', !!s.contentGuardDebugMode);
@@ -403,7 +402,6 @@ function bindEvents() {
     // Pelindung Konten (v3.21.0 Mode Fokus) — toggle-toggle yang tersisa
     ['rf-set-cg-enabled', 'contentGuardEnabled', 'checked'],
     ['rf-set-cg-block-yt', 'contentGuardBlockYtChannels', 'checked'],
-    ['rf-set-cg-block-x', 'contentGuardBlockXAccounts', 'checked'],
     ['rf-set-cg-block-shorts', 'contentGuardBlockShorts', 'checked'],
     ['rf-set-cg-notify', 'contentGuardNotifyOnBlock', 'checked'],
     ['rf-set-cg-debug', 'contentGuardDebugMode', 'checked'],
@@ -468,10 +466,10 @@ function bindEvents() {
         } catch (e) {
           console.warn('[RecallFox/Settings] Broadcast failed:', e);
         }
-        // v0.8.26: Juga kirim CG_FORCE_RESCAN ke semua tabs YouTube/X
+        // v0.8.26: Juga kirim CG_FORCE_RESCAN ke semua tabs YouTube
         try {
-          const tabs = await browser.tabs.query({ url: ['*://*.youtube.com/*', '*://*.x.com/*', '*://*.twitter.com/*'] });
-          console.log('[RecallFox/Settings] Force-rescanning', tabs.length, 'YouTube/X tabs');
+          const tabs = await browser.tabs.query({ url: ['*://*.youtube.com/*'] });
+          console.log('[RecallFox/Settings] Force-rescanning', tabs.length, 'YouTube tabs');
           for (const t of tabs) {
             browser.tabs.sendMessage(t.id, { type: 'CG_RESCAN_NOW' }).catch(() => {});
           }

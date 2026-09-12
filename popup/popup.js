@@ -10967,7 +10967,6 @@ async function renderKontrolSitusPage(B) {
       currentDomain = url.hostname.replace(/^www\./, '');
       // Pick icon based on domain
       if (currentDomain.includes('youtube')) { currentSiteIcon = '▶'; }
-      else if (currentDomain.includes('twitter') || currentDomain.endsWith('x.com')) { currentSiteIcon = '𝕏'; }
       else if (currentDomain.includes('facebook')) { currentSiteIcon = 'f'; }
       else if (currentDomain.includes('instagram')) { currentSiteIcon = '📷'; }
       else { currentSiteIcon = currentDomain.charAt(0).toUpperCase(); }
@@ -11009,9 +11008,10 @@ async function renderKontrolSitusPage(B) {
     });
   });
 
-  // v3.6: Tambahkan juga filter konten (keyword/channel/account/x_post_url) yang aktif
+  // v3.6: Tambahkan juga filter konten (keyword/channel) yang aktif
   // untuk domain ini — supaya counter "Diblokir" akurat mencerminkan semua aturan.
-  // Cakupan: 'all' (semua situs), 'youtube.com' (hanya YT), 'x.com' (hanya X), atau domain spesifik.
+  // Cakupan: 'all' (semua situs), 'youtube.com' (hanya YT), atau domain spesifik.
+  // (v3.24.25: cakupan x.com/twitter.com dihapus bersama fitur X.)
   const cgFiltersForCurrent = [];
   (userBlocklist || []).forEach(function (b) {
     if (!b || !b.value) return;
@@ -11020,8 +11020,7 @@ async function renderKontrolSitusPage(B) {
     // Match kalau: domain kosong (all), atau domain cocok / suffix cocok
     const matches = !bDomain || bDomain === 'all' ||
       cd === bDomain || cd.endsWith('.' + bDomain) ||
-      (bDomain === 'youtube.com' && (cd.endsWith('youtube.com') || cd.endsWith('youtube-nocookie.com'))) ||
-      (bDomain === 'x.com' && (cd.endsWith('x.com') || cd.endsWith('twitter.com')));
+      (bDomain === 'youtube.com' && (cd.endsWith('youtube.com') || cd.endsWith('youtube-nocookie.com')));
     if (matches) {
       cgFiltersForCurrent.push({
         domain: b.domain || 'all',
@@ -11194,7 +11193,7 @@ async function renderKontrolSitusPage(B) {
       + '</div>'
 
       // v3.4: Blocked view — daftar semua selector yang di-block di domain aktif
-      // v3.6: Sekarang juga tampilkan filter konten (keyword/channel/account/x_post_url)
+      // v3.6: Sekarang juga tampilkan filter konten (keyword/channel)
       + '<div class="ks-view' + (activeTab === 'blocked' ? ' active' : '') + '" id="ksViewBlocked">'
       +   '<div class="ks-intro"><div><h2>Diblokir di ' + esc(currentDomain) + '</h2><p>Daftar semua aturan aktif untuk situs ini. Centang item lalu klik "Hapus terpilih", atau klik ✕ untuk hapus satu-satu.</p></div></div>'
       +   '<div class="ks-batch-bar" id="ksBatchBar" style="display:none;margin-bottom:8px;padding:6px 10px;background:var(--primary-soft);border-radius:var(--r-md);align-items:center;gap:8px;font-size:12px"><label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="ksSelectAll"><span>Pilih semua</span></label><span style="flex:1"></span><span id="ksSelCount">0 dipilih</span><button class="btn btn-d" id="ksBatchDelete" style="padding:4px 12px;font-size:11px">Hapus terpilih</button></div>'
@@ -11233,23 +11232,21 @@ async function renderKontrolSitusPage(B) {
 
       // Content filter view — v3.4: form lebih lengkap dengan custom keyword + scope + tipe lebih jelas
       + '<div class="ks-view' + (activeTab === 'content' ? ' active' : '') + '" id="ksViewContent">'
-      +   '<div class="ks-intro"><div><h2>Filter konten</h2><p>Blokir video/postingan berdasarkan kata kunci (mis. "anjir", "bokep"), kanal YouTube, akun X, atau URL post X.</p></div></div>'
+      +   '<div class="ks-intro"><div><h2>Filter konten</h2><p>Blokir video berdasarkan kata kunci (mis. "anjir", "bokep") atau kanal YouTube.</p></div></div>'
       +   '<div class="ks-content-form">'
-      +     '<div class="ks-form-row"><div><b>Jenis filter</b><span>Pilih jenis aturan filter</span></div><select id="ksFilterType"><option value="keyword">Kata kunci (judul/teks/caption)</option><option value="channel">Channel YouTube (nama)</option><option value="account">Akun X (handle)</option><option value="exact_title">Judul persis</option><option value="domain">Domain</option></select></div>'
-      +     '<div class="ks-form-row"><div><b>Nilai</b><span>Teks yang akan dicocokkan (case-insensitive)</span></div><input id="ksFilterValue" type="text" placeholder="mis. anjir, bocil, @username, atau URL post X"></div>'
+      +     '<div class="ks-form-row"><div><b>Jenis filter</b><span>Pilih jenis aturan filter</span></div><select id="ksFilterType"><option value="keyword">Kata kunci (judul/teks/caption)</option><option value="channel">Channel YouTube (nama)</option><option value="exact_title">Judul persis</option><option value="domain">Domain</option></select></div>'
+      +     '<div class="ks-form-row"><div><b>Nilai</b><span>Teks yang akan dicocokkan (case-insensitive)</span></div><input id="ksFilterValue" type="text" placeholder="mis. anjir, bocil, atau nama channel"></div>'
       +     '<div class="ks-form-row"><div><b>Tindakan</b><span>Apa yang dilakukan saat cocok</span></div><select id="ksFilterAction"><option value="hide">Sembunyikan</option><option value="blur">Blur</option><option value="warn">Tampilkan peringatan</option></select></div>'
-      +     '<div class="ks-form-row"><div><b>Cakupan</b><span>Di mana aturan berlaku</span></div><select id="ksFilterScope"><option value="all">Semua situs</option><option value="youtube">Hanya YouTube</option><option value="x">Hanya X</option><option value="current">Hanya ' + esc(currentDomain) + '</option></select></div>'
+      +     '<div class="ks-form-row"><div><b>Cakupan</b><span>Di mana aturan berlaku</span></div><select id="ksFilterScope"><option value="all">Semua situs</option><option value="youtube">Hanya YouTube</option><option value="current">Hanya ' + esc(currentDomain) + '</option></select></div>'
       +     '<div class="ks-save-row"><button class="btn btn-g" id="ksFilterCancel">Batal</button><button class="btn btn-p" id="ksFilterSave">Simpan filter</button></div>'
       +   '</div>'
-      // Tips untuk blokir URL post X
-      +   '<div class="hintbox" style="margin:10px 3px 0">💡 <b>Tip blokir post X:</b> Klik kanan pada postingan di X → "🚫 Blokir Konten Ini" → pilih "Blokir URL post ini". Postingan dengan URL yang sama akan otomatis disembunyikan di timeline X.</div>'
       +   (userBlocklist.length ? '<div class="ks-rule-summary"><div class="ks-rs-head">Filter tersimpan (' + userBlocklist.length + ')</div>' + userBlocklist.slice(0, 20).map(b => '<div class="ks-rule"><span class="ks-tag content">' + esc((b.type || 'keyword').toUpperCase().slice(0, 8)) + '</span><div class="ks-rule-main"><b>' + esc((b.value || b.text || '').slice(0, 60)) + '</b><span>' + esc(b.type || 'keyword') + (b.domain ? ' · ' + b.domain : '') + '</span></div><button class="ks-dots" data-del="' + esc(b.id) + '">✕</button></div>').join('') + '</div>' : '')
       + '</div>'
 
       // v3.21.0: Settings view — Pengaturan Pelindung Konten (W2b) — editor profil ringkas.
       // Menggantikan toggle floating panel / Nuclear mode / Filter feeds / Mode Anak (semua dibongkar).
       + '<div class="ks-view' + (activeTab === 'settings' ? ' active' : '') + '" id="ksViewSettings">'
-      +   '<div class="ks-intro"><div><h2>Pengaturan Pelindung Konten</h2><p>Kelola profil &amp; topik Mode Fokus. Buka halaman Settings lengkap untuk opsi tambahan (blocklist manual, filter X, mode debug).</p></div></div>'
+      +   '<div class="ks-intro"><div><h2>Pengaturan Pelindung Konten</h2><p>Kelola profil &amp; topik Mode Fokus. Buka halaman Settings lengkap untuk opsi tambahan (blocklist manual, mode debug).</p></div></div>'
       +   '<div class="card">'
       +     '<div class="krow" style="padding:10px 0">'
       +       '<div><b>Profil</b><div style="font-size:11px;color:var(--muted);margin-top:2px">Pilih profil untuk diedit (profil aktif ditandai).</div></div>'
@@ -11632,8 +11629,7 @@ async function renderKontrolSitusPage(B) {
       await saveSettings({
         elementBlockerEnabled: true,
         contentGuardEnabled: true,
-        contentGuardBlockYtChannels: true,
-        contentGuardBlockXAccounts: true
+        contentGuardBlockYtChannels: true
       });
       await refreshVault();
       renderKontrolSitusPage(B);
@@ -11648,7 +11644,7 @@ async function renderKontrolSitusPage(B) {
       const action = $('#ksFilterAction').value;
       const scope = $('#ksFilterScope').value;
       if (!value) { toast('Isi nilai filter dulu', false); return; }
-      const domain = scope === 'current' ? currentDomain : (scope === 'youtube' ? 'youtube.com' : scope === 'x' ? 'x.com' : null);
+      const domain = scope === 'current' ? currentDomain : (scope === 'youtube' ? 'youtube.com' : null);
       // v3.4: Pakai field `value` (bukan `text`) supaya konsisten dengan helper matchesUserBlocklist
       // dan addUserBlocklistEntry. `text` hanya untuk display fallback di UI lama.
       const entry = {
@@ -11659,10 +11655,6 @@ async function renderKontrolSitusPage(B) {
         createdAt: new Date().toISOString(),
         text: value  // untuk backward compat dengan UI lama yang baca .text
       };
-      // v3.4: Untuk tipe 'account' (akun X), normalisasi handle — strip @ prefix
-      if (type === 'account' && entry.value.startsWith('@')) {
-        entry.value = entry.value.slice(1);
-      }
       await addUserBlocklistEntry(entry);
       await refreshVault();
       renderKontrolSitusPage(B);

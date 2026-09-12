@@ -36,18 +36,15 @@ import { encryptBackup, decryptBackup, isEncryptedBackup } from './lib/crypto.js
 import {
   matchesIdNewsDomain,
   isYouTubeHome,
-  isXHome,
   detectSearchQuery,
   matchesBlockedSearchQuery,
   DEFAULT_NEGATIVE_KEYWORDS,
   DEFAULT_ID_NEWS_DOMAINS,
   DEFAULT_BLOCKED_YT_CHANNELS,
-  DEFAULT_BLOCKED_X_ACCOUNTS,
   DEFAULT_BLOCKED_SEARCH_QUERIES,
   DEFAULT_CHINA_YOUTUBE_SEARCHES,
-  DEFAULT_CHINA_X_ACCOUNTS,
-  DEFAULT_CHINA_X_SEARCHES,
   // v3.21.0: Mode Fokus (Allowlist) — Pelindung Konten baru
+  // (v3.24.25: isXHome, DEFAULT_BLOCKED_X_ACCOUNTS, DEFAULT_CHINA_X_* dihapus)
   DEFAULT_TOPIC_PROFILES,
   generateProfileId,
   seedDefaultTopicProfiles,
@@ -372,17 +369,15 @@ async function setupContextMenu() {
   });
 
   // ===== Content Guardian: "Blokir Konten Ini" (v0.8.21) =====
-  // Hanya muncul di YouTube & X — klik kanan untuk blokir konten yang
-  // sedang di-hover (video card / tweet).
+  // Hanya muncul di YouTube — klik kanan untuk blokir konten yang
+  // sedang di-hover (video card). (v3.24.25: X/Twitter dihapus.)
   browser.contextMenus.create({
     id: 'rf-separator-6',
     type: 'separator',
     contexts: ['page', 'link', 'video'],
     documentUrlPatterns: [
       'https://*.youtube.com/*',
-      'https://*.youtube-nocookie.com/*',
-      'https://*.x.com/*',
-      'https://*.twitter.com/*'
+      'https://*.youtube-nocookie.com/*'
     ]
   });
   // Sub-menu: pilih cara blokir
@@ -392,9 +387,7 @@ async function setupContextMenu() {
     contexts: ['page', 'link', 'video'],
     documentUrlPatterns: [
       'https://*.youtube.com/*',
-      'https://*.youtube-nocookie.com/*',
-      'https://*.x.com/*',
-      'https://*.twitter.com/*'
+      'https://*.youtube-nocookie.com/*'
     ]
   });
   browser.contextMenus.create({
@@ -429,20 +422,6 @@ async function setupContextMenu() {
     contexts: ['selection'],
     visible: false  // Tidak terlihat sampai ada selection (pakai onShown)
   });
-  // v3.4: Blokir URL post X — muncul hanya di x.com/twitter.com
-  // Saat user klik kanan pada link tweet atau di halaman tweet, simpan URL-nya.
-  // Semua post dengan URL yang sama (atau path yang sama) akan di-hide di timeline X.
-  browser.contextMenus.create({
-    id: 'rf-cg-block-x-post-url',
-    parentId: 'rf-cg-block-root',
-    title: '🔗 Blokir URL post X ini',
-    contexts: ['page', 'link'],
-    documentUrlPatterns: [
-      'https://*.x.com/*',
-      'https://*.twitter.com/*'
-    ]
-  });
-
   // v0.9.0: Element Blocker — "Block Element Ini" (klik kanan di elemen mana saja)
   browser.contextMenus.create({
     id: 'rf-separator-7',
@@ -712,48 +691,6 @@ browser.contextMenus.onClicked.addListener(async (info, tab) => {
       source: { url: info.pageUrl || '', title: tab?.title || '', channel: '' }
     });
     await notifyBlockResult(res, 'kata kunci', text);
-    await broadcastCgUpdate(tab?.id);
-  } else if (info.menuItemId === 'rf-cg-block-x-post-url') {
-    // v3.4: Blokir URL post X — pakai linkUrl (kalau klik kanan di link tweet)
-    // atau pageUrl (kalau klik kanan di halaman tweet itu sendiri)
-    let postUrl = info.linkUrl || info.pageUrl || '';
-    if (!postUrl) {
-      try {
-        await browser.notifications.create({
-          type: 'basic',
-          title: '⚠️ Tidak ada URL',
-          message: 'Klik kanan pada link tweet atau di halaman tweet untuk memblokir URL-nya.',
-          iconUrl: browser.runtime.getURL('icons/icon-96.png')
-        });
-      } catch (e) {}
-      return;
-    }
-    // Normalisasi URL: hapus query params (?s=20, ?ref_src=...) yang sering dipakai untuk tracking
-    // tapi pertahankan path (/user/status/123)
-    let normalizedUrl = postUrl;
-    try {
-      const u = new URL(postUrl);
-      // Path: /<user>/status/<id> — simpan hanya ini
-      normalizedUrl = u.protocol + '//' + u.hostname + u.pathname;
-      // Hapus trailing slash
-      normalizedUrl = normalizedUrl.replace(/\/$/, '');
-    } catch (e) {
-      // Kalau URL invalid, pakai apa adanya
-    }
-    // Extract path hash (untuk identifikasi lebih toleran — /user/status/123)
-    // Bisa dipakai untuk match post yang sama meski domain .com vs .x berbeda
-    let postPath = '';
-    try {
-      postPath = new URL(normalizedUrl).pathname;
-    } catch (e) {}
-    const res = await addUserBlocklistEntry({
-      type: 'x_post_url',
-      value: normalizedUrl,
-      // Simpan juga path sebagai alt matcher
-      altValue: postPath,
-      source: { url: info.pageUrl || '', title: tab?.title || '', channel: '' }
-    });
-    await notifyBlockResult(res, 'URL post X', normalizedUrl);
     await broadcastCgUpdate(tab?.id);
   } else if (info.menuItemId === 'rf-cg-block-title' ||
              info.menuItemId === 'rf-cg-block-exact-title' ||
@@ -2085,10 +2022,10 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     await saveSettings(patch);
     console.log('[RecallFox] TOGGLE_KID_MODE (legacy shim) → activeProfileId:', newOn ? (kidProfile?.id || null) : 'unchanged');
-    // Broadcast ke semua tab YouTube/X supaya re-scan
+    // Broadcast ke semua tab YouTube supaya re-scan
     browser.tabs.query({}).then(tabs => {
       for (const t of tabs) {
-        if (t.url && /youtube\.com|youtu\.be|x\.com|twitter\.com/.test(t.url)) {
+        if (t.url && /youtube\.com|youtu\.be/.test(t.url)) {
           browser.tabs.sendMessage(t.id, { type: 'CG_SETTINGS_UPDATED' }).catch(() => {});
         }
       }
@@ -3911,15 +3848,14 @@ async function checkQuranReminder() {
 // ============================================================
 // ===== Content Guardian (v0.8.20) =====
 // ============================================================
-// Filter berita negatif Indonesia & arahkan paksa ke konten positif
-// Tiongkok (kehidupan, teknologi, dll.) saat user buka YouTube/X home
-// atau saat user navigasi ke domain berita Indonesia yang diblokir.
+// v3.24.25: SEMUA fitur X/Twitter DIHAPUS (akun blocklist, search lock X,
+// URL post X, China X). Sisa: Search Lock YouTube + seed profil Mode Fokus.
 //
 // Mekanisme:
-//   1. tabs.onUpdated → deteksi navigasi ke YouTube/X home atau domain
-//      berita Indonesia → redirect ke halaman takeover/blocked ekstensi
-//   2. Content script (contentguard-cs.js) hide video/tweet negatif di feed
-//   3. Bypass 60 detik setelah user klik "Lewati" — supaya tidak loop
+//   1. tabs.onUpdated → deteksi search YouTube di luar topik → redirect
+//      ke searchlock.html
+//   2. Content script (contentguard-cs.js) hide video di feed YouTube
+//   3. Bypass cooldown via storage.session — anti loop
 
 // Inisialisasi default settings Content Guardian jika belum diisi
 async function initContentGuardDefaults() {
@@ -3934,20 +3870,11 @@ async function initContentGuardDefaults() {
   if (!s.contentGuardBlockedYtChannels) {
     patch.contentGuardBlockedYtChannels = DEFAULT_BLOCKED_YT_CHANNELS;
   }
-  if (!s.contentGuardBlockedXAccounts) {
-    patch.contentGuardBlockedXAccounts = DEFAULT_BLOCKED_X_ACCOUNTS;
-  }
   if (!s.contentGuardBlockedSearchQueries) {
     patch.contentGuardBlockedSearchQueries = DEFAULT_BLOCKED_SEARCH_QUERIES;
   }
   if (!s.contentGuardChinaSearches) {
     patch.contentGuardChinaSearches = DEFAULT_CHINA_YOUTUBE_SEARCHES;
-  }
-  if (!s.contentGuardChinaXAccounts) {
-    patch.contentGuardChinaXAccounts = DEFAULT_CHINA_X_ACCOUNTS;
-  }
-  if (!s.contentGuardChinaXSearches) {
-    patch.contentGuardChinaXSearches = DEFAULT_CHINA_X_SEARCHES;
   }
   // v3.21.0: Mode Fokus (Allowlist) — seed 2 profil bawaan jika belum ada.
   // Skema: { profiles: [{id, emoji, name, topics[], channels[], strictWatch}], activeProfileId }
@@ -3968,9 +3895,6 @@ async function initContentGuardDefaults() {
   // dibaca untuk migrasi (lihat §5.6 instruksi), tapi tidak dipakai kode baru.
   if (s.contentGuardBlockYtChannels === undefined) {
     patch.contentGuardBlockYtChannels = true;
-  }
-  if (s.contentGuardBlockXAccounts === undefined) {
-    patch.contentGuardBlockXAccounts = true;
   }
   if (Object.keys(patch).length > 0) {
     await saveSettings(patch);
@@ -4123,18 +4047,12 @@ async function checkContentGuard(tabId, url, tab) {
       const isYoutubeHost = host === 'youtube.com' || host === 'www.youtube.com' ||
                             host === 'm.youtube.com' || host.endsWith('.youtube.com') ||
                             host.endsWith('.youtube-nocookie.com');
-      const isXHost = host === 'x.com' || host === 'www.x.com' ||
-                      host === 'twitter.com' || host === 'www.twitter.com' ||
-                      host.endsWith('.x.com') || host.endsWith('.twitter.com');
 
       let searchQuery = '';
       let platform = '';
       if (isYoutubeHost && u.pathname === '/results') {
         searchQuery = u.searchParams.get('search_query') || '';
         platform = 'youtube';
-      } else if (isXHost && u.pathname === '/search') {
-        searchQuery = u.searchParams.get('q') || '';
-        platform = 'x';
       }
 
       if (searchQuery && platform) {
@@ -4239,11 +4157,8 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!s.contentGuardNegativeKeywords) s.contentGuardNegativeKeywords = DEFAULT_NEGATIVE_KEYWORDS;
       if (!s.contentGuardIdNewsDomains) s.contentGuardIdNewsDomains = DEFAULT_ID_NEWS_DOMAINS;
       if (!s.contentGuardBlockedYtChannels) s.contentGuardBlockedYtChannels = DEFAULT_BLOCKED_YT_CHANNELS;
-      if (!s.contentGuardBlockedXAccounts) s.contentGuardBlockedXAccounts = DEFAULT_BLOCKED_X_ACCOUNTS;
       if (!s.contentGuardBlockedSearchQueries) s.contentGuardBlockedSearchQueries = DEFAULT_BLOCKED_SEARCH_QUERIES;
       if (!s.contentGuardChinaSearches) s.contentGuardChinaSearches = DEFAULT_CHINA_YOUTUBE_SEARCHES;
-      if (!s.contentGuardChinaXAccounts) s.contentGuardChinaXAccounts = DEFAULT_CHINA_X_ACCOUNTS;
-      if (!s.contentGuardChinaXSearches) s.contentGuardChinaXSearches = DEFAULT_CHINA_X_SEARCHES;
       if (!Array.isArray(s.contentGuardUserBlocklist)) s.contentGuardUserBlocklist = [];
       // v3.21.0: Seed topic profiles kalau belum ada (Mode Fokus).
       if (!s.contentGuardTopicProfiles || !Array.isArray(s.contentGuardTopicProfiles.profiles)) {

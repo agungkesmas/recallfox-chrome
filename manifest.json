@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "__MSG_extName__",
   "short_name": "RecallFox",
-  "version": "3.24.24",
+  "version": "3.24.25",
   "description": "__MSG_extDesc__",
   "author": "RecallFox",
   "homepage_url": "https://github.com/agungkesmas/recallfox-chrome",
@@ -139,9 +139,7 @@
       "matches": [
         "https://*.youtube.com/*",
         "https://*.youtube-nocookie.com/*",
-        "https://*.youtubekids.com/*",
-        "https://*.x.com/*",
-        "https://*.twitter.com/*"
+        "https://*.youtubekids.com/*"
       ],
       "js": [
         "lib/browser-polyfill.min.js",
@@ -224,12 +222,6 @@
       "resources": [
         "content/capture.css",
         "content/overlay.css",
-        "contentguard/takeover.html",
-        "contentguard/takeover.css",
-        "contentguard/takeover.js",
-        "contentguard/blocked.html",
-        "contentguard/blocked.css",
-        "contentguard/blocked.js",
         "contentguard/searchlock.html",
         "contentguard/searchlock.css",
         "contentguard/searchlock.js",

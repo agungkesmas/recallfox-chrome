@@ -1,23 +1,21 @@
 // content/contentguard-cs.js — Pelindung Konten (Mode Fokus Allowlist) — RecallFox v3.21.0
 // ============================================================================
-// Rombak total dari versi lama (filter blacklist 650 keyword + panel mengambang).
-// Versi baru: Mode Fokus Allowlist berbasis profil topik. Lihat instruksi
-// prompt-agent-rombak-firefox.md §4.
+// v3.24.25: SEMUA fitur X (Twitter) DIHAPUS — addon tidak menyentuh x.com /
+// twitter.com sama sekali lagi. Sisa: filter YouTube (Mode Fokus Allowlist).
 //
 // Cara kerja:
-//   1. Inject di youtube.com & x.com/twitter.com (document_idle).
+//   1. Inject di youtube.com (document_idle).
 //   2. Pasang MutationObserver + setInterval (fallback) untuk scan feed.
 //   3. YouTube: bila Mode Fokus AKTIF (master ON + activeProfileId valid + profil
 //      punya topik/channel), video TAMPIL hanya jika judul/channel cocok profil
 //      aktif (matchesActiveProfile). Semua video lain disembunyikan.
 //      Shorts selalu disembunyikan saat contentGuardBlockShorts=true.
-//   4. X (Twitter): TETAP blacklist (bukan allowlist). Filter performa di-cache.
-//   5. Watch page (Profil Anak strictWatch=true) → minta background redirect ke home.
+//   4. Watch page (Profil Anak strictWatch=true) → minta background redirect ke home.
 //      Watch page (Profil Saya strictWatch=false) → overlay non-blocking W4.
-//   6. Search Lock detection ada di background (checkContentGuard) — content
+//   5. Search Lock detection ada di background (checkContentGuard) — content
 //      script tidak perlu mendeteksi search.
-//   7. Panel mengambang DIHAPUS — status hanya via popup & Settings.
-//   8. Counter internal (hiddenCount/panelStats) tetap untuk debug CG_PING.
+//   6. Panel mengambang DIHAPUS — status hanya via popup & Settings.
+//   7. Counter internal (hiddenCount/panelStats) tetap untuk debug CG_PING.
 //
 // Yang dipertahankan dari versi lama:
 //   - Guard anti-duplikat inject (dataset.rfCgInjected).
@@ -25,7 +23,7 @@
 //   - Hide via CSS !important + dataset attribute (flicker fix YouTube recycle DOM).
 //   - hoveredElement + listener mouseover + handler CG_GET_CONTEXT_FOR_BLOCK
 //     (dipakai context menu "Blokir Konten Ini" yang tetap aktif).
-//   - Helper user blocklist (matchesUserBlocklistLocal, matchesBlockedXPostUrlLocal)
+//   - Helper user blocklist (matchesUserBlocklistLocal)
 //     — dipakai sebagai lapisan tambahan di atas Mode Fokus.
 // ============================================================================
 
@@ -49,8 +47,6 @@
   let scanTimer = null;            // debounce timer untuk MutationObserver
   let intervalTimer = null;        // fallback interval
   let profileCache = null;         // cache normalizeText untuk profil aktif
-  let keywordCache = null;         // cache normalizeText untuk keyword X (negatif)
-  let channelBlocklistCache = null;// cache normalizeText untuk channel blocklist YT+X
   let watchOverlayEl = null;       // elemen overlay watch (Profil Saya)
   let watchAllowUntil = 0;         // timestamp: "Tetap tonton" aktif sampai sini
   let lastWatchStrictRequest = 0;  // anti-spam: jangan spam background untuk watch strict
@@ -96,7 +92,6 @@
       contentGuardEnabled: true,
       contentGuardNegativeKeywords: [],
       contentGuardBlockedYtChannels: [],
-      contentGuardBlockedXAccounts: [],
       contentGuardUserBlocklist: [],
       contentGuardTopicProfiles: { profiles: [], activeProfileId: null }
     };
@@ -109,25 +104,6 @@
   // Dipanggil setelah loadSettings + setelah CG_SETTINGS_UPDATED.
   function rebuildCaches() {
     if (!settings) return;
-    // Cache keyword negatif (untuk X filter) — array of normalized string.
-    const kws = Array.isArray(settings.contentGuardNegativeKeywords) ? settings.contentGuardNegativeKeywords : [];
-    keywordCache = [];
-    for (const k of kws) {
-      const n = normalizeText(k);
-      if (n) keywordCache.push(n);
-    }
-    // Cache channel blocklist (YT + X) — array of normalized string (tanpa prefix @).
-    const ytList = settings.contentGuardBlockYtChannels !== false
-      ? (Array.isArray(settings.contentGuardBlockedYtChannels) ? settings.contentGuardBlockedYtChannels : [])
-      : [];
-    const xList = settings.contentGuardBlockXAccounts !== false
-      ? (Array.isArray(settings.contentGuardBlockedXAccounts) ? settings.contentGuardBlockedXAccounts : [])
-      : [];
-    channelBlocklistCache = [];
-    for (const ch of [...ytList, ...xList]) {
-      const n = normalizeText(ch).replace(/^@\s*/, '');
-      if (n) channelBlocklistCache.push(n);
-    }
     // Cache profil aktif (Mode Fokus) — { topics: Set, channels: Set }.
     const activeProfile = getActiveProfileLocal();
     profileCache = buildProfileMatchCacheLocal(activeProfile);
@@ -142,7 +118,6 @@
   }
 
   // ===== Helper akses settings =====
-  function getKeywords() { return keywordCache || []; }
   function getUserBlocklist() {
     return Array.isArray(settings?.contentGuardUserBlocklist) ? settings.contentGuardUserBlocklist : [];
   }
@@ -229,33 +204,7 @@
     return false;
   }
 
-  // ===== X filter: cek keyword negatif (cache sudah dinormalisasi) =====
-  function containsNegative(text) {
-    if (!text || !keywordCache || keywordCache.length === 0) return null;
-    const normalized = normalizeText(text);
-    for (const nkw of keywordCache) {
-      if (normalized.includes(nkw)) return nkw;
-    }
-    return null;
-  }
-
-  // ===== X filter: cek channel/akun di blocklist (cache sudah dinormalisasi) =====
-  function isChannelBlocked(channelName) {
-    if (!channelName) return null;
-    if (!channelBlocklistCache || channelBlocklistCache.length === 0) return null;
-    const norm = normalizeText(channelName).replace(/^@\s*/, '');
-    if (!norm) return null;
-    for (const c of channelBlocklistCache) {
-      if (!c) continue;
-      // Match kalau salah satu mengandung yang lain (case + leet sudah dinormalisasi).
-      if (norm === c || norm.includes(c) || c.includes(norm)) {
-        return c;
-      }
-    }
-    return null;
-  }
-
-  // ===== User blocklist manual (lapisan tambahan di atas Mode Fokus / X filter) =====
+  // ===== User blocklist manual (lapisan tambahan di atas Mode Fokus) =====
   function matchesUserBlocklistLocal(text, channel) {
     const list = getUserBlocklist();
     if (!list || list.length === 0) return null;
@@ -265,7 +214,7 @@
       if (!entry || !entry.value) continue;
       const v = String(entry.value).toLowerCase().trim();
       if (!v) continue;
-      if (entry.type === 'channel' || entry.type === 'account') {
+      if (entry.type === 'channel') {
         if (lowerChan && (lowerChan.includes(v) || v.includes(lowerChan))) {
           return { entry, matched: entry.type };
         }
@@ -273,35 +222,10 @@
         if (lowerText === v) return { entry, matched: 'exact_title' };
       } else if (entry.type === 'title') {
         if (lowerText.includes(v)) return { entry, matched: 'title' };
-      } else if (entry.type === 'x_post_url') {
-        if (lowerText && lowerText.includes(v)) return { entry, matched: 'x_post_url' };
-        if (entry.altValue) {
-          const altV = String(entry.altValue).toLowerCase().trim();
-          if (altV && lowerText.includes(altV)) return { entry, matched: 'x_post_url' };
-        }
-      } else {  // 'keyword' / default
+      } else {  // 'keyword' / default (termasuk entri lama tipe 'account' / 'x_post_url')
         if (lowerText.includes(v) || (lowerChan && lowerChan.includes(v))) {
           return { entry, matched: 'keyword' };
         }
-      }
-    }
-    return null;
-  }
-
-  // Helper khusus untuk cek URL post X terhadap blocklist (v3.4)
-  function matchesBlockedXPostUrlLocal(postUrl) {
-    const list = getUserBlocklist();
-    if (!list || list.length === 0 || !postUrl) return null;
-    const lowerUrl = String(postUrl).toLowerCase();
-    let urlPath = '';
-    try { urlPath = new URL(postUrl).pathname.toLowerCase(); } catch (e) {}
-    for (const entry of list) {
-      if (!entry || entry.type !== 'x_post_url' || !entry.value) continue;
-      const v = String(entry.value).toLowerCase().trim();
-      if (v && lowerUrl.includes(v)) return { entry, matched: 'x_post_url' };
-      if (entry.altValue) {
-        const altV = String(entry.altValue).toLowerCase().trim();
-        if (altV && urlPath && urlPath === altV) return { entry, matched: 'x_post_url' };
       }
     }
     return null;
@@ -646,125 +570,10 @@
     }
   }
 
-  // ===== X (Twitter) selectors — DIPANGKAS (§5.1) =====
-  // Cukup scan: article[data-testid="tweet"] + div[data-testid="tweetText"] + fallback article.
-  // Hapus selector boros: div[data-testid="tweetText"] *, [lang], div[dir="auto"], span[dir="auto"].
-  const X_TWEET_SELECTORS = [
-    'article[data-testid="tweet"]',
-    'div[data-testid="tweetText"]',
-    'article'
-  ];
-
-  function getXTweetText(el) {
-    // Hanya car tweetText di dalam article (atau el itu sendiri kalau tweetText).
-    // Versi lama scan [lang], div[dir="auto"], span[dir="auto"] → terlalu boros.
-    if (el.getAttribute && el.getAttribute('data-testid') === 'tweetText') {
-      return (el.textContent || '').trim();
-    }
-    const nodes = el.querySelectorAll('[data-testid="tweetText"]');
-    let txt = '';
-    const seen = new Set();
-    for (const n of nodes) {
-      const t = (n.textContent || '').trim();
-      if (t && !seen.has(t) && t.length > 2) {
-        seen.add(t);
-        txt += ' ' + t;
-      }
-    }
-    if (!txt.trim()) txt = (el.textContent || '').trim();
-    return txt.trim();
-  }
-
-  function getXTweetAuthor(el) {
-    const userLinks = el.querySelectorAll('[data-testid="User-Name"] a[href], a[href*="/"]');
-    for (const link of userLinks) {
-      if (!link.href) continue;
-      const m = link.href.match(/https:\/\/(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})(?:$|\/|\?)/);
-      if (m && !['home', 'explore', 'i', 'settings', 'notifications', 'messages',
-                 'bookmarks', 'compose', 'search', 'login', 'signup'].includes(m[1].toLowerCase())) {
-        return '@' + m[1];
-      }
-    }
-    const allText = el.textContent || '';
-    const m = allText.match(/@([A-Za-z0-9_]{1,15})/);
-    return m ? m[0] : '';
-  }
-
-  // ===== hideXNegative: X TETAP blacklist (refactor performa) =====
-  // Filter: keyword negatif (cache) + channel/akun blocklist (cache) + user blocklist
-  // + URL post X blocklist. Tidak ada Mode Fokus allowlist untuk X (§4.7).
-  function hideXNegative() {
-    let changed = false;
-    let allowedThisScan = 0;
-    const MAX_NODES = 500;
-
-    // Deduplikasi node via Set
-    const allNodes = new Set();
-    for (const sel of X_TWEET_SELECTORS) {
-      let nodes;
-      try { nodes = document.querySelectorAll(sel); }
-      catch (e) { continue; }
-      for (const n of nodes) {
-        if (allNodes.size >= MAX_NODES) break;
-        allNodes.add(n);
-      }
-      if (allNodes.size >= MAX_NODES) break;
-    }
-
-    for (const node of allNodes) {
-      if (node.dataset.rfCgHidden === '1') continue;
-      if (node.querySelector('[data-testid="placementTracking"]')) continue;
-      // Hanya proses article ATAU tweetText yang parent article-nya belum di-hide.
-      if (node.tagName !== 'ARTICLE' && !node.closest('article')) {
-        if (node.getAttribute('data-testid') !== 'tweetText') continue;
-      }
-
-      const txt = getXTweetText(node);
-      const author = getXTweetAuthor(node);
-
-      // Extract URL post X dari article (link /<user>/status/<id>)
-      let postUrl = '';
-      try {
-        const links = node.querySelectorAll('a[href*="/status/"]');
-        for (const a of links) {
-          const href = a.getAttribute('href') || '';
-          if (/^\/[^/]+\/status\/\d+(?:\?|$)/.test(href)) {
-            postUrl = location.protocol + '//' + location.hostname + href.split('?')[0];
-            break;
-          }
-        }
-      } catch (e) {}
-
-      const negKw = containsNegative(txt);
-      const blockedAcct = isChannelBlocked(author);
-      const userBlk = matchesUserBlocklistLocal(txt, author);
-      const urlBlk = postUrl ? matchesBlockedXPostUrlLocal(postUrl) : null;
-
-      if (negKw || blockedAcct || userBlk || urlBlk) {
-        let target = node;
-        if (node.getAttribute('data-testid') === 'tweetText' && node.tagName !== 'ARTICLE') {
-          const parentArticle = node.closest('article, div[data-testid="cellInnerDiv"]');
-          if (parentArticle) target = parentArticle;
-        }
-        target.style.setProperty('display', 'none', 'important');
-        target.dataset.rfCgHidden = '1';
-        target.dataset.rfCgReason = negKw || blockedAcct || (userBlk?.entry?.value) || (urlBlk?.entry?.value) || 'unknown';
-        target.dataset.rfCgTitle = (txt || '').slice(0, 100);
-        target.dataset.rfCgChannel = (author || '').slice(0, 60);
-        hiddenCount++;
-        changed = true;
-        if (settings.contentGuardDebugMode) {
-          console.log('[RecallFox/CG] X hidden:', { text: txt.slice(0, 100), author, postUrl, reason: target.dataset.rfCgReason });
-        }
-      } else {
-        allowedThisScan++;
-      }
-    }
-
-    panelStats.blocked = hiddenCount;
-    panelStats.allowed = allowedThisScan;
-    panelStats.lastScanAt = Date.now();
-  }
+  // ===== X (Twitter) DIHAPUS (v3.24.25) =====
+  // Semua filter/blockir di x.com & twitter.com dihilangkan: selector tweet,
+  // hideXNegative (keyword negatif / akun X / URL post X), helper tweet.
+  // Addon tidak lagi menyentuh X sama sekali.
 
   // ===== Watch page handling (§4.5) =====
   // Pada /watch?v=* : cek judul video terhadap profil aktif.
@@ -972,7 +781,6 @@
       if (document.hidden === true) return;
       try {
         if (isYouTube) { hideYouTubeByFocus(); checkWatchPage(); }
-        if (isX) hideXNegative();
       } catch (e) {
         console.warn('[RecallFox/CG] scan error:', e);
       }
@@ -988,9 +796,7 @@
   // ===== Track hovered element untuk context menu "Blokir Konten Ini" =====
   // Dipertahankan dari versi lama (§4.7 — context menu tetap aktif).
   document.addEventListener('mouseover', (e) => {
-    const card = e.target.closest(
-      YT_VIDEO_SELECTORS.join(', ') + ', ' + X_TWEET_SELECTORS.join(', ') + ', article'
-    );
+    const card = e.target.closest(YT_VIDEO_SELECTORS.join(', ') + ', article');
     hoveredElement = card || null;
   }, true);
 
@@ -1011,11 +817,9 @@
 
   // ===== Deteksi platform =====
   let isYouTube = false;
-  let isX = false;
   function detectPlatform() {
     const host = location.hostname.toLowerCase();
     isYouTube = host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com');
-    isX = host.endsWith('twitter.com') || host.endsWith('x.com');
   }
 
   function injectHideCSS() {
@@ -1046,7 +850,6 @@
         console.log('[RecallFox/CG] Settings changed (detected via polling) — re-scanning');
         resetHiddenFlags();
         if (isYouTube) { hideYouTubeByFocus(); checkWatchPage(); }
-        if (isX) hideXNegative();
       }
     }, 5000);
   }
@@ -1074,8 +877,8 @@
 
   async function init() {
     detectPlatform();
-    if (!isYouTube && !isX) return;
-    console.log('[RecallFox/CG] Initializing on', isYouTube ? 'YouTube' : 'X', 'at', location.href);
+    if (!isYouTube) return;
+    console.log('[RecallFox/CG] Initializing on YouTube at', location.href);
 
     const ok = await loadSettings();
     if (!ok) {
@@ -1089,12 +892,10 @@
     injectHideCSS();
     // Initial sweep
     if (isYouTube) { hideYouTubeByFocus(); checkWatchPage(); }
-    if (isX) hideXNegative();
     startObserver();
     startSettingsPolling();
-    console.log('[RecallFox/CG] Pelindung Konten AKTIF di', isYouTube ? 'YouTube' : 'X',
+    console.log('[RecallFox/CG] Pelindung Konten AKTIF di YouTube',
       '| Mode Fokus:', focusModeActive() ? 'ON' : 'OFF',
-      '| X-keywords:', (keywordCache || []).length,
       '| user blocklist:', getUserBlocklist().length);
   }
 
@@ -1106,7 +907,7 @@
     if (msg?.type === 'CG_PING') {
       sendResponse({
         ok: true,
-        platform: isYouTube ? 'youtube' : (isX ? 'x' : 'unknown'),
+        platform: isYouTube ? 'youtube' : 'unknown',
         hiddenCount,
         focusModeActive: focusModeActive()
       });
@@ -1126,7 +927,6 @@
           resetHiddenFlags();
           startObserver();
           if (isYouTube) { hideYouTubeByFocus(); checkWatchPage(); }
-          if (isX) hideXNegative();
         }
       });
       return false;
@@ -1138,7 +938,6 @@
       removeEmptyFeedBanner();
       resetHiddenFlags();
       if (isYouTube) { hideYouTubeByFocus(); checkWatchPage(); }
-      if (isX) hideXNegative();
       return false;
     }
 
@@ -1161,7 +960,7 @@
         const sel = window.getSelection();
         if (sel && sel.anchorNode) {
           targetEl = (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement)
-            ?.closest(YT_VIDEO_SELECTORS.join(', ') + ', ' + X_TWEET_SELECTORS.join(', ') + ', article');
+            ?.closest(YT_VIDEO_SELECTORS.join(', ') + ', article');
         }
       }
 
@@ -1173,9 +972,6 @@
         if (isYouTube) {
           title = getYouTubeTitle(targetEl);
           channel = getYouTubeChannel(targetEl);
-        } else if (isX) {
-          title = getXTweetText(targetEl);
-          channel = getXTweetAuthor(targetEl);
         }
       }
 
@@ -1193,7 +989,7 @@
         value: (value || '').trim().slice(0, 300),
         title,
         channel,
-        platform: isYouTube ? 'youtube' : (isX ? 'x' : 'unknown')
+        platform: isYouTube ? 'youtube' : 'unknown'
       });
       return true;
     }
