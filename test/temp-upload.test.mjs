@@ -48,15 +48,20 @@ ok(isTempExpired(mk({ tempHost: 'litterbox', tempUrl: 'u', tempExpiresAt: new Da
 console.log('— v3.24.18: tujuan MANUAL (paritas PWA v1.21.0) —');
 ok(TEMP_HOST_MANUAL === 'manual', "TEMP_HOST_MANUAL === 'manual'");
 ok(MANUAL_TEMP_DURATION === '72h', "MANUAL_TEMP_DURATION === '72h' (default 3 hari vault)");
-ok(Array.isArray(MANUAL_SITES) && MANUAL_SITES.length === 4, 'MANUAL_SITES: 4 situs default (litterbox/catbox/temp.sh/tmpfiles)');
+ok(Array.isArray(MANUAL_SITES) && MANUAL_SITES.length === 10, 'MANUAL_SITES: 10 situs default (v3.24.24, riset live 2026-09-12)');
 ok(MANUAL_SITES.every(s => typeof s.label === 'string' && s.label.length > 0), 'setiap situs punya label');
 ok(MANUAL_SITES.every(s => /^https:\/\//.test(s.url)), 'setiap situs URL https (bisa diklik buka tab baru)');
-// v3.24.19: gofile.io KELUAR (laporan user tidak bisa dipakai), temp.sh MASUK
-// (alur manual saja — URL halaman unduh tidak masalah karena item manual
-// tidak pernah fetch isi file). 0x0.st & file.io tetap ditolak.
-ok(!MANUAL_SITES.some(s => /gofile\.io/i.test(s.url || '')), 'gofile.io TIDAK ada dalam daftar default (keluar per v3.24.19)');
-ok(MANUAL_SITES.some(s => { try { return new URL(s.url).hostname === 'temp.sh'; } catch (e) { return false; } }), 'temp.sh ada dalam daftar default (pengganti gofile per permintaan user)');
-ok(MANUAL_SITES.every(s => { try { return !['0x0.st', 'file.io', 'www.file.io'].includes(new URL(s.url).hostname); } catch (e) { return false; } }), 'situs tetap ditolak (0x0.st/file.io) tidak ada dalam daftar (cek hostname — gofile.io tidak salah positif)');
+// v3.24.24: riset ulang (uji curl live 18 kandidat) — gofile KEMBALI (permintaan
+// user; multi-node check 200; alur manual aman), plus 5 situs baru: filebin,
+// uguu, x0.at, pixeldrain, storage.to. Mati & tetap ditolak: transfer.sh /
+// bashupload.com (DNS mati), 0x0.st (flaky), file.io (sekali unduh).
+ok(MANUAL_SITES[0].url.includes('gofile.io'), 'gofile.io KEMBALI di urutan pertama daftar default (v3.24.24)');
+ok(MANUAL_SITES.every(s => typeof s.note === 'string' && s.note.length > 0 && s.note.length <= 100), 'setiap situs punya note ≤100 char (lolos sanitasi)');
+for (const h of ['litterbox.catbox.moe', 'tmpfiles.org', 'filebin.net', 'temp.sh', 'uguu.se', 'x0.at', 'pixeldrain.com', 'storage.to', 'catbox.moe']) {
+  ok(MANUAL_SITES.some(s => { try { return new URL(s.url).hostname === h; } catch (e) { return false; } }), h + ' ada dalam daftar default');
+}
+ok(MANUAL_SITES.every(s => { try { return !['0x0.st', 'file.io', 'www.file.io', 'transfer.sh', 'bashupload.com', 'fileconvoy.com'].includes(new URL(s.url).hostname); } catch (e) { return false; } }), 'situs mati/ditolak (transfer.sh/bashupload/0x0.st/file.io) tidak ada dalam daftar');
+ok(new Set(MANUAL_SITES.map(s => s.url.replace(/\/+$/, '').toLowerCase())).size === MANUAL_SITES.length, 'tidak ada URL duplikat di default');
 ok(typeof MANUAL_SITES_MAX === 'number' && MANUAL_SITES_MAX === 12, 'MANUAL_SITES_MAX = 12');
 
 console.log('— v3.24.19: daftar situs dikelola user (sanitizeManualSites) —');
