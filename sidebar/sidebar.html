@@ -158,19 +158,37 @@
     <div id="vaultBreadcrumb" style="padding:0 13px;font-size:11px;color:var(--muted);display:none"></div>
     <div id="tagFilterBar" style="padding:0 13px;font-size:11px;display:none;gap:4px;flex-wrap:wrap"></div>
     <!-- v3.11.14: Batch bar dengan tombol generik — tampil/sembunyi sesuai chip aktif via updateVaultBatchBarButtons() -->
-    <div id="vaultBatchBar" style="display:none;padding:6px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);align-items:center;gap:6px;font-size:11px;flex-wrap:wrap">
-      <span id="vaultBatchCount">0 dipilih</span>
-      <button class="btn btn-p" id="vaultBatchCopy" title="Copy screenshot + keterangan" style="padding:4px 8px;font-size:11px">📋 Copy + Keterangan</button>
-      <button class="btn btn-g" id="vaultBatchCopyImg" title="Copy gambar saja" style="padding:4px 8px;font-size:11px">🖼️ Copy Gambar Saja</button>
-      <button class="btn btn-g" id="vaultBatchCopyMeta" title="Copy teks metadata saja (URL, judul, waktu) — paste ke WA/Gemini/AI" style="display:none;padding:4px 8px;font-size:11px">📝 Copy Teks Saja</button>
-      <button class="btn btn-p" id="vaultBatchCopyText" title="Copy teks item (prompt/konteks/link/snapshot)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Teks</button>
-      <button class="btn btn-p" id="vaultBatchCopyBundle" title="Copy bundle (gabungan semua anggota)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Bundle</button>
-      <button class="btn btn-g" id="vaultBatchUnarchive" title="Keluarkan item dari arsip" style="display:none;padding:4px 8px;font-size:11px">📦 Unarsip</button>
-      <button class="btn btn-g" id="vaultBatchMoveFolder" title="Pindahkan semua item terpilih ke folder" style="display:none;padding:4px 8px;font-size:11px">📂 Pindah ke Folder</button>
-      <button class="btn btn-g" id="vaultBatchArchive" title="Arsipkan semua item terpilih" style="display:none;padding:4px 8px;font-size:11px">📦 Arsipkan</button>
-      <button class="btn btn-g" id="vaultBatchBundle" title="Tambahkan semua item terpilih ke bundle" style="display:none;padding:4px 8px;font-size:11px">📦 Tambah ke Bundle</button>
-      <button class="btn btn-d" id="vaultBatchDelete" title="Hapus item terpilih dari vault" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
-      <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px;margin-left:auto">Batal</button>
+    <!-- v3.24.27: DESAIN ULANG agar lega (laporan user: bar lama penuh sesak sampai
+         daftar gambar tak kelihatan). Struktur baru = 2 baris kompak:
+         baris 1: count + "⋯" (menu tindakan lainnya) + Batal
+         baris 2: tindakan utama sesuai konteks (scroll horizontal kalau sempit)
+         menu ⋯: tindakan sekunder (Download/URL/Meta/Pindah/Bundle/Arsip/Unarsip)
+         Sekaligus FIX desync: sidebar kini juga punya Download Semua + Copy URL +
+         Salin Link + Ket. yang selama ini hanya ada di popup (v3.14.9/v3.24.26). -->
+    <div id="vaultBatchBar" style="display:none;flex-direction:column;padding:7px 13px;background:var(--primary-soft);border-bottom:1px solid var(--border);font-size:11px">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span id="vaultBatchCount" style="font-weight:700">0 dipilih</span>
+        <span style="flex:1"></span>
+        <button class="btn btn-g" id="vaultBatchMore" title="Tindakan lainnya" style="padding:4px 10px;font-size:12px;line-height:1">⋯</button>
+        <button class="btn btn-g" id="vaultBatchCancel" style="padding:4px 8px;font-size:11px">Batal</button>
+      </div>
+      <div class="rf-batch-actions" style="display:flex;gap:6px;margin-top:6px;overflow-x:auto">
+        <button class="btn btn-p" id="vaultBatchCopy" title="Copy screenshot + keterangan (termasuk link cloud gambar — v3.24.27)" style="padding:4px 8px;font-size:11px">📋 Copy + Ket.</button>
+        <button class="btn btn-g" id="vaultBatchCopyImg" title="Copy gambar saja" style="padding:4px 8px;font-size:11px">🖼️ Gambar Saja</button>
+        <button class="btn btn-p" id="vaultBatchCopyLinkCap" title="Salin Link cloud gambar + keterangan per item (markdown rapi untuk AI) — langsung dari seleksi, TANPA perlu buat Bundle dulu" style="display:none;padding:4px 8px;font-size:11px">🔗 Link + Ket.</button>
+        <button class="btn btn-p" id="vaultBatchCopyText" title="Copy teks item (prompt/konteks/link/snapshot)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Teks</button>
+        <button class="btn btn-p" id="vaultBatchCopyBundle" title="Copy bundle (gabungan semua anggota)" style="display:none;padding:4px 8px;font-size:11px">📋 Copy Bundle</button>
+        <button class="btn btn-d" id="vaultBatchDelete" title="Hapus item terpilih dari vault" style="padding:4px 8px;font-size:11px">🗑️ Hapus</button>
+      </div>
+      <div id="vaultBatchMoreMenu" style="display:none;flex-wrap:wrap;gap:6px;margin-top:6px;padding-top:6px;border-top:1px dashed var(--border-strong)">
+        <button class="btn btn-g" id="vaultBatchDownload" title="Download semua gambar terpilih sebagai file terpisah" style="display:none;padding:4px 8px;font-size:11px">⬇️ Download Semua</button>
+        <button class="btn btn-g" id="vaultBatchCopyUrls" title="Copy URL gambar (public Supabase URL) — paste ke AI chat yang tidak support paste gambar" style="display:none;padding:4px 8px;font-size:11px">🔗 Copy URL</button>
+        <button class="btn btn-g" id="vaultBatchCopyMeta" title="Copy teks metadata saja (URL, judul, waktu) — paste ke WA/Gemini/AI" style="display:none;padding:4px 8px;font-size:11px">📝 Copy Teks Saja</button>
+        <button class="btn btn-g" id="vaultBatchMoveFolder" title="Pindahkan semua item terpilih ke folder" style="display:none;padding:4px 8px;font-size:11px">📂 Pindah ke Folder</button>
+        <button class="btn btn-g" id="vaultBatchBundle" title="Tambahkan semua item terpilih ke bundle" style="display:none;padding:4px 8px;font-size:11px">📦 Tambah ke Bundle</button>
+        <button class="btn btn-g" id="vaultBatchArchive" title="Arsipkan semua item terpilih" style="display:none;padding:4px 8px;font-size:11px">📦 Arsipkan</button>
+        <button class="btn btn-g" id="vaultBatchUnarchive" title="Keluarkan item dari arsip" style="display:none;padding:4px 8px;font-size:11px">📦 Unarsip</button>
+      </div>
     </div>
     <div class="chips" id="chips"></div>
     <!-- v3.17.7: Unparenting drop zone — muncul saat drag item dari folder. Posisi: antara chips dan list. -->

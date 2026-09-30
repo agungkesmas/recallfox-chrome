@@ -1051,6 +1051,17 @@ function updateVaultBatchBarButtons() {
       deleteBtn.title = 'Hapus item terpilih dari vault';
     }
   }
+
+  // v3.24.27: tombol "⋯" (menu Lainnya) hanya tampil kalau minimal 1 tombol di
+  // menunya relevan dgn tipe seleksi — kalau tidak, sembunyikan biar bar lega.
+  const moreBtn = $('#vaultBatchMore');
+  const moreMenu = $('#vaultBatchMoreMenu');
+  if (moreBtn && moreMenu) {
+    const anyMenuBtnVisible = Array.from(moreMenu.querySelectorAll('button'))
+      .some(b => b.style.display !== 'none');
+    moreBtn.style.display = anyMenuBtnVisible ? '' : 'none';
+    if (!anyMenuBtnVisible) closeVaultBatchMoreMenu();
+  }
 }
 
 function toggleVaultBatchMode() {
@@ -1058,6 +1069,13 @@ function toggleVaultBatchMode() {
   vaultBatchSelected.clear();
   const bar = $('#vaultBatchBar');
   if (bar) bar.style.display = vaultBatchMode ? 'flex' : 'none';
+  // v3.24.27: tandai view dengan class 'batching' → vault-actions (Batch/Auto/
+  // Perintah/Folder/sort) disembunyikan via CSS, daftar item jadi lega (laporan
+  // user: tampilan batch penuh sesak sampai gambar tak kelihatan)
+  const vaultViewEl = $('#vaultView');
+  if (vaultViewEl) vaultViewEl.classList.toggle('batching', vaultBatchMode);
+  // v3.24.27: menu "Lainnya" selalu tertutup saat masuk/keluar mode batch
+  closeVaultBatchMoreMenu();
   if (!vaultBatchMode) {
     document.querySelectorAll('.vault-batch-check').forEach(c => c.checked = false);
   }
@@ -1065,6 +1083,42 @@ function toggleVaultBatchMode() {
   updateVaultBatchCount();
   const chipLabel = CHIPS.find(c => c[0] === currentChip)?.[1] || 'item';
   toast(vaultBatchMode ? '☑️ Mode batch aktif — klik ' + chipLabel.toLowerCase() + ' untuk pilih' : 'Mode batch dimatikan');
+}
+
+// v3.24.27: menu "⋯ Lainnya" di batch bar — simpan tindakan sekunder biar bar
+// utama tetap 2 baris kompak. Menu = baris ketiga yang tampil saat dibutuhkan.
+function toggleVaultBatchMoreMenu() {
+  const menu = $('#vaultBatchMoreMenu');
+  const moreBtn = $('#vaultBatchMore');
+  if (!menu || !moreBtn) return;
+  if (menu.style.display === 'flex') {
+    closeVaultBatchMoreMenu();
+  } else {
+    menu.style.display = 'flex';
+    moreBtn.textContent = '✕';
+    moreBtn.title = 'Tutup menu tindakan lainnya';
+  }
+}
+
+function closeVaultBatchMoreMenu() {
+  const menu = $('#vaultBatchMoreMenu');
+  const moreBtn = $('#vaultBatchMore');
+  if (menu) menu.style.display = 'none';
+  if (moreBtn) { moreBtn.textContent = '⋯'; moreBtn.title = 'Tindakan lainnya'; }
+}
+
+// v3.24.27: matikan mode batch TANPA toast — dipakai aksi batch yang otomatis
+// menutup mode (unarsip/move/arsip/tambah-bundle/hapus). SATU PINTU biar class
+// 'batching' di #vaultView, menu "Lainnya", dan checkbox seleksi tidak pernah yatim.
+function endVaultBatchModeSilently() {
+  vaultBatchSelected.clear();
+  vaultBatchMode = false;
+  const bar = $('#vaultBatchBar');
+  if (bar) bar.style.display = 'none';
+  const vaultViewEl = $('#vaultView');
+  if (vaultViewEl) vaultViewEl.classList.remove('batching');
+  closeVaultBatchMoreMenu();
+  document.querySelectorAll('.vault-batch-check').forEach(c => c.checked = false);
 }
 
 function exitVaultBatchMode() {
@@ -1738,10 +1792,7 @@ async function vaultBatchUnarchiveAction() {
       fail++;
     }
   }
-  vaultBatchSelected.clear();
-  vaultBatchMode = false;
-  const bar = $('#vaultBatchBar');
-  if (bar) bar.style.display = 'none';
+  endVaultBatchModeSilently();
   await refreshVault();
   renderList();
   toast('✓ ' + ok + ' item dikeluarkan dari arsip' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
@@ -1794,10 +1845,7 @@ async function vaultBatchMoveFolderAction() {
             fail++;
           }
         }
-        vaultBatchSelected.clear();
-        vaultBatchMode = false;
-        const bar = $('#vaultBatchBar');
-        if (bar) bar.style.display = 'none';
+        endVaultBatchModeSilently();
         await refreshVault();
         renderList();
         const folderName = fid ? (currentVault.items.find(i => i.id === fid)?.title || 'folder') : 'top-level';
@@ -1836,10 +1884,7 @@ async function vaultBatchArchiveAction() {
       fail++;
     }
   }
-  vaultBatchSelected.clear();
-  vaultBatchMode = false;
-  const bar = $('#vaultBatchBar');
-  if (bar) bar.style.display = 'none';
+  endVaultBatchModeSilently();
   await refreshVault();
   renderList();
   toast('✓ ' + ok + ' item diarsipkan' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
@@ -1892,10 +1937,7 @@ async function vaultBatchBundleAction() {
           }
         }
       }
-      vaultBatchSelected.clear();
-      vaultBatchMode = false;
-      const bar = $('#vaultBatchBar');
-      if (bar) bar.style.display = 'none';
+      endVaultBatchModeSilently();
       await refreshVault();
       renderList();
       toast('✓ ' + ok + ' penambahan ke bundle' + (fail > 0 ? ' (' + fail + ' gagal)' : ''));
@@ -2135,10 +2177,7 @@ async function vaultBatchDeleteAction() {
     });
     if (res?.ok) {
       toast('✓ ' + (res.deleted || ids.length) + ' ' + typeLabel + ' dihapus' + (res.failed ? ' (' + res.failed + ' gagal)' : ''));
-      vaultBatchSelected.clear();
-      vaultBatchMode = false;
-      const bar = $('#vaultBatchBar');
-      if (bar) bar.style.display = 'none';
+      endVaultBatchModeSilently();
       await refreshVault();
       // Re-render supaya checkbox hilang
       renderList();
@@ -12319,6 +12358,14 @@ function bindEvents() {
   if (vaultBatchDeleteBtn) vaultBatchDeleteBtn.addEventListener('click', vaultBatchDeleteAction);
   const vaultBatchCancelBtn = $('#vaultBatchCancel');
   if (vaultBatchCancelBtn) vaultBatchCancelBtn.addEventListener('click', exitVaultBatchMode);
+  // v3.24.27: tombol "⋯" buka/tutup menu tindakan sekunder; klik tombol apa pun
+  // di dalam menu otomatis menutupnya (aksi tetap jalan lewat listener masing-masing)
+  const vaultBatchMoreBtn = $('#vaultBatchMore');
+  if (vaultBatchMoreBtn) vaultBatchMoreBtn.addEventListener('click', toggleVaultBatchMoreMenu);
+  const vaultBatchMoreMenuEl = $('#vaultBatchMoreMenu');
+  if (vaultBatchMoreMenuEl) vaultBatchMoreMenuEl.addEventListener('click', (e) => {
+    if (e.target && e.target.closest && e.target.closest('button')) closeVaultBatchMoreMenu();
+  });
   // v3.9.0 (Issue 7): Batch mode untuk notes
   $('#noteBatchBtn').addEventListener('click', toggleNotesBatchMode);
   const batchArchiveBtn = $('#notesBatchArchive');

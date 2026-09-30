@@ -76,6 +76,9 @@ import {
   isProfileFiltering
 } from './lib/contentguard.js';
 import { DEFAULT_ELEMENT_BLOCKER_RULES } from './lib/elementblocker.js';
+// v3.24.27: resolver URL cloud media SATU PINTU — dipakai caption copy agar link
+// cloud gambar selalu ikut (laporan user: hasil copy tidak ada linknya)
+import { resolveMediaCloudUrl } from './lib/copy-format.js';
 // v3.8.1: GDrive Sync (Apps Script bridge) — Issue #1, #2, #6
 import { initGDriveSync, flushNow as gdriveFlushNow, sendFullBackup as gdriveSendFullBackup, uploadScreenshot as gdriveUploadScreenshot, testConnection as gdriveTestConnection, getSyncMeta as gdriveGetMeta, getQueueLength as gdriveGetQueueLength, clearQueue as gdriveClearQueue } from './lib/gdrive-sync.js';
 // Chrome MV3: Cross-browser sidebar abstraction (Firefox sidebarAction vs Chrome sidePanel)
@@ -2413,6 +2416,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       const textPlain = '📸 Screenshot — ' + pageTitle + '\n'
         + (pageUrl ? 'Sumber: ' + pageUrl + '\n' : '')
+        + (resolveMediaCloudUrl(item) ? '🔗 Link gambar: ' + resolveMediaCloudUrl(item) + '\n' : '')
         + 'Waktu: ' + capturedDateStr + '\n'
         + 'Mode: ' + modeLabel + ' · ' + dims + '\n'
         + (annotationNote ? '📝 Catatan: ' + annotationNote + '\n' : '')
@@ -2422,6 +2426,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         + '<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="screenshot" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>'
         + '<p style="margin:8px 0 2px"><strong>📸 ' + _escapeHtml(pageTitle) + '</strong></p>'
         + (pageUrl ? '<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + _escapeHtml(pageUrl) + '">' + _escapeHtml(pageUrl) + '</a></p>' : '')
+        + (resolveMediaCloudUrl(item) ? '<p style="margin:0 0 2px;color:#2563eb">🖼️ <a href="' + _escapeHtml(resolveMediaCloudUrl(item)) + '" style="color:#2563eb">Link gambar (cloud)</a></p>' : '')
         + '<p style="margin:0 0 2px;color:#57534e">🕒 ' + _escapeHtml(capturedDateStr) + '</p>'
         + (annotationNote ? '<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + _escapeHtml(annotationNote) + '</p>' : '')
         + '<p style="margin:0;color:#78716c">🔧 ' + _escapeHtml(modeLabel) + ' · ' + dims + ' · RecallFox</p>'
@@ -2752,8 +2757,11 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         dataUrls.push(dataUrl);
 
         // v3.11.28: Markdown lengkap — sama format dengan preview modal
+        // v3.24.27: + 🔗 Link gambar (URL cloud) — laporan user: copy tanpa link
+        const _cloudUrl = resolveMediaCloudUrl(item);
         mdParts.push('## ' + num + '. 📸 ' + pageTitle);
         if (pageUrl) mdParts.push('Sumber: ' + pageUrl);
+        if (_cloudUrl) mdParts.push('🔗 Link gambar: ' + _cloudUrl);
         mdParts.push('Waktu: ' + capturedDate);
         mdParts.push('Mode: ' + modeLabel + ' · ' + dims);
         if (tags) mdParts.push('Tag: ' + tags);
@@ -2770,6 +2778,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         htmlParts.push('<p style="margin:0 0 6px"><img src="' + dataUrl + '" alt="Screenshot ' + num + '" style="max-width:100%;border-radius:8px;border:1px solid #e7e5e4"/></p>');
         htmlParts.push('<p style="margin:8px 0 2px"><strong>📸 ' + num + '. ' + escHtml(pageTitle) + '</strong></p>');
         if (pageUrl) htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🔗 <a href="' + escHtml(pageUrl) + '">' + escHtml(pageUrl) + '</a></p>');
+        if (_cloudUrl) htmlParts.push('<p style="margin:0 0 2px;color:#2563eb">🖼️ <a href="' + escHtml(_cloudUrl) + '" style="color:#2563eb">Link gambar (cloud)</a></p>');
         htmlParts.push('<p style="margin:0 0 2px;color:#57534e">🕒 ' + escHtml(capturedDate) + '</p>');
         if (annotationNote) htmlParts.push('<p style="margin:0 0 2px;color:#92400e;background:#fef3c7;padding:4px 8px;border-radius:4px">📝 ' + escHtml(annotationNote) + '</p>');
         let footerLine = '🔧 ' + escHtml(modeLabel) + ' · ' + escHtml(dims);

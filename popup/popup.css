@@ -202,16 +202,26 @@ body.rf-sidebar-body .popup{
 .addbtn:hover{background:var(--primary-soft-2)}
 .addbtn svg{width:11px;height:11px}
 /* v3.18.2: Tombol grup di baris kedua — TIDAK PERNAH di-hide */
-.vault-actions{display:flex;gap:6px;padding:0 13px 6px;flex:none;flex-wrap:wrap}
-.vault-actions .addbtn{margin-left:0}
+/* v3.24.27: DESAIN ULANG — satu baris scroll horizontal (dulu flex-wrap:wrap yang
+   menggulung 3-4 baris di sidebar sempit dan menyempitkan daftar item, laporan
+   user: "tampilannya penuh sesak"). Scrollbar disembunyikan visual. */
+.vault-actions{display:flex;gap:6px;padding:0 13px 6px;flex:none;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+.vault-actions::-webkit-scrollbar{display:none}
+.vault-actions .addbtn{margin-left:0;flex:none;white-space:nowrap}
+.vault-actions select{flex:none}
+/* v3.24.27: saat mode batch aktif, vault-actions (Batch/Auto/Perintah/Folder/sort)
+   disembunyikan — semua kontrol relevan sudah ada di batch bar, daftar item lega */
+#vaultView.batching .vault-actions{display:none}
 .btn-text{display:inline}
 /* v3.17.4: Unparenting drop zone — muncul saat drag item dari folder */
 .vault-root-dropzone{padding:10px 14px;margin:6px 0;border:2px dashed var(--primary);border-radius:var(--r-md);background:var(--primary-soft);color:var(--primary);font-size:11px;font-weight:600;text-align:center;transition:.15s;cursor:default}
 .vault-root-dropzone.drag-over{background:var(--primary);color:#fff;transform:scale(1.02)}
-/* v3.9.0 (Issue 6): Chips jadi ribbon (wrap, no horizontal scroll) + warna per kategori */
-.chips{display:flex;gap:6px;padding:0 13px 9px;flex-wrap:wrap;flex:none}
+/* v3.9.0 (Issue 6): Chips jadi ribbon + warna per kategori */
+/* v3.24.27: kembali ke ribbon 1 baris scroll horizontal (dulu wrap 2 baris) —
+   hemat ruang vertikal agar daftar gambar lebih lega (laporan user) */
+.chips{display:flex;gap:6px;padding:0 13px 9px;flex-wrap:nowrap;overflow-x:auto;flex:none;scrollbar-width:none}
 .chips::-webkit-scrollbar{display:none}
-.chip{flex:none;font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:var(--r-full);background:var(--surface);border:1px solid var(--border);color:var(--text-2);transition:.15s;display:flex;gap:5px;align-items:center}
+.chip{flex:none;font-size:11.5px;font-weight:600;padding:5px 12px;border-radius:var(--r-full);background:var(--surface);border:1px solid var(--border);color:var(--text-2);transition:.15s;display:flex;gap:5px;align-items:center;white-space:nowrap}
 .chip .n{font-size:10px;color:var(--muted)}
 .chip:hover{border-color:var(--border-strong)}
 .chip.on{background:var(--text);border-color:var(--text);color:var(--bg)}
@@ -245,6 +255,11 @@ body.rf-sidebar-body .popup{
 .list::-webkit-scrollbar,.cmdres::-webkit-scrollbar,.page-body::-webkit-scrollbar,.tools::-webkit-scrollbar,.notes-list::-webkit-scrollbar{display:none}
 .list::-webkit-scrollbar-thumb,.cmdres::-webkit-scrollbar-thumb,.page-body::-webkit-scrollbar-thumb,.tools::-webkit-scrollbar-thumb,.notes-list::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:4px;border:2px solid var(--bg)}
 .sec-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:8px 6px 5px}
+/* v3.24.27: Batch bar lega — tombol tidak boleh patah baris; baris aksi utama
+   scroll horizontal; menu "⋯" muncul sebagai grid wrap di bawahnya */
+.rf-batch-actions .btn,#vaultBatchMoreMenu .btn{flex:none;white-space:nowrap}
+.rf-batch-actions{scrollbar-width:none}
+.rf-batch-actions::-webkit-scrollbar{display:none}
 .item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:var(--r-md);cursor:pointer;border:1px solid transparent;transition:background .12s,border-color .12s;outline:none}
 .item:hover,.item.kb{background:var(--surface);border-color:var(--border)}
 .item:active{transform:scale(.99)}
