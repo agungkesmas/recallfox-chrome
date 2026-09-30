@@ -71,7 +71,7 @@ import { getProviderList, getProviderInfo, chatWithFallback, isAssistantConfigur
 import { manualBackupWithTimestamp, getBackupMetadata, restoreFromFile } from '../lib/autobackup.js';
 // v3.11.34: Shared clipboard format helper — supaya sidebar/batch/preview-modal
 // semua pakai format yang sama persis.
-import { buildScreenshotCaption, buildBatchCaption, buildDocumentCaption, writeScreenshotToClipboard, writeImageOnlyToClipboard, buildCompositeImage, buildBundleMediaReport } from '../lib/copy-format.js';
+import { buildScreenshotCaption, buildBatchCaption, buildDocumentCaption, writeScreenshotToClipboard, writeImageOnlyToClipboard, buildCompositeImage, buildBundleMediaReport, buildMediaSelectionReport } from '../lib/copy-format.js';
 // v3.4: Helper untuk hapus selector dari elementBlockerRules (per-domain picker list)
 async function removeElementBlockerSelector(domain, selector) {
   try {
@@ -967,6 +967,7 @@ function updateVaultBatchBarButtons() {
   const downloadBtn = $('#vaultBatchDownload');       // v3.14.9: Download Semua (screenshot/doc only)
   const copyUrlsBtn = $('#vaultBatchCopyUrls');       // v3.14.9: Copy URL gambar (screenshot/doc only)
   const copyMetaBtn = $('#vaultBatchCopyMeta');       // Copy Teks Saja (screenshot only, text-only)
+  const copyLinkCapBtn = $('#vaultBatchCopyLinkCap'); // v3.24.26: Salin Link + Ket. (seleksi langsung, tanpa bundle)
   const copyTextBtn = $('#vaultBatchCopyText');       // Copy Teks (prompt/context/link/snapshot)
   const copyBundleBtn = $('#vaultBatchCopyBundle');   // Copy Bundle (bundle only)
   const unarchiveBtn = $('#vaultBatchUnarchive');     // Unarsip (archive only)
@@ -977,7 +978,7 @@ function updateVaultBatchBarButtons() {
   const bundleBtn = $('#vaultBatchBundle');           // Tambah ke Bundle (item only, bukan bundle)
 
   // Reset semua
-  [copyCaptionBtn, copyImgBtn, downloadBtn, copyUrlsBtn, copyMetaBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn, moveFolderBtn, archiveBtn, bundleBtn].forEach(b => {
+  [copyCaptionBtn, copyImgBtn, downloadBtn, copyUrlsBtn, copyLinkCapBtn, copyMetaBtn, copyTextBtn, copyBundleBtn, unarchiveBtn, deleteBtn, moveFolderBtn, archiveBtn, bundleBtn].forEach(b => {
     if (b) b.style.display = 'none';
   });
 
@@ -1018,6 +1019,7 @@ function updateVaultBatchBarButtons() {
     if (copyImgBtn) copyImgBtn.style.display = '';
     if (downloadBtn) downloadBtn.style.display = '';
     if (copyUrlsBtn) copyUrlsBtn.style.display = '';
+    if (copyLinkCapBtn) copyLinkCapBtn.style.display = '';   // v3.24.26: link+keterangan tanpa bundle
     if (copyMetaBtn) copyMetaBtn.style.display = '';
   }
   if (hasBundle) {
@@ -1610,6 +1612,46 @@ async function vaultBatchCopyMetaAction() {
     } catch (e2) {
       toast('⚠ Gagal menyalin: ' + e2.message, false);
     }
+  }
+}
+
+// v3.24.26: Salin Link + Keterangan — SELEKSI LANGSUNG (mode batch), TANPA
+// perlu membuat Bundle dulu. Permintaan user: "jangan dibuat bundle dulu baru
+// bisa dikopi barengan … tapi bisa langsung mode batch terus kopi gambar
+// (disertai link gambarnya) dan keterangannya langsung".
+// Format markdown per-media IDENTIK dengan "Salin Link + Keterangan" milik
+// Bundle (buildBundleMediaReport) — via buildMediaSelectionReport.
+// Berlaku untuk screenshot/document (Link Gambar), file (Link Dokumen), link.
+async function vaultBatchCopyLinkCaptionAction() {
+  if (vaultBatchSelected.size === 0) {
+    toast('Pilih minimal 1 media dulu');
+    return;
+  }
+  const ids = Array.from(vaultBatchSelected);
+  const items = ids
+    .map(id => currentVault.items.find(i => i.id === id))
+    .filter(Boolean)
+    .filter(i => ['screenshot', 'document', 'file', 'link'].includes(i.type));
+  if (items.length === 0) {
+    toast('Tidak ada media/link/file valid terpilih', false);
+    return;
+  }
+  toast('🔗 Menyalin Link + Keterangan ' + items.length + ' media...');
+  try {
+    const text = buildMediaSelectionReport(items);
+    if (!text) {
+      toast('Gagal membuat teks laporan — cek console', false);
+      return;
+    }
+    const okCopy = await _copyTextWithFallback(text);
+    if (okCopy) {
+      toast('📋 Link + Keterangan tersalin (' + items.length + ' media) — tanpa perlu bundle');
+    } else {
+      toast('Gagal salin — clipboard diblokir', false);
+    }
+  } catch (e) {
+    console.error('[RecallFox] vaultBatchCopyLinkCaptionAction:', e);
+    toast('⚠ Gagal: ' + (e.message || 'unknown error'), false);
   }
 }
 
@@ -5573,7 +5615,7 @@ function itemSheet(id) {
       // untuk item screenshot di Vault. Sebelumnya cuma ada "Lihat" dan "Download".
       // User bilang: "masih lihat dan download bukan seperti ini baik ikon maupun fungsinya"
       // v3.12.0 (Fase 7): Tombol yang sama juga tampil untuk dokumen (copy halaman pertama).
-      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin ' + (it.type === 'document' ? 'Gambar' : 'Gambar') + '<div class="ad">Salin gambar saja ke clipboard</div></div></button>' : '')
+      + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-img">' + ICONS.copy + '<div>📋 Salin ' + (it.type === 'document' ? 'Gambar (hal. 1)' : 'Gambar') + '<div class="ad">Salin gambar saja ke clipboard' + (it.type === 'document' ? ' — dokumen: halaman pertama' : '') + '</div></div></button>' : '')
       + (it.type === 'screenshot' || it.type === 'document' ? '<button class="act" data-a="copy-bundle">' + ICONS.clipA + '<div>📦 Salin + Keterangan<div class="ad">' + (it.type === 'document' ? 'Gambar + URL, judul, waktu, jumlah halaman' : 'Gambar + URL, judul, waktu, mode') + '</div></div></button>' : '')
       // v3.11.36 (Sesi 2, Issue dari Google Doc): Tombol Salin Teks Metadata (text-only)
       // User feedback: "di chat ai maupun wa, paste itu kadang gambarnya doang, teksnya ga
@@ -5990,7 +6032,12 @@ async function copyScreenshotToClipboard(id, withCaption) {
     } else {
       // Image only — tanpa caption
       if (!dataUrl) { toast('Gambar tidak ditemukan di storage', false); return; }
-      const result = await writeScreenshotToClipboard(dataUrl, '', '');
+      // v3.24.26 FIX: pakai writeImageOnlyToClipboard (helper khusus image-only,
+      // pola v3.14.8 di viewer). Sebelumnya writeScreenshotToClipboard(dataUrl,'','')
+      // — empty text/plain + text/html Blob sering DITOLAK browser → strategy 1
+      // gagal → strategy 2/3 skip ('' falsy) → ok:false → jatuh ke DOWNLOAD.
+      // Itu penyebab "Salin Gambar" kedownload bukan kekopi di item sheet.
+      const result = await writeImageOnlyToClipboard(dataUrl);
       if (result.ok) {
         toast(result.message || '✓ Gambar tersalin');
       } else {
@@ -6002,7 +6049,7 @@ async function copyScreenshotToClipboard(id, withCaption) {
           document.body.appendChild(a);
           a.click();
           a.remove();
-          toast('✓ Gambar di-download (clipboard tidak support)');
+          toast('⚠ Clipboard diblokir — gambar disimpan ke Downloads sebagai gantinya');
         } catch (e) {
           toast('Gagal salin: ' + (result.error || e.message), false);
         }
@@ -12247,6 +12294,9 @@ function bindEvents() {
   // v3.14.9: Batch copy URL gambar (untuk AI sites yang tidak support paste gambar)
   const vaultBatchCopyUrlsBtn = $('#vaultBatchCopyUrls');
   if (vaultBatchCopyUrlsBtn) vaultBatchCopyUrlsBtn.addEventListener('click', vaultBatchCopyUrlsAction);
+  // v3.24.26: Salin Link + Keterangan — seleksi langsung, TANPA perlu bundle
+  const vaultBatchCopyLinkCapBtn = $('#vaultBatchCopyLinkCap');
+  if (vaultBatchCopyLinkCapBtn) vaultBatchCopyLinkCapBtn.addEventListener('click', vaultBatchCopyLinkCaptionAction);
   // v3.11.36: Batch copy teks metadata saja (tanpa gambar)
   const vaultBatchCopyMetaBtn = $('#vaultBatchCopyMeta');
   if (vaultBatchCopyMetaBtn) vaultBatchCopyMetaBtn.addEventListener('click', vaultBatchCopyMetaAction);

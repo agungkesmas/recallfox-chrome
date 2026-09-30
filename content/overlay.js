@@ -656,6 +656,67 @@
     s._hideTimer = setTimeout(() => { s.hidden = true; }, 3500);
   }
 
+  // v3.24.26 FIX — "Salin Gambar" kedownload bukan kekopi (laporan user):
+  // seluruh jalur lama bergantung pada navigator.clipboard.write di konteks
+  // HALAMAN. Itu sering gagal (Permissions-Policy halaman melarang
+  // clipboard-write, dokumen tidak fokus, atau transient activation klik
+  // sudah kedaluwarsa setelah alur capture) → semua lapis gagal → jatuh ke
+  // fallback terakhir = DOWNLOAD. Solusi: tambah 2 lapis baru yang bekerja
+  // SINKRON dalam user gesture & tidak tergantung izin async clipboard:
+  //
+  //   rfCopyImageViaSelection() — select satu <img> (dari dataUrl) lalu
+  //   execCommand('copy') → browser menaruh image/png ke clipboard; perilaku
+  //   sama dengan "Copy Image" klik kanan. Kebal policy async-clipboard.
+  //
+  //   rfCopyRichViaExecCommand() — pasang listener event 'copy' yang mem-set
+  //   text/html (dgn <img src=dataUrl> ter-embed) + text/plain, lalu
+  //   execCommand('copy') → Google Docs/Gmail/Word menampilkan gambar +
+  //   keterangan saat paste.
+  async function rfCopyImageViaSelection(dataUrl) {
+    const img = document.createElement('img');
+    img.src = dataUrl;
+    img.style.cssText = 'position:fixed;left:-10000px;top:0;width:auto;height:auto;max-width:none;max-height:none;z-index:-1;opacity:0.01;pointer-events:none';
+    document.body.appendChild(img);
+    try {
+      try {
+        if (img.decode) await img.decode();
+        else await new Promise((res, rej) => { img.onload = res; img.onerror = rej; setTimeout(res, 3000); });
+      } catch (e) { /* tetap coba copy walau decode throws */ }
+      const range = document.createRange();
+      range.selectNode(img);
+      const sel = window.getSelection();
+      const oldRanges = [];
+      for (let i = 0; i < sel.rangeCount; i++) oldRanges.push(sel.getRangeAt(i).cloneRange());
+      sel.removeAllRanges();
+      sel.addRange(range);
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      sel.removeAllRanges();
+      for (const r of oldRanges) { try { sel.addRange(r); } catch (e) {} }
+      return !!ok;
+    } finally {
+      try { img.remove(); } catch (e) {}
+    }
+  }
+
+  function rfCopyRichViaExecCommand(textHtml, textPlain) {
+    let ok = false;
+    const handler = (e) => {
+      try {
+        if (e.clipboardData) {
+          if (textHtml) e.clipboardData.setData('text/html', textHtml);
+          if (textPlain) e.clipboardData.setData('text/plain', textPlain);
+          e.preventDefault();
+          ok = true;
+        }
+      } catch (err) { ok = false; }
+    };
+    document.addEventListener('copy', handler, { once: true, capture: true });
+    try { document.execCommand('copy'); } catch (e) {}
+    try { document.removeEventListener('copy', handler, { capture: true }); } catch (e) { document.removeEventListener('copy', handler); }
+    return ok;
+  }
+
   async function handleAction(action, btn) {
     if (!lastCapture) return;
     const originalHtml = btn.innerHTML;
@@ -739,12 +800,13 @@
           modalEl.style.display = '';
         }
       } else if (action === 'copy') {
-        // v3.11.23 (Issue #1 fix): Salin gambar saja ke clipboard (tanpa keterangan)
-        // FIX: Sebelumnya fallback pakai browser.clipboard.setImageData yang TIDAK ADA
-        // di content script → error "browser clipboard is undefined".
-        // Sekarang: coba navigator.clipboard.write (works di Firefox 127+ dengan user gesture),
-        // kalau gagal → delegate ke background (inject clipboard write ke page context),
-        // kalau masih gagal → download file sebagai fallback.
+        // v3.24.26 FIX: "Salin Gambar" kedownload bukan kekopi (laporan user).
+        // Ladder 4 lapis — download hanya jadi pilihan TERAKHIR:
+        //   1) navigator.clipboard.write (kualitas terbaik, async API)
+        //   2) execCommand('copy') dgn selection <img> — SINKRON dlm user
+        //      gesture, kebal Permissions-Policy async clipboard halaman
+        //   3) delegate background (Firefox: browser.clipboard.setImageData)
+        //   4) download (hanya kalau SEMUA gagal)
         showStatus('Menyalin gambar ke clipboard…');
         let copyOk = false;
         try {
@@ -768,6 +830,16 @@
           console.warn('[RecallFox] clipboard.write failed in overlay:', e.message);
         }
         if (!copyOk) {
+          // Lapis 2 (v3.24.26): execCommand copy image-selection — sync, dalam
+          // user gesture, tidak tergantung izin async clipboard halaman.
+          try {
+            copyOk = await rfCopyImageViaSelection(lastCapture.dataUrl);
+            if (copyOk) showStatus('✓ Gambar tersalin ke clipboard');
+          } catch (e) {
+            console.warn('[RecallFox] execCommand image copy failed:', e);
+          }
+        }
+        if (!copyOk) {
           // Fallback: delegate ke background (inject clipboard write ke page context)
           try {
             const res = await browser.runtime.sendMessage({
@@ -784,7 +856,7 @@
           }
         }
         if (!copyOk) {
-          // Last resort: download file
+          // Last resort (HANYA kalau semua lapis gagal): download file
           try {
             const a = document.createElement('a');
             a.href = lastCapture.dataUrl;
@@ -792,7 +864,7 @@
             document.body.appendChild(a);
             a.click();
             a.remove();
-            showStatus('✓ Gambar disimpan ke Downloads (clipboard tidak support)');
+            showStatus('⚠ Clipboard diblokir halaman ini — gambar disimpan ke Downloads sebagai gantinya');
           } catch (e) {
             showStatus('✗ Gagal salin: ' + e.message, true);
           }
@@ -856,6 +928,18 @@
           console.warn('[RecallFox] clipboard.write bundle failed:', e.message);
         }
         if (!copyOk) {
+          // Lapis 2 (v3.24.26): execCommand('copy') + event copy — set text/html
+          // (dgn <img src=dataUrl> ter-embed) + text/plain SINKRON dalam user
+          // gesture; kebal Permissions-Policy async clipboard halaman. Google
+          // Docs/Gmail/Word menampilkan gambar + keterangan saat paste.
+          try {
+            copyOk = rfCopyRichViaExecCommand(textHtml, textPlain);
+            if (copyOk) showStatus('✓ Gambar + keterangan tersalin ke clipboard');
+          } catch (e) {
+            console.warn('[RecallFox] execCommand rich copy failed:', e);
+          }
+        }
+        if (!copyOk) {
           // Fallback: delegate ke background
           try {
             const res = await browser.runtime.sendMessage({
@@ -874,7 +958,7 @@
           }
         }
         if (!copyOk) {
-          // Last resort: copy text + download image
+          // Last resort (HANYA kalau semua lapis gagal): copy text + download image
           try {
             await navigator.clipboard.writeText(textPlain);
             const a = document.createElement('a');
@@ -883,7 +967,7 @@
             document.body.appendChild(a);
             a.click();
             a.remove();
-            showStatus('✓ Keterangan disalin + gambar di-download (clipboard image tidak support)');
+            showStatus('⚠ Clipboard gambar diblokir halaman ini — keterangan disalin, gambar disimpan ke Downloads');
           } catch (e) {
             showStatus('✗ Gagal salin: ' + e.message, true);
           }

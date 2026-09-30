@@ -12,6 +12,29 @@ function escHtml(s) {
   return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// v3.24.26 FIX: Helper — tulis PNG ke clipboard via API background Firefox
+// (browser.clipboard.setImageData — HANYA ada di background Firefox; TIDAK ada
+// di content script/halaman — lihat catatan v3.11.22 — dan TIDAK ada di Chrome).
+// Tanpa perlu user gesture & kebal Permissions-Policy halaman. Non-PNG
+// dikonversi via OffscreenCanvas. Return true kalau sukses, false kalau API
+// tidak tersedia (Chrome), throw kalau API ada tapi gagal.
+async function rfClipboardSetImageDataPng(dataUrl) {
+  const clip = (typeof browser !== 'undefined' && browser.clipboard && typeof browser.clipboard.setImageData === 'function') ? browser.clipboard : null;
+  if (!clip) return false;
+  const resp = await fetch(dataUrl);
+  const blob = await resp.blob();
+  let pngBuf = await blob.arrayBuffer();
+  if (blob.type !== 'image/png') {
+    const bmp = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+    canvas.getContext('2d').drawImage(bmp, 0, 0);
+    const pngBlob = await canvas.convertToBlob({ type: 'image/png' });
+    pngBuf = await pngBlob.arrayBuffer();
+  }
+  await clip.setImageData(pngBuf, 'png');
+  return true;
+}
+
 import {
   pushToSync,
   mergeSyncIntoLocal,
@@ -2533,6 +2556,22 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const { dataUrl, withCaption, textPlain, textHtml } = msg;
       if (!dataUrl) { sendResponse({ ok: false, error: 'no_dataurl' }); return; }
 
+      // v3.24.26 FIX: "Salin Gambar" (image-only) — lapis background paling
+      // reliable di Firefox: browser.clipboard.setImageData (API khusus
+      // background, tanpa user gesture, kebal Permissions-Policy halaman).
+      // Selama ini kedua jalur (async API di overlay + inject ke halaman)
+      // bisa gagal bersamaan → jatuh ke fallback DOWNLOAD (laporan user:
+      // "gambar kedownload bukan kekopi"). Chrome: API tidak ada → dilewati.
+      if (!withCaption) {
+        try {
+          if (await rfClipboardSetImageDataPng(dataUrl)) {
+            sendResponse({ ok: true, message: '✓ Gambar tersalin ke clipboard' }); return;
+          }
+        } catch (e) {
+          console.warn('[RecallFox] setImageData (FF background) gagal:', e);
+        }
+      }
+
       const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
       if (!tab?.id) { sendResponse({ ok: false, error: 'no_active_tab' }); return; }
       if (!tab.url || /^(about|moz-extension|chrome-extension|file):/i.test(tab.url)) {
@@ -2587,6 +2626,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse(awaited); return;
         }
         // Fallback: download file
+        // v3.24.26: sebelum download, coba API background Firefox (setImageData)
+        // dulu — minimal gambarnya tersalin ke clipboard daripada cuma didownload.
+        try {
+          if (await rfClipboardSetImageDataPng(dataUrl)) {
+            sendResponse({ ok: true, message: withCaption && textPlain ? '✓ Gambar tersalin (API Firefox) — keterangan tidak bisa digabung di jalur ini' : '✓ Gambar tersalin ke clipboard (API Firefox)' }); return;
+          }
+        } catch (eClip) { console.warn('[RecallFox] setImageData pre-download gagal:', eClip); }
         try {
           const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
           const objectUrl = await blobToDataUrl(blob); // v3.22.6: createObjectURL tidak ada di ServiceWorker — data: URL
@@ -2602,6 +2648,13 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       if (result && result.ok) { sendResponse(result); return; }
       // Fallback: download file
+      // v3.24.26: sebelum download, coba API background Firefox (setImageData)
+      // dulu — minimal gambarnya tersalin ke clipboard daripada cuma didownload.
+      try {
+        if (await rfClipboardSetImageDataPng(dataUrl)) {
+          sendResponse({ ok: true, message: withCaption && textPlain ? '✓ Gambar tersalin (API Firefox) — keterangan tidak bisa digabung di jalur ini' : '✓ Gambar tersalin ke clipboard (API Firefox)' }); return;
+        }
+      } catch (eClip) { console.warn('[RecallFox] setImageData pre-download gagal:', eClip); }
       try {
         const blob = new Blob([await (await fetch(dataUrl)).blob()], { type: 'image/png' });
         const objectUrl = await blobToDataUrl(blob); // v3.22.6: createObjectURL tidak ada di ServiceWorker — data: URL
