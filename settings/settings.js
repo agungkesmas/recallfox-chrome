@@ -3,6 +3,7 @@
 
 import {
   getVault,
+  saveVault,
   saveSettings,
   getSettings,
   exportAllScreenshotBlobs,
@@ -15,6 +16,8 @@ import { getProviderInfo } from '../lib/assistant.js';
 import { getAllToppings, BUILTIN_TOPPINGS } from '../lib/toppings.js';
 // v3.20.25: Import Paket Link
 import { readLinkPackFile, hasImportedPack, importLinkPack, getTypeLabel, getTypeIcon } from '../lib/link-pack.js';
+// v3.24.28: kunci preferensi urutan tata letak (Susun Sesuai Selera)
+import { RF_LAYOUT_ALL_KEYS } from '../lib/layout-prefs.js';
 
 let currentVault = null;
 
@@ -1020,6 +1023,28 @@ function bindEvents() {
     prayerResetBtn.addEventListener('click', async () => {
       await saveSettings({ prayerCachedTimes: null });
       toast('Cache direset — akan fetch ulang');
+    });
+  }
+
+  // v3.24.28: Atur ulang urutan tata letak (Susun Sesuai Selera) — hapus semua
+  // preferensi urutan (chip, tombol batch, aksi vault, seksi Beranda) + kembalikan
+  // tile quick actions ke bawaan. Efeknya terlihat saat popup/sidebar dibuka ulang.
+  const layoutResetBtn = document.getElementById('rf-set-layout-reset');
+  if (layoutResetBtn) {
+    layoutResetBtn.addEventListener('click', async () => {
+      try {
+        RF_LAYOUT_ALL_KEYS.forEach((k) => {
+          try { localStorage.removeItem(k); } catch (e) {}
+        });
+        try { localStorage.removeItem('rf-ui-sortHintSeen'); } catch (e) {}
+        try {
+          const v = await getVault();
+          if (v && v.settings) { delete v.settings.activeTiles; await saveVault(v); }
+        } catch (e) { console.warn('[RecallFox] reset activeTiles gagal:', e); }
+        toast('✓ Urutan dikembalikan ke bawaan — buka popup/sidebar untuk melihat');
+      } catch (e) {
+        toast('Gagal mengatur ulang urutan', false);
+      }
     });
   }
 

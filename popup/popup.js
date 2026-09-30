@@ -34,6 +34,9 @@ import {
   MAX_TEMP_UPLOAD_BYTES
 } from '../lib/file-kinds.js';
 import { searchItems, extractVariables, fillVariables } from '../lib/search.js';
+// v3.24.28: "Susun Sesuai Selera" — preferensi urutan elemen UI (pure module,
+// lihat lib/layout-prefs.js; engine drag rfSortable* di bawah).
+import { loadUiOrder, saveUiOrder, RF_LAYOUT_KEYS } from '../lib/layout-prefs.js';
 // v3.24.12: Upload file sementara (dual destination) — host litterbox,
 // item hilang otomatis dari vault saat kedaluwarsa. Lihat lib/temp-upload.js.
 import {
@@ -823,7 +826,8 @@ function chipCount(c) {
 function renderChips() {
   const items = getVaultItems();
   // v3.9.0 (Issue 6): tambah data-cat untuk styling ribbon warna per kategori
-  $('#chips').innerHTML = CHIPS.map(function (c) {
+  // v3.24.28: urutan chip mengikuti preferensi user (Susun Sesuai Selera)
+  $('#chips').innerHTML = rfOrderedChips().map(function (c) {
     const n = chipCount(c[0]);
     if (c[0] !== 'all' && c[0] !== 'archive' && n === 0) return '';
     return '<button class="chip' + (currentChip === c[0] ? ' on' : '') + '" data-chip="' + c[0] + '" data-cat="' + c[0] + '">' + c[1] + '<span class="n">' + n + '</span></button>';
@@ -11948,6 +11952,374 @@ async function refreshVault() {
   // tidak dipanggil, sehingga tombol batch bisa inconsistent setelah hapus/edit item.
   try { updateBatchModeBtnVisibility(); } catch (e) {}
 }
+// ============================================================================
+// v3.24.28 — SUSUN SESUAI SELERA: tahan lama (±0,35 detik) lalu geser untuk
+// mengubah urutan tombol/chip/seksi sendiri sesuai preferensi.
+//
+// Laporan user (screenshot vault 30 Sep): "apakah tombol-tombol yang saya
+// kotaki itu bisa di klik lama kemudian diubah ubah urutannya, biar saya
+// melakukan pengurutan sendiri sesuai preferensi. termasuk kalau bisa semua
+// elemen di situ bisa di ubah ubah tata letaknya."
+//
+// Area yang bisa disusun (dikotaki user + semua tombol di sekitarnya):
+//   1. Tile quick actions (Prompt/Link/…)     → vault.settings.activeTiles
+//   2. Chip filter vault (Semua/Terbaru/…)    → localStorage rf-ui-chipOrder
+//   3. Tombol baris utama batch bar           → localStorage rf-ui-batchOrder
+//   4. Tombol di menu ⋯ batch                 → localStorage rf-ui-batchMoreOrder
+//   5. Tombol baris aksi vault (Batch/Auto/…) → localStorage rf-ui-vaultActionOrder
+//   6. Urutan SEKSI Beranda                   → localStorage rf-ui-homeOrder
+//      (Sholat/Pomodoro/Tiles — tahan lama pada bar Sholat/Pomodoro; ada grip
+//      ⋮⋮ yang ditambahkan CSS di ujung kiri bar sebagai penanda bisa digeser)
+//
+// Jaminan perilaku:
+//   - Ketuk normal (<350ms, tanpa geser) = perilaku lama 100% tidak berubah.
+//   - Scroll tetap normal — touchmove hanya di-preventDefault saat drag aktif.
+//   - Klik setelah drag selesai ditelan (suppressClick) supaya tidak memicu
+//     aksi tombol yang kebetulan ikut terangkat (mis. pindah chip).
+//   - Geser <350ms = itu scroll biasa, timer long-press batal sendiri.
+// ============================================================================
+
+const RF_SORT_PRESS_MS = 350;       // lama tahan sebelum mode drag aktif
+const RF_SORT_MOVE_CANCEL_PX = 12;  // geser sebanyak ini sebelum aktif = batal (itu scroll)
+
+// State global satu drag pada satu waktu (delegation per container).
+const rfSort = {
+  pressing: false,   // pointer sedang ditekan menunggu long-press
+  active: false,     // mode drag aktif (long-press tercapai)
+  moved: false,      // pernah pindah posisi saat aktif
+  container: null,
+  item: null,
+  opts: null,
+  startX: 0, startY: 0,
+  timer: 0,
+  suppressClick: false // klik pertama setelah drag ditelan
+};
+
+/** Daftar elemen yang bisa diurutkan dalam satu container (anak langsung). */
+function rfSortItemsOf(container, opts) {
+  try {
+    return Array.prototype.slice.call(container.querySelectorAll(opts.itemSel))
+      .filter(function (el) { return el.parentElement === container; });
+  } catch (e) { return []; }
+}
+
+/** Ambil id stabil satu elemen (untuk disimpan ke preferensi urutan). */
+function rfSortGetId(el, opts) {
+  if (opts && typeof opts.getId === 'function') return opts.getId(el) || '';
+  return (el.dataset && (el.dataset.rfSortId || el.dataset.chip || el.dataset.tile)) || el.id || '';
+}
+
+/**
+ * Pasang behaviour sortable pada satu container (delegation, idempotent).
+ * opts:
+ *   itemSel   — selector anak yang bisa digeser (wajib)
+ *   axis      — 'h' (baris horizontal) | 'v' (tumpukan) | 'auto' (grid tiles)
+ *   getId     — (el)=>id kustom (opsional)
+ *   onCommit  — (ids, container)=>Promise|any — simpan urutan (opsional;
+ *               tanpa onCommit urutan hanya berlaku sesi ini)
+ *   noOutline — jangan gambar outline dashed di container (utk seksi Beranda)
+ */
+function rfSortableInit(container, opts) {
+  if (!container || container._rfSortOpts) return;
+  container._rfSortOpts = Object.assign({ itemSel: '[data-rf-sortable-item]', axis: 'auto' }, opts || {});
+  container.classList.add('rf-sortable');
+  container.addEventListener('pointerdown', rfSortPointerDown);
+}
+
+/** Animasi FLIP ringan: snapshot posisi → mutate DOM → animasikan delta. */
+function rfFlipPlay(container, opts, mutate) {
+  let items = [];
+  try { items = rfSortItemsOf(container, opts); } catch (e) {}
+  const before = new Map();
+  items.forEach(function (el) { before.set(el, el.getBoundingClientRect()); });
+  mutate();
+  items.forEach(function (el) {
+    const b = before.get(el);
+    if (!b) return;
+    const a = el.getBoundingClientRect();
+    const dx = b.left - a.left, dy = b.top - a.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    el.style.transition = 'none';
+    el.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    requestAnimationFrame(function () {
+      el.style.transition = 'transform .16s ease';
+      el.style.transform = '';
+      setTimeout(function () { el.style.transition = ''; }, 200);
+    });
+  });
+}
+
+function rfSortActivate() {
+  rfSort.active = true;
+  document.body.classList.add('rf-sorting');
+  if (rfSort.container && !rfSort.opts.noOutline) rfSort.container.classList.add('rf-sort-active');
+  if (rfSort.item) rfSort.item.classList.add('rf-dragging');
+  try { if (navigator.vibrate) navigator.vibrate(25); } catch (e) {} // getar halus: drag mulai
+}
+
+/** Matikan semua listener/state drag (dipakai pointerup & pointercancel). */
+function rfSortDeactivate() {
+  clearTimeout(rfSort.timer);
+  window.removeEventListener('pointermove', rfSortPointerMove);
+  window.removeEventListener('pointerup', rfSortPointerUp);
+  window.removeEventListener('pointercancel', rfSortDeactivate);
+  if (rfSort.item) rfSort.item.classList.remove('rf-dragging');
+  if (rfSort.container) rfSort.container.classList.remove('rf-sort-active');
+  document.body.classList.remove('rf-sorting');
+  rfSort.pressing = false; rfSort.active = false;
+  rfSort.container = null; rfSort.item = null; rfSort.opts = null;
+}
+
+function rfSortPointerDown(e) {
+  const c = e.currentTarget;
+  const opts = c && c._rfSortOpts;
+  if (!opts || rfSort.pressing || rfSort.active) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  const item = e.target.closest(opts.itemSel);
+  if (!item || !c.contains(item)) return;
+  if (item.closest('[data-rf-nosort]')) return; // mis. tombol × pada tile
+  if (rfSortItemsOf(c, opts).length < 2) return; // cuma 1 — tak ada yang diurutkan
+  rfSort.pressing = true;
+  rfSort.container = c; rfSort.item = item; rfSort.opts = opts;
+  rfSort.startX = e.clientX; rfSort.startY = e.clientY;
+  rfSort.moved = false;
+  clearTimeout(rfSort.timer);
+  rfSort.timer = setTimeout(rfSortActivate, RF_SORT_PRESS_MS);
+  window.addEventListener('pointermove', rfSortPointerMove, { passive: false });
+  window.addEventListener('pointerup', rfSortPointerUp);
+  window.addEventListener('pointercancel', rfSortDeactivate);
+}
+
+function rfSortPointerMove(e) {
+  if (!rfSort.pressing) return;
+  const dx = e.clientX - rfSort.startX, dy = e.clientY - rfSort.startY;
+  if (!rfSort.active) {
+    // Belum aktif dan jari sudah jalan jauh → itu scroll, batalkan long-press.
+    if (Math.abs(dx) > RF_SORT_MOVE_CANCEL_PX || Math.abs(dy) > RF_SORT_MOVE_CANCEL_PX) rfSortDeactivate();
+    return;
+  }
+  e.preventDefault(); // cegah seleksi teks / native drag saat menggeser
+  rfSort.moved = true;
+  rfSortAutoScroll(e.clientX, e.clientY);
+  rfSortSwapAt(e.clientX, e.clientY);
+}
+
+function rfSortPointerUp() {
+  const wasActive = rfSort.active, wasMoved = rfSort.moved;
+  const c = rfSort.container, opts = rfSort.opts;
+  rfSortDeactivate();
+  if (!wasActive || !c || !opts) return;
+  // Tahan lama tapi tanpa geser = salah tekan; telan klik, tanpa toast.
+  rfSort.suppressClick = true;
+  setTimeout(function () { rfSort.suppressClick = false; }, 400);
+  if (!wasMoved) return;
+  const ids = rfSortItemsOf(c, opts).map(function (el) { return rfSortGetId(el, opts); });
+  Promise.resolve()
+    .then(function () { return opts.onCommit ? opts.onCommit(ids, c) : null; })
+    .then(function () { toast('✓ Urutan disimpan'); })
+    .catch(function (err) {
+      console.warn('[RecallFox] simpan urutan gagal:', err);
+      try { toast('Gagal menyimpan urutan', false); } catch (e) {}
+    });
+}
+
+/** Pindahkan item yang di-drag ke posisi pointer (live swap + FLIP). */
+function rfSortSwapAt(x, y) {
+  const opts = rfSort.opts, c = rfSort.container, item = rfSort.item;
+  if (!opts || !c || !item) return;
+  item.style.pointerEvents = 'none'; // biar elementFromPoint menembus item digenggam
+  const under = document.elementFromPoint(x, y);
+  item.style.pointerEvents = '';
+  if (!under) return;
+  const over = under.closest(opts.itemSel);
+  if (!over || over === item || !c.contains(over)) return;
+  if (over.hasAttribute && over.hasAttribute('data-rf-nosort')) return;
+  const r = over.getBoundingClientRect();
+  let before;
+  if (opts.axis === 'h') before = x < r.left + r.width / 2;
+  else if (opts.axis === 'v') before = y < r.top + r.height / 2;
+  else {
+    const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2);
+    before = Math.abs(dx) >= Math.abs(dy) ? dx < 0 : dy < 0;
+  }
+  if (before && over.previousElementSibling === item) return;  // posisi tak berubah
+  if (!before && over.nextElementSibling === item) return;
+  rfFlipPlay(c, opts, function () {
+    c.insertBefore(item, before ? over : over.nextElementSibling);
+  });
+}
+
+/** Auto-scroll bar horizontal (chips/batch) + halaman saat pointer di tepi. */
+function rfSortAutoScroll(x, y) {
+  try {
+    const c = rfSort.container;
+    if (c && c.scrollWidth > c.clientWidth + 4) {
+      const r = c.getBoundingClientRect();
+      if (x < r.left + 40) c.scrollLeft -= 9;
+      else if (x > r.right - 40) c.scrollLeft += 9;
+    }
+    const se = document.scrollingElement;
+    if (se && se.scrollHeight > se.clientHeight + 4) {
+      if (y < 64) window.scrollBy(0, -9);
+      else if (y > window.innerHeight - 64) window.scrollBy(0, 9);
+    }
+  } catch (e) {}
+}
+
+// ---- Pasang guard global sekali (klik telanaman + contextmenu + touchmove) --
+document.addEventListener('click', function (e) {
+  if (rfSort.suppressClick) { e.stopPropagation(); e.preventDefault(); }
+}, true);
+
+document.addEventListener('contextmenu', function (e) {
+  if ((rfSort.pressing || rfSort.active) && e.target.closest && e.target.closest('.rf-sortable')) e.preventDefault();
+});
+
+document.addEventListener('touchmove', function (e) {
+  // Hanya saat drag aktif — sebelumnya scroll native harus tetap jalan normal.
+  if (rfSort.active && e.target && e.target.closest && e.target.closest('.rf-sortable')) e.preventDefault();
+}, { passive: false });
+
+/**
+ * Susun ulang anak container sesuai array id tersimpan (id tak dikenal tetap
+ * di posisi relatifnya). Aman terhadap whitespace text node.
+ */
+function rfApplyDomOrder(container, itemSel, ids, getId) {
+  if (!container || !Array.isArray(ids) || !ids.length) return;
+  const items = rfSortItemsOf(container, { itemSel: itemSel });
+  if (items.length < 2) return;
+  const byId = new Map();
+  items.forEach(function (el) {
+    const id = getId ? getId(el) : rfSortGetId(el, null);
+    if (id) byId.set(id, el);
+  });
+  const ordered = [];
+  ids.forEach(function (id) {
+    const el = byId.get(id);
+    if (el) { ordered.push(el); byId.delete(id); }
+  });
+  items.forEach(function (el) {
+    const id = getId ? getId(el) : rfSortGetId(el, null);
+    if (byId.has(id)) ordered.push(el); // sisa: urutan asli
+  });
+  if (ordered.length < 2) return;
+  const point = ordered[ordered.length - 1].nextElementSibling; // node non-item ikut aman
+  ordered.forEach(function (el) { container.removeChild(el); });
+  let ref = point;
+  for (let i = ordered.length - 1; i >= 0; i--) {
+    container.insertBefore(ordered[i], ref);
+    ref = ordered[i];
+  }
+}
+
+// ---- Chip vault: urutan baca dari preferensi (cache + fallback bawaan) ----
+let rfChipOrderCache = null;
+function rfOrderedChips() {
+  if (!rfChipOrderCache) rfChipOrderCache = loadUiOrder(localStorage, RF_LAYOUT_KEYS.chips) || [];
+  const ids = mergeOrderLocal(rfChipOrderCache);
+  return ids.map(function (id) {
+    for (let i = 0; i < CHIPS.length; i++) if (CHIPS[i][0] === id) return CHIPS[i];
+    return null;
+  }).filter(Boolean);
+}
+function mergeOrderLocal(saved) {
+  // mergeUiOrder versi lokal — CHIPS adalah const di scope modul ini.
+  const cur = CHIPS.map(function (c) { return c[0]; });
+  if (!Array.isArray(saved) || !saved.length) return cur;
+  const known = new Set(cur);
+  const head = [], seen = new Set();
+  saved.forEach(function (id) {
+    if (typeof id === 'string' && id && known.has(id) && !seen.has(id)) { head.push(id); seen.add(id); }
+  });
+  return head.concat(cur.filter(function (id) { return !seen.has(id); }));
+}
+
+/**
+ * Pasang sortable di SEMUA area + terapkan urutan tersimpan. Dipanggil sekali
+ * dari init(). Container #chips & #tilesContainer tidak pernah diganti nodenya
+ * (innerHTML-nya saja), jadi delegation bertahan lintas render.
+ */
+function rfInitLayoutCustomization() {
+  try {
+    // 1) Chip filter vault
+    const chips = $('#chips');
+    rfSortableInit(chips, {
+      itemSel: '.chip', axis: 'h',
+      onCommit: function (ids) {
+        rfChipOrderCache = ids;
+        return saveUiOrder(localStorage, RF_LAYOUT_KEYS.chips, ids);
+      }
+    });
+
+    // 2) Tile quick actions — urutan disimpan ke vault.settings.activeTiles
+    //    (mekanisme yang sama dgn tambah/hapus tile, jadi ikut sync vault).
+    rfSortableInit($('#tilesContainer'), {
+      itemSel: '.tile:not(.tile-add)', axis: 'auto',
+      getId: function (el) { return el.dataset.tile || ''; },
+      onCommit: function (ids) { return saveActiveTiles(ids.filter(Boolean)); }
+    });
+
+    // 3) Batch bar — baris utama (ada di popup & sidebar, struktur sama)
+    const batchRow = document.querySelector('#vaultBatchBar .rf-batch-actions');
+    if (batchRow) {
+      rfApplyDomOrder(batchRow, 'button', loadUiOrder(localStorage, RF_LAYOUT_KEYS.batch), function (el) { return el.id; });
+      rfSortableInit(batchRow, {
+        itemSel: 'button', axis: 'h',
+        getId: function (el) { return el.id; },
+        onCommit: function (ids) { return saveUiOrder(localStorage, RF_LAYOUT_KEYS.batch, ids); }
+      });
+    }
+
+    // 4) Batch bar — menu ⋯ (tindakan sekunder)
+    const moreMenu = $('#vaultBatchMoreMenu');
+    if (moreMenu) {
+      rfApplyDomOrder(moreMenu, 'button', loadUiOrder(localStorage, RF_LAYOUT_KEYS.batchMore), function (el) { return el.id; });
+      rfSortableInit(moreMenu, {
+        itemSel: 'button', axis: 'h',
+        getId: function (el) { return el.id; },
+        onCommit: function (ids) { return saveUiOrder(localStorage, RF_LAYOUT_KEYS.batchMore, ids); }
+      });
+    }
+
+    // 5) Baris aksi vault — hanya tombol (.addbtn); select urutan tetap di tempat
+    const vActions = document.querySelector('#vaultView .vault-actions');
+    if (vActions) {
+      rfApplyDomOrder(vActions, '.addbtn', loadUiOrder(localStorage, RF_LAYOUT_KEYS.vaultActions), function (el) { return el.id; });
+      rfSortableInit(vActions, {
+        itemSel: '.addbtn', axis: 'h',
+        getId: function (el) { return el.id; },
+        onCommit: function (ids) { return saveUiOrder(localStorage, RF_LAYOUT_KEYS.vaultActions, ids); }
+      });
+    }
+
+    // 6) Urutan seksi Beranda: bar Sholat / bar Pomodoro / Tiles
+    const popupEl = $('#popup');
+    if (popupEl) {
+      rfApplyDomOrder(popupEl, '#strip,#pomodoroStrip,#tilesContainer', loadUiOrder(localStorage, RF_LAYOUT_KEYS.home), function (el) { return el.id; });
+      rfSortableInit(popupEl, {
+        itemSel: '#strip,#pomodoroStrip,#tilesContainer', axis: 'v', noOutline: true,
+        getId: function (el) { return el.id; },
+        onCommit: function (ids) { return saveUiOrder(localStorage, RF_LAYOUT_KEYS.home, ids); }
+      });
+      // Grip visual penanda "bisa digeser" di bar Sholat & Pomodoro (via CSS)
+      const sb = $('#stripBar'); if (sb) sb.classList.add('rf-section-grip');
+      const pb = $('#pomodoroBar'); if (pb) pb.classList.add('rf-section-grip');
+    }
+
+    // Petunjuk sekali jalan setelah pembaruan
+    let hintSeen = false;
+    try { hintSeen = !!localStorage.getItem('rf-ui-sortHintSeen'); } catch (e) {}
+    if (!hintSeen) {
+      try { localStorage.setItem('rf-ui-sortHintSeen', '1'); } catch (e) {}
+      setTimeout(function () {
+        try { toast('✨ Baru: tahan lama tombol/chip lalu geser untuk atur urutan sesuai selera'); } catch (e) {}
+      }, 1800);
+    }
+  } catch (e) {
+    console.warn('[RecallFox] rfInitLayoutCustomization failed:', e);
+  }
+}
+
 async function init() {
   try { await initTheme(); } catch (e) { console.warn('initTheme failed:', e); }
   try { await refreshVault(); } catch (e) { console.warn('refreshVault failed:', e); }
@@ -11988,6 +12360,8 @@ async function init() {
   console.log('[RecallFox] init: bindEvents called');
   try{ await initPomodoro(); }catch(e){ console.warn('initPomodoro failed',e); }
   renderVault();
+  // v3.24.28: Susun Sesuai Selera — long-press drag reorder + urutan tersimpan
+  try { rfInitLayoutCustomization(); } catch (e) { console.warn('rfInitLayoutCustomization failed:', e); }
   // v3.9.0 (Issue 5): Sidebar auto-close after idle (only in sidebar mode)
   try { initSidebarAutoClose(); } catch (e) { console.warn('initSidebarAutoClose failed:', e); }
 

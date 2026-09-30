@@ -1330,3 +1330,31 @@ input.note-done-check:checked {
   background-position: center;
   background-repeat: no-repeat;
 }
+
+/* ================= v3.24.28 — Susun Sesuai Selera (drag reorder) =================
+   Tahan lama tombol/chip lalu geser untuk mengubah urutan. Kelas-kelas di bawah
+   dipasang/dilepas oleh engine rfSortable* di popup.js. */
+.rf-sortable{position:relative}
+body.rf-sorting{cursor:grabbing}
+body.rf-sorting *{user-select:none !important;-webkit-user-select:none !important}
+/* Elemen yang sedang digenggam: terangkat + bayangan + bingkai aksen */
+.rf-dragging{
+  position:relative;z-index:9999;opacity:.96;cursor:grabbing !important;
+  box-shadow:0 10px 26px rgba(0,0,0,.30);
+  border-color:var(--primary) !important;
+}
+button.rf-dragging,.chip.rf-dragging,.tile.rf-dragging{transform:scale(1.06)}
+/* Area sortable aktif: outline putus-putus halus (tidak dipasang di #popup) */
+.rf-sort-active{outline:1.5px dashed var(--border-strong);outline-offset:2px;border-radius:12px}
+/* Grip penanda "seksi ini bisa digeser" di bar Sholat & Pomodoro */
+.rf-section-grip::before{
+  content:'\22EE\22EE'; /* ⋮⋮ */
+  font-size:10px;line-height:1;color:var(--muted);opacity:.75;
+  letter-spacing:2px;flex:none;cursor:grab;
+  transform:translateY(-1px);
+}
+.rf-section-grip:hover::before{opacity:1;color:var(--primary)}
+/* Supaya drag seksi Beranda terasa mengangkat seluruh bar */
+#strip.rf-dragging,#pomodoroStrip.rf-dragging,#tilesContainer.rf-dragging{
+  opacity:.9;filter:saturate(1.05);
+}
